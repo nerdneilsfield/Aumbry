@@ -314,3 +314,44 @@ func TestSearchV11Projection(t *testing.T) {
 		}
 	}
 }
+
+func TestDirSearchTypeAndTagFilter(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dirA := admin.createDir("", "DirA", "")
+	dirB := admin.createDir(dirA, "DirB", "pwB")
+
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Visible WM Post", typ: "post", date: "2026-11-20", tags: []string{"World Model"}}), dirs: []string{dirA}})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Locked WM Post", typ: "post", date: "2026-11-21", tags: []string{"World Model"}}), dirs: []string{dirB}})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Substring Archive Report", typ: "report", date: "2026-11-19", tags: []string{"World Model Archive"}}), dirs: []string{dirA}})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Visible Vision Report", typ: "report", date: "2026-11-18", tags: []string{"Vision"}}), dirs: []string{dirA}})
+
+	v := e.anon()
+	// #45: locked subtree B stays excluded; exact tag match does not match "World Model Archive".
+	gotTag := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?tag="+url.QueryEscape("World Model"), nil))
+	if len(gotTag) != 1 || gotTag[0] != "Visible WM Post" {
+		t.Fatalf("visitor tag filter = %v, want [Visible WM Post]", gotTag)
+	}
+	// Empty q + type=post returns only visible posts.
+	gotType := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?type=post", nil))
+	if len(gotType) != 1 || gotType[0] != "Visible WM Post" {
+		t.Fatalf("visitor type=post = %v, want [Visible WM Post]", gotType)
+	}
+	// Combined tag + type.
+	gotBoth := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?type=report&tag=Vision", nil))
+	if len(gotBoth) != 1 || gotBoth[0] != "Visible Vision Report" {
+		t.Fatalf("visitor type+tag = %v, want [Visible Vision Report]", gotBoth)
+	}
+	// Invalid type returns 400.
+	if resp := v.do("GET", "/api/v1/dirs/"+dirA+"/search?type=memo", nil); resp.status != http.StatusBadRequest {
+		t.Errorf("invalid type = %d, want 400", resp.status)
+	}
+	// Unlocking B makes Locked WM Post visible under A's subtree tag filter.
+	if resp := v.do("POST", "/api/v1/dirs/"+dirB+"/unlock", map[string]string{"password": "pwB"}); resp.status != http.StatusOK {
+		t.Fatalf("unlock B = %d %s", resp.status, resp.body)
+	}
+	gotUnlocked := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?tag="+url.QueryEscape("World Model"), nil))
+	if len(gotUnlocked) != 2 {
+		t.Fatalf("unlocked tag filter = %v, want 2 items", gotUnlocked)
+	}
+}

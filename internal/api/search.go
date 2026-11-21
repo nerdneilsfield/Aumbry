@@ -44,6 +44,7 @@ type searchQuery struct {
 	text      string
 	dirIDs    []string
 	typ       string
+	tag       string
 	from, to  string
 	unmounted bool
 	limit     int
@@ -102,6 +103,10 @@ func (s *Server) search(ctx context.Context, q searchQuery) ([]searchResult, err
 	if q.typ != "" {
 		where = append(where, `i.type = ?`)
 		args = append(args, q.typ)
+	}
+	if q.tag != "" {
+		where = append(where, `EXISTS (SELECT 1 FROM json_each(i.tags_json) WHERE json_each.value = ?)`)
+		args = append(args, q.tag)
 	}
 	if q.from != "" {
 		where = append(where, `i.report_date >= ?`)
@@ -168,7 +173,16 @@ func (s *Server) searchDir(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := searchQuery{text: r.URL.Query().Get("q")}
+	params := r.URL.Query()
+	q := searchQuery{
+		text: params.Get("q"),
+		typ:  strings.TrimSpace(params.Get("type")),
+		tag:  strings.TrimSpace(params.Get("tag")),
+	}
+	if q.typ != "" && q.typ != "report" && q.typ != "post" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "type must be report or post")
+		return
+	}
 	if q.limit, q.offset, ok = pageParams(w, r); !ok {
 		return
 	}
