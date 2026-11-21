@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260" font-family="'PingFang SC','Noto Sans SC',sans-serif">
+  <rect width="400" height="260" fill="#f8fafc"/>
+  <g stroke="#cbd5e1" fill="none"><path d="M50 30V210H370"/><path d="M50 150H370M50 90H370" stroke-dasharray="3 4"/></g>
+  <polyline points="50,200 110,185 170,150 230,130 290,118 350,112" fill="none" stroke="#059669" stroke-width="3"/>
+  <g fill="#059669"><circle cx="110" cy="185" r="4"/><circle cx="170" cy="150" r="4"/><circle cx="230" cy="130" r="4"/><circle cx="290" cy="118" r="4"/><circle cx="350" cy="112" r="4"/></g>
+  <text x="210" y="240" text-anchor="middle" font-size="13" fill="#334155">训练步数 (k)</text>
+  <text x="20" y="120" font-size="13" fill="#334155" transform="rotate(-90 20 120)" text-anchor="middle">碰撞率下降 (%)</text>
+</svg>

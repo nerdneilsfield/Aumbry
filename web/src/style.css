@@ -1,10 +1,47 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
+/* Light mode: the UI is written against the dark gray scale, so light mode flips the scale itself
+   (50<->950 ...) instead of every component carrying dark: variants. Typography's own palette is literal, so
+   markdown uses `prose dark:prose-invert`. */
+@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant light (&:where(.light, .light *));
+
+@layer theme {
+  html.light {
+    --color-gray-50: #030712;
+    --color-gray-100: #111827;
+    --color-gray-200: #1f2937;
+    --color-gray-300: #374151;
+    --color-gray-400: #4b5563;
+    --color-gray-500: #6b7280;
+    --color-gray-600: #b4bbc6;
+    --color-gray-700: #d9dde3;
+    --color-gray-800: #ffffff;
+    --color-gray-900: #f4f6f9;
+    --color-gray-950: #ffffff;
+    /* accent text shades get darker equivalents so they keep contrast on white */
+    --color-blue-300: #1d4ed8;
+    --color-blue-400: #2563eb;
+    --color-sky-300: #0369a1;
+    --color-amber-300: #b45309;
+    --color-amber-400: #b45309;
+    --color-violet-300: #6d28d9;
+    --color-emerald-300: #047857;
+    --color-emerald-400: #059669;
+    --color-red-300: #b91c1c;
+    --color-rose-300: #be123c;
+    --color-yellow-100: #713f12;
+  }
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;
     color-scheme: dark;
+  }
+  html.light {
+    color-scheme: light;
   }
   body {
     @apply min-h-screen min-w-80 bg-gray-900 text-gray-200 antialiased;
@@ -39,11 +76,103 @@
   }
 }
 
-/* Markdown content: shiki sets inline colours, keep our own dark surface. */
+/* shiki dual theme (defaultColor:false): tokens carry --shiki-light / --shiki-dark, the html class picks one. */
+pre.shiki,
 .prose pre.shiki {
-  background-color: #0d1117 !important;
+  background-color: var(--shiki-light-bg) !important;
   @apply border border-gray-700;
 }
+html.dark pre.shiki,
+html.dark .prose pre.shiki {
+  background-color: var(--shiki-dark-bg) !important;
+}
+.shiki span {
+  color: var(--shiki-light);
+}
+html.dark .shiki span {
+  color: var(--shiki-dark);
+}
+
+/* <code-block>: line-number gutter (counter starts at `lines`), diff and highlight line backgrounds */
+.code-block pre.shiki {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0.75rem 0;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.code-block pre.shiki code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+.code-block .line {
+  display: inline-block;
+  width: 100%;
+  min-height: 1.3em;
+  padding-right: 1rem;
+  border-left: 3px solid transparent;
+}
+.code-block .line::before {
+  content: counter(ln);
+  counter-increment: ln;
+  display: inline-block;
+  width: 2.75rem;
+  margin-right: 0.75rem;
+  text-align: right;
+  white-space: pre;
+  color: var(--color-gray-500);
+  user-select: none;
+}
+.code-block .line.highlighted {
+  background: rgb(59 130 246 / 0.14);
+  border-left-color: var(--color-blue-400);
+}
+.code-block .line.diff.add {
+  background: rgb(16 185 129 / 0.16);
+  border-left-color: var(--color-emerald-400);
+}
+.code-block .line.diff.remove {
+  background: rgb(239 68 68 / 0.16);
+  border-left-color: var(--color-red-300);
+}
+.code-block .line.diff.add::before {
+  content: counter(ln) ' +';
+  color: var(--color-emerald-400);
+}
+.code-block .line.diff.remove::before {
+  content: counter(ln) ' −';
+  color: var(--color-red-300);
+}
+
+.md-tight > :first-child {
+  margin-top: 0 !important;
+}
+.md-tight > :last-child {
+  margin-bottom: 0 !important;
+}
+
+/* briefly outlines the element an in-page anchor jumped to */
+.anchor-flash {
+  animation: anchor-flash 1.8s ease-out;
+}
+@keyframes anchor-flash {
+  0%,
+  35% {
+    outline: 2px solid var(--color-blue-400);
+    outline-offset: 6px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 6px;
+  }
+}
+.katex-error {
+  color: var(--color-red-300) !important;
+}
+
 .prose eq,
 .prose eqn {
   @apply max-w-full overflow-x-auto;

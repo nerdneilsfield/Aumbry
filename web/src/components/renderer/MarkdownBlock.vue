@@ -8,5 +8,5 @@ const html = computed(() => renderMarkdown(props.text))
 </script>
 
 <template>
-  <div class="prose prose-invert max-w-none prose-a:text-blue-300 prose-headings:text-gray-100" v-html="html" />
+  <div class="prose dark:prose-invert max-w-none prose-a:text-blue-300 prose-headings:text-gray-100" v-html="html" />
 </template>

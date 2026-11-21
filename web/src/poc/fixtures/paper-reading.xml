@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>DriveFlow：用流匹配把自动驾驶世界模型推到 30 FPS（三轮精读）</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>三轮精读 DriveFlow：问题与整体认识、方法与证据、局限与复现路径。每条结论都标明来自作者主张、论文证据、分析推断还是待核验。</summary>
+    <source-agent>qi-read-paper</source-agent>
+    <canonical-url>https://arxiv.org/abs/2611.01234</canonical-url>
+    <tags>
+      <tag>World Model</tag>
+      <tag>Autonomous Driving</tag>
+      <tag>Flow Matching</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <section title="第一轮：问题与整体认识">
+      <md><![CDATA[
+端到端自动驾驶需要一个能「想象未来」的世界模型：给定多视角视频与自车动作，预测接下来几秒的场景。
+过去几年的主流做法基于**扩散模型**，画面质量好，但每一帧要几十步去噪，离车端实时（≥ 10 FPS）差一个数量级。
+
+DriveFlow 的核心想法很朴素：**把去噪换成流匹配，训练一个近似直线的速度场，推理一步就够**。
+下面先给结论，再给每条结论的出处——读的时候请留意左侧色条：蓝是作者说的，绿是论文自己的实验，紫是我的推断，橙色虚线是没查到的。
+      ]]></md>
+
+      <claim level="claim" source="§1 Abstract">推理延迟较扩散式方法降低一个数量级，同时保持与扩散式方法相当的预测质量。</claim>
+      <claim level="evidence" source="Table 2">在 nuScenes 验证集上达到 30 FPS，对比 Vista-v2 的 8 FPS（同为单卡 H100，batch=1，480×832）。</claim>
+      <claim level="inference">速度提升主要来自「一步采样」而不是更小的主干网络：Table 3 里参数量与 Vista-v2 接近（1.3B vs 1.5B），但 NFE 从 50 降到 1。</claim>
+      <claim level="unverified">训练预算与随机种子数：论文正文与附录均未报告，无法判断 Table 2 的 FVD 差距是否在随机波动范围内。</claim>
+
+      <metrics>
+        <metric label="推理帧率" value="30" unit="FPS" delta="+22 vs Vista-v2" trend="up"/>
+        <metric label="NFE（采样步数）" value="1" delta="-49 vs 扩散 50 步" trend="down"/>
+        <metric label="FVD ↓" value="86.4" delta="+4.1 vs Vista-v2" trend="up"/>
+        <metric label="参数量" value="1.3" unit="B" delta="-0.2B" trend="flat"/>
+      </metrics>
+
+      <figure id="arch" src="./imgs/arch.svg" alt="DriveFlow 架构：多视角视频经视觉编码器进入流匹配世界模型，再接规划头" caption="图 1：DriveFlow 整体架构（本文重绘，非论文原图）"/>
+
+      <md><![CDATA[
+架构细节见 [图 1](#fig-arch)；训练目标是后面的 [式 (5)](#eq-loss)。
+      ]]></md>
+
+      <mermaid caption="一次推理的数据流"><![CDATA[flowchart LR
+  A[多视角视频<br/>6 路 · 12 Hz] --> B[视觉编码器<br/>ViT-L]
+  B --> C{世界模型<br/>流匹配 · 1 步}
+  C --> D[未来 BEV 占用]
+  C --> E[规划头]
+  E --> F[(轨迹 + 置信度)]
+  F -. 闭环反馈 .-> A]]></mermaid>
+    </section>
+
+    <section title="第二轮：方法与证据">
+      <md><![CDATA[
+第二轮看细节：目标函数怎么写、数字是否站得住、和谁比、比得公不公平。
+      ]]></md>
+
+      <equation id="loss" number="5" caption="流匹配目标：回归条件速度场"><![CDATA[\mathcal{L}_{\mathrm{FM}}=\mathbb{E}_{t\sim\mathcal{U}[0,1],\,x_0,\,x_1}\left\lVert v_\theta(x_t,t,c)-(x_1-x_0)\right\rVert^2,\qquad x_t=(1-t)\,x_0+t\,x_1]]></equation>
+
+      <claim level="claim" source="§3.2 Eq. (5)">线性插值路径使学到的速度场近似直线，因此一步欧拉积分即可得到可用样本。</claim>
+      <claim level="inference">「近似直线」只在条件 c 足够强（多视角历史帧）时成立；在长尾场景里条件信息弱，这个假设可能失效。这是我的推断，论文没有做对应实验。</claim>
+
+      <equation id="euler" number="6" caption="一步欧拉采样"><![CDATA[\hat{x}_1=x_0+v_\theta(x_0,0,c),\qquad x_0\sim\mathcal{N}(0,I)]]></equation>
+
+      <chart type="bar" caption="推理帧率对比（单卡 H100，batch=1）">
+        <![CDATA[{
+  "categories": ["DriveFlow", "Vista-v2", "GAIA-2", "DrivingDiT"],
+  "series": [{ "name": "推理帧率 (FPS)", "data": [30, 8, 5, 3] }],
+  "x_label": "方案",
+  "y_label": "FPS"
+}]]>
+      </chart>
+
+      <chart type="line" caption="nuScenes 验证集 FVD 随训练步数的变化（越低越好）">
+        <![CDATA[{
+  "categories": ["10k", "20k", "40k", "80k", "160k", "320k"],
+  "series": [
+    { "name": "DriveFlow", "data": [212, 160, 121, 98, 90, 86.4] },
+    { "name": "Vista-v2（论文复报）", "data": [190, 150, 118, 95, 88, 82.3] }
+  ],
+  "x_label": "训练步数",
+  "y_label": "FVD"
+}]]>
+      </chart>
+
+      <compare-table caption="与相关工作对比（节选自 Table 2，标签为本文判断）">
+        <columns><col>方案</col><col>帧率</col><col>FVD ↓</col><col>代码</col></columns>
+        <row>
+          <cell>DriveFlow</cell>
+          <cell tag="evidence">30 FPS</cell>
+          <cell tag="evidence">86.4</cell>
+          <cell>已开源</cell>
+        </row>
+        <row>
+          <cell>Vista-v2</cell>
+          <cell tag="evidence">8 FPS</cell>
+          <cell tag="inference">82.3（略优，差距在方差内？）</cell>
+          <cell>仅权重</cell>
+        </row>
+        <row>
+          <cell>GAIA-2</cell>
+          <cell tag="na">未公开（闭源）</cell>
+          <cell tag="na">协议不同</cell>
+          <cell tag="claim">声称将开放</cell>
+        </row>
+      </compare-table>
+
+      <collapse title="附录：消融实验与辅助损失（点击展开）">
+        <md><![CDATA[
+消融实验把「线性路径」换成「余弦路径」，FVD 从 86.4 退化到 97.8，见 [式 (7)](#eq-aux) 与下方的 [图 2](#fig-abl)。
+        ]]></md>
+        <equation id="aux" number="7" caption="辅助的占用预测损失"><![CDATA[\mathcal{L}_{\mathrm{occ}}=\sum_{k=1}^{K}\mathrm{BCE}\bigl(\hat{o}_k,\;o_k\bigr)+\lambda\,\mathrm{Dice}\bigl(\hat{o}_k,\;o_k\bigr)]]></equation>
+        <figure-group cols="2" caption="图 2：消融（本文重绘）—— (a) 线性路径下 mIoU 稳步上升；(b) 碰撞率同步下降">
+          <figure id="abl" src="./imgs/curve-a.svg" alt="mIoU 随训练步数上升"/>
+          <figure src="./imgs/curve-b.svg" alt="碰撞率下降随训练步数上升"/>
+        </figure-group>
+      </collapse>
+    </section>
+
+    <section title="第三轮：局限、应用与复现">
+      <claim level="claim" source="§6 Limitations">作者承认：在夜间与强逆光场景下预测帧会出现闪烁，一步采样对分布外条件更敏感。</claim>
+      <claim level="unverified" source="Appendix C">官方仓库声称提供 TensorRT 导出，但论文中没有给出 Orin 上的实测延迟。</claim>
+
+      <callout type="warn" title="复现提醒">
+        <![CDATA[Table 2 的 30 FPS 是 **H100 + FP16 + batch=1** 的结果。车规级算力（Orin-X）上是否能达到 10 FPS 以上，目前**没有任何证据**。]]>
+      </callout>
+
+      <steps>
+        <step title="准备数据与环境">
+          <md><![CDATA[按官方脚本下载 nuScenes v1.0-trainval（约 300 GB），环境为 Python 3.11 + PyTorch 2.5，需要 CUDA 12.4。]]></md>
+        </step>
+        <step title="预处理：把 6 路相机对齐成 BEV 条件">
+          <md><![CDATA[运行预处理脚本生成缓存。注意 `--history 4` 必须与训练配置一致，否则条件张量形状对不上。]]></md>
+          <callout type="info" title="磁盘占用">
+            <![CDATA[缓存约 1.1 TB，建议放在 NVMe 上，否则数据加载会成为瓶颈。]]>
+          </callout>
+        </step>
+        <step title="训练：复现式 (5)">
+          <equation number="5"><![CDATA[\mathcal{L}_{\mathrm{FM}}=\mathbb{E}\left\lVert v_\theta(x_t,t,c)-(x_1-x_0)\right\rVert^2]]></equation>
+          <claim level="unverified">8×H100 约训练多久、需要几个随机种子才能复现 FVD 86.4：论文未说明。</claim>
+        </step>
+        <step title="评测并对照 Table 2">
+          <md><![CDATA[用同一脚本评测 FPS 与 FVD。若 FPS 不到 25，先检查是否打开了 `torch.compile` 与 FP16。]]></md>
+        </step>
+      </steps>
+
+      <glossary>
+        <term name="世界模型 (World Model)">在潜空间或像素空间里**预测环境未来**的模型，用来做规划与仿真。</term>
+        <term name="流匹配 (Flow Matching)">学习把噪声分布搬运到数据分布的**速度场**，训练时回归 `x₁ − x₀`，不需要模拟 SDE。</term>
+        <term name="NFE">Number of Function Evaluations，采样时调用网络的次数，直接决定推理延迟。</term>
+        <term name="FVD">Fréchet Video Distance，视频生成质量指标，**越低越好**；对评测协议很敏感，跨论文比较要小心。</term>
+      </glossary>
+
+      <references>
+        <ref id="zhang26" title="DriveFlow: Real-Time World Modeling for End-to-End Driving" authors="Zhang et al." year="2026" venue="arXiv" url="https://arxiv.org/abs/2611.01234"/>
+        <ref id="lipman23" title="Flow Matching for Generative Modeling" authors="Lipman, Chen, Ben-Hamu, Nickel, Le" year="2023" venue="ICLR" doi="10.48550/arXiv.2210.02747" url="https://arxiv.org/abs/2210.02747"/>
+        <ref id="vista24" title="Vista: A Generalizable Driving World Model with High Fidelity and Versatile Controllability" authors="Gao et al." year="2024" venue="NeurIPS" url="https://arxiv.org/abs/2405.17398"/>
+      </references>
+
+      <md><![CDATA[
+延伸阅读：流匹配的原始推导见 [Lipman 2023](#ref-lipman23)，本文对比的扩散基线见 [Gao 2024](#ref-vista24)，被精读的论文本身见 [Zhang 2026](#ref-zhang26)。
+      ]]></md>
+    </section>
+  </body>
+</document>

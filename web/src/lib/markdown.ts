@@ -3,36 +3,9 @@ import texmath from 'markdown-it-texmath'
 import katex from 'katex'
 import DOMPurify from 'dompurify'
 import { dedent } from 'ts-dedent'
-import { createHighlighterCore } from 'shiki/core'
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
-import githubDark from 'shiki/themes/github-dark.mjs'
+import { dualTheme, highlighter, loadedLangs } from '@/lib/highlighter'
 import { safeUrl } from '@/lib/url'
 import 'katex/dist/katex.min.css'
-
-// Top-level await: only the lazily loaded reader chunk imports this module.
-const highlighter = await createHighlighterCore({
-  themes: [githubDark],
-  langs: [
-    import('shiki/langs/bash.mjs'),
-    import('shiki/langs/c.mjs'),
-    import('shiki/langs/cpp.mjs'),
-    import('shiki/langs/css.mjs'),
-    import('shiki/langs/diff.mjs'),
-    import('shiki/langs/go.mjs'),
-    import('shiki/langs/html.mjs'),
-    import('shiki/langs/javascript.mjs'),
-    import('shiki/langs/json.mjs'),
-    import('shiki/langs/markdown.mjs'),
-    import('shiki/langs/python.mjs'),
-    import('shiki/langs/rust.mjs'),
-    import('shiki/langs/sql.mjs'),
-    import('shiki/langs/toml.mjs'),
-    import('shiki/langs/typescript.mjs'),
-    import('shiki/langs/yaml.mjs'),
-  ],
-  engine: createJavaScriptRegexEngine(),
-})
-const loaded = new Set(highlighter.getLoadedLanguages())
 
 // html:false is the XSS boundary: raw HTML in markdown is escaped, never emitted.
 const md = new MarkdownIt({
@@ -40,7 +13,7 @@ const md = new MarkdownIt({
   linkify: true,
   breaks: false,
   highlight: (code, lang) =>
-    loaded.has(lang) ? highlighter.codeToHtml(code, { lang, theme: 'github-dark' }) : '',
+    loadedLangs.has(lang) ? highlighter.codeToHtml(code, { lang, ...dualTheme }) : '',
 })
 md.use(texmath, { engine: katex, delimiters: 'dollars', katexOptions: { throwOnError: false } })
 
