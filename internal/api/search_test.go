@@ -225,3 +225,92 @@ func TestAdminSearchFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchV11Projection(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dir := admin.createDir("", "V11Search", "")
+
+	v11XML := `<document version="1.1">
+  <meta>
+    <title>V11 Search Projection</title>
+    <type>report</type>
+    <date>2026-11-20</date>
+    <summary>Summary</summary>
+    <source-agent>agent</source-agent>
+  </meta>
+  <body>
+    <tldr><point>TldrBulletToken</point></tldr>
+    <claim level="evidence">ClaimSearchHit 推理加速</claim>
+    <equation id="eq1" caption="LossCaption"><![CDATA[\mathcal{EquationLatexOnly} \text{公式仅在公式内}]]></equation>
+    <mermaid caption="MermaidCap"><![CDATA[graph LR; HiddenMermaidNode-->B]]></mermaid>
+    <chart type="bar" caption="ChartCap"><![CDATA[{"categories":["HiddenChartCat"],"series":[{"name":"HiddenSeries","data":[1]}]}]]></chart>
+    <code-block file="model_v11.go" caption="CodeCap"><![CDATA[func HiddenCodeFunc() {}]]></code-block>
+    <quote author="AdaQuoteAuthor" source="Note G">Verba text</quote>
+    <checklist><check status="done" detail="CheckDetailHit">Verified</check></checklist>
+    <search-log><query source="arXiv">ti:world</query><excluded title="Old" reason="ExcludedReasonHit"/></search-log>
+    <stages id="g1"><stage id="s1" title="G1S1"><md>Group1</md></stage></stages>
+    <stages id="g2">
+      <stage id="s2a" title="A"><md>A</md></stage>
+      <stage id="s2b" title="B"><md>B</md></stage>
+      <stage id="s2c" title="C"><md>StageThreeSecondGroupHit</md></stage>
+    </stages>
+    <quiz id="q1">
+      <question>QuizQuestionHit</question>
+      <option correct="true">HiddenQuizChoiceToken</option>
+      <option>AnotherHiddenChoice</option>
+      <explain>QuizExplainHit</explain>
+    </quiz>
+    <next-steps><option target="#stage-s2c">HiddenNextBtnToken</option></next-steps>
+    <news-item title="NewsHeadlineHit" source="DailyWire">Headline<detail>NewsDetailHit 简报</detail></news-item>
+  </body>
+</document>`
+
+	admin.ingestOK(ingestReq{xml: v11XML, dirs: []string{dir}})
+	search := func(query string) []string {
+		return titles(t, admin.do("GET", q("/api/v1/dirs/"+dir+"/search", query), nil))
+	}
+
+	// #18 + #81 FTS (>=3 chars) hits
+	for _, hit := range []string{
+		"ClaimSearchHit",
+		"TldrBulletToken",
+		"StageThreeSecondGroupHit",
+		"ExcludedReasonHit",
+		"AdaQuoteAuthor",
+		"CheckDetailHit",
+		"QuizQuestionHit",
+		"QuizExplainHit",
+		"NewsDetailHit",
+		"model_v11.go",
+	} {
+		if got := search(hit); len(got) != 1 || got[0] != "V11 Search Projection" {
+			t.Errorf("search(%q) = %v, want 1 match", hit, got)
+		}
+	}
+
+	// #81 2-char Chinese LIKE search: hit in claim & detail, excluded in equation
+	if got := search("推理"); len(got) != 1 {
+		t.Errorf("2-char LIKE search(推理) = %v, want 1 match", got)
+	}
+	if got := search("简报"); len(got) != 1 {
+		t.Errorf("2-char LIKE search(简报) = %v, want 1 match", got)
+	}
+	if got := search("公式"); len(got) != 0 {
+		t.Errorf("2-char LIKE inside <equation> should miss: search(公式) = %v", got)
+	}
+
+	// #18 + #81 excluded fragments must return 0 matches
+	for _, miss := range []string{
+		"EquationLatexOnly",
+		"HiddenMermaidNode",
+		"HiddenChartCat",
+		"HiddenCodeFunc",
+		"HiddenQuizChoiceToken",
+		"HiddenNextBtnToken",
+	} {
+		if got := search(miss); len(got) != 0 {
+			t.Errorf("search(%q) = %v, want 0 matches", miss, got)
+		}
+	}
+}

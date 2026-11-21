@@ -97,11 +97,69 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 }
 
 // PlainText returns the document text and searchable attributes for full-text indexing.
+// v1.0 documents retain the full-tree text projection; v1.1 documents exclude code, formula,
+// diagram, chart JSON, quiz options, and next-steps buttons while indexing v1.1 attributes.
 func (d *Document) PlainText() string {
 	var b strings.Builder
+	if d.Version == "1.1" {
+		if root := d.tree.DocumentElement(); root != nil {
+			appendV11IndexedText(&b, root)
+		}
+		return strings.Join(strings.Fields(b.String()), " ")
+	}
 	for _, n := range find(d.tree, "//@title | //@caption | //@name | //@authors | //text()") {
 		b.Write(n.Content())
 		b.WriteByte(' ')
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func appendV11IndexedText(b *strings.Builder, el *helium.Element) {
+	name := el.Name()
+	if name == "next-steps" || name == "option" {
+		return
+	}
+	writeAttr := func(attr string) {
+		if v, ok := el.GetAttribute(attr); ok && strings.TrimSpace(v) != "" {
+			b.WriteString(v)
+			b.WriteByte(' ')
+		}
+	}
+	if name == "equation" || name == "mermaid" || name == "chart" || name == "code-block" {
+		writeAttr("caption")
+		if name == "code-block" {
+			writeAttr("file")
+		}
+		return
+	}
+
+	for _, attr := range []string{"title", "caption", "name", "authors"} {
+		writeAttr(attr)
+	}
+	switch name {
+	case "metric":
+		writeAttr("label")
+		writeAttr("value")
+	case "excluded":
+		writeAttr("reason")
+	case "quote":
+		writeAttr("source")
+		writeAttr("author")
+	case "check":
+		writeAttr("detail")
+	case "news-item":
+		writeAttr("source")
+	}
+
+	for cur := el.FirstChild(); cur != nil; cur = cur.NextSibling() {
+		switch cur.Type() {
+		case helium.TextNode, helium.CDATASectionNode:
+			b.Write(cur.Content())
+			b.WriteByte(' ')
+		case helium.ElementNode:
+			if child, ok := cur.(*helium.Element); ok {
+				appendV11IndexedText(b, child)
+			}
+		}
+	}
 }

@@ -567,3 +567,82 @@ func TestChartValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestPlainTextV11Projection(t *testing.T) {
+	v11XML := doc11(`
+		<tldr><point>KeyPointSummary</point><verdict>FinalVerdict</verdict></tldr>
+		<claim level="evidence">ClaimBodyToken</claim>
+		<equation id="eq1" caption="EquationCaptionTok"><![CDATA[\mathcal{L}_{ExcludedLatexTok}]]></equation>
+		<mermaid caption="MermaidCaptionTok"><![CDATA[flowchart LR
+			A[ExcludedMermaidTok] --> B]]></mermaid>
+		<chart type="bar" caption="ChartCaptionTok"><![CDATA[{"categories":["ExcludedChartCat"],"series":[{"name":"ExcludedSeriesName","data":[1]}]}]]></chart>
+		<code-block file="ExcludedCodeFile.go" caption="CodeCaptionTok"><![CDATA[func ExcludedCodeSourceTok() {}]]></code-block>
+		<metrics><metric label="MetricLabelTok" value="99.9MetricVal"/></metrics>
+		<steps><step title="StepTitleTok"><md>StepMdTok</md></step></steps>
+		<tabs><tab title="TabTitleOne"><md>TabBodyOne</md></tab><tab title="TabTitleTwo"><md>TabBodyTwo</md></tab></tabs>
+		<timeline><event date="2026" title="TimelineTitleTok">TimelineBodyTok</event></timeline>
+		<glossary><term name="TermNameTok">TermDefTok</term></glossary>
+		<references><ref id="r1" title="RefTitleTok" authors="RefAuthorTok"/></references>
+		<quote author="QuoteAuthorTok" source="QuoteSourceTok">QuoteBodyTok</quote>
+		<checklist><check status="done" detail="CheckDetailTok">CheckBodyTok</check></checklist>
+		<search-log><criteria><include>CriteriaIncludeTok</include><exclude>CriteriaExcludeTok</exclude></criteria><query source="arXiv">SearchQueryTok</query><excluded title="ExclTitleTok" reason="ExcludedReasonTok"/><gap>SearchGapTok</gap></search-log>
+		<stages id="g1"><stage id="s1" title="StageOneTitle"/><stage id="s2" title="StageTwoTitle"><md>StageTwoBodyTok</md></stage></stages>
+		<quiz id="q1"><question>QuizQuestionTok</question><option correct="true">ExcludedQuizOptionTok</option><option>AnotherExcludedOpt</option><explain>QuizExplainTok</explain></quiz>
+		<next-steps><option target="#stage-s2">ExcludedNextStepBtn</option></next-steps>
+		<news-item title="NewsTitleTok" source="NewsSourceTok">NewsSummaryTok<detail>NewsDetailTok</detail></news-item>
+	`)
+	d, issues := Parse([]byte(v11XML), Options{})
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %+v", issues)
+	}
+	got := d.PlainText()
+
+	mustInclude := []string{
+		"KeyPointSummary", "FinalVerdict",
+		"ClaimBodyToken",
+		"EquationCaptionTok", "MermaidCaptionTok", "ChartCaptionTok", "ExcludedCodeFile.go", "CodeCaptionTok",
+		"MetricLabelTok", "99.9MetricVal",
+		"StepTitleTok", "StepMdTok",
+		"TabTitleOne", "TabBodyTwo",
+		"TimelineTitleTok", "TimelineBodyTok",
+		"TermNameTok", "TermDefTok",
+		"RefTitleTok", "RefAuthorTok",
+		"QuoteAuthorTok", "QuoteSourceTok", "QuoteBodyTok",
+		"CheckDetailTok", "CheckBodyTok",
+		"CriteriaIncludeTok", "CriteriaExcludeTok", "SearchQueryTok", "ExclTitleTok", "ExcludedReasonTok", "SearchGapTok",
+		"StageOneTitle", "StageTwoBodyTok",
+		"QuizQuestionTok", "QuizExplainTok",
+		"NewsTitleTok", "NewsSourceTok", "NewsSummaryTok", "NewsDetailTok",
+	}
+	for _, want := range mustInclude {
+		if !strings.Contains(got, want) {
+			t.Errorf("PlainText() missing %q\ngot=%s", want, got)
+		}
+	}
+
+	mustExclude := []string{
+		"ExcludedLatexTok",
+		"ExcludedMermaidTok",
+		"ExcludedChartCat",
+		"ExcludedSeriesName",
+		"ExcludedCodeSourceTok",
+		"ExcludedQuizOptionTok",
+		"AnotherExcludedOpt",
+		"ExcludedNextStepBtn",
+	}
+	for _, banned := range mustExclude {
+		if strings.Contains(got, banned) {
+			t.Errorf("PlainText() should exclude %q", banned)
+		}
+	}
+
+	// Verify v1.0 PlainText() keeps legacy //text() projection.
+	v10XML := doc(`<section title="Sec"><md>legacytext</md></section>`)
+	d10, issues := Parse([]byte(v10XML), Options{})
+	if len(issues) != 0 {
+		t.Fatal(issues)
+	}
+	if !strings.Contains(d10.PlainText(), "legacytext") {
+		t.Fatalf("v1.0 PlainText() = %q", d10.PlainText())
+	}
+}
