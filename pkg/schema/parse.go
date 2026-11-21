@@ -41,6 +41,9 @@ func parseTree(input []byte) (*helium.Document, *ValidationError) {
 				issue.Message = pe.Err.Error()
 			}
 		}
+		if hint := detectMissingCDATAHint(input, issue.Line); hint != "" {
+			issue.Hint = hint
+		}
 		return nil, issue
 	}
 	// The protocol has no use for DTDs; refusing them rules out entity tricks outright.
@@ -94,6 +97,200 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 		return nil, err
 	}
 	return []byte(out.String()), nil
+}
+
+var cdataTextElements = map[string]bool{
+	"md": true, "callout": true, "mermaid": true, "chart": true,
+	"equation": true, "code-block": true, "claim": true, "quote": true,
+	"paper-card": true, "repo-card": true, "detail": true,
+}
+
+// detectMissingCDATAHint checks whether an XML parse error occurs inside (or on the closing
+// line of) a CDATA-bearing text element containing unescaped '&' or raw '<' without <![CDATA[.
+func detectMissingCDATAHint(input []byte, errLine int) string {
+	s := string(input)
+	type frame struct {
+		name         string
+		openLine     int
+		sawUnescaped bool
+	}
+	var cur *frame
+	line := 1
+	n := len(s)
+
+	hasValidEntityAt := func(i int) bool {
+		if i >= n || s[i] != '&' {
+			return false
+		}
+		rest := s[i+1:]
+		semi := strings.IndexByte(rest, ';')
+		if semi <= 0 || semi > 12 {
+			return false
+		}
+		ent := rest[:semi]
+		switch ent {
+		case "amp", "lt", "gt", "apos", "quot":
+			return true
+		}
+		if strings.HasPrefix(ent, "#x") || strings.HasPrefix(ent, "#X") {
+			hex := ent[2:]
+			if len(hex) == 0 {
+				return false
+			}
+			for _, r := range hex {
+				if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+					return false
+				}
+			}
+			return true
+		}
+		if strings.HasPrefix(ent, "#") {
+			dec := ent[1:]
+			if len(dec) == 0 {
+				return false
+			}
+			for _, r := range dec {
+				if r < '0' || r > '9' {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+
+	skipTagEnd := func(i int) (end int, selfClosing bool, ok bool) {
+		var quote byte
+		for i < n {
+			c := s[i]
+			if c == '\n' {
+				line++
+			}
+			if quote != 0 {
+				if c == quote {
+					quote = 0
+				}
+				i++
+				continue
+			}
+			if c == '"' || c == '\'' {
+				quote = c
+				i++
+				continue
+			}
+			if c == '>' {
+				prev := i - 1
+				for prev >= 0 && (s[prev] == ' ' || s[prev] == '\t' || s[prev] == '\r' || s[prev] == '\n') {
+					prev--
+				}
+				return i + 1, prev >= 0 && s[prev] == '/', true
+			}
+			i++
+		}
+		return n, false, false
+	}
+
+	countLines := func(from, to int) {
+		for k := from; k < to; k++ {
+			if s[k] == '\n' {
+				line++
+			}
+		}
+	}
+
+	for i := 0; i < n; {
+		if errLine > 0 && line > errLine {
+			break
+		}
+		if s[i] == '\n' {
+			line++
+			i++
+			continue
+		}
+		if strings.HasPrefix(s[i:], "<![CDATA[") {
+			end := strings.Index(s[i+9:], "]]>")
+			if end < 0 {
+				break
+			}
+			countLines(i, i+9+end+3)
+			i += 9 + end + 3
+			continue
+		}
+		if strings.HasPrefix(s[i:], "<!--") {
+			end := strings.Index(s[i+4:], "-->")
+			if end < 0 {
+				break
+			}
+			countLines(i, i+4+end+3)
+			i += 4 + end + 3
+			continue
+		}
+		if strings.HasPrefix(s[i:], "<?") {
+			end := strings.Index(s[i+2:], "?>")
+			if end < 0 {
+				break
+			}
+			countLines(i, i+2+end+2)
+			i += 2 + end + 2
+			continue
+		}
+
+		if cur == nil {
+			if s[i] == '<' && i+1 < n && s[i+1] != '/' && s[i+1] != '!' {
+				j := i + 1
+				for j < n && s[j] != ' ' && s[j] != '\t' && s[j] != '\r' && s[j] != '\n' && s[j] != '>' && s[j] != '/' {
+					j++
+				}
+				name := s[i+1 : j]
+				end, selfClosing, ok := skipTagEnd(j)
+				if !ok {
+					break
+				}
+				if !selfClosing && cdataTextElements[name] {
+					cur = &frame{name: name, openLine: line}
+				}
+				i = end
+				continue
+			}
+			i++
+			continue
+		}
+
+		// Inside a CDATA-bearing element.
+		if strings.HasPrefix(s[i:], "</"+cur.name) {
+			j := i + 2 + len(cur.name)
+			for j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n') {
+				if s[j] == '\n' {
+					line++
+				}
+				j++
+			}
+			if j < n && s[j] == '>' {
+				closeLine := line
+				if cur.sawUnescaped && (errLine <= 0 || (errLine >= cur.openLine && errLine <= closeLine)) {
+					return fmt.Sprintf("wrap content inside <%s> with <![CDATA[ ... ]]>", cur.name)
+				}
+				cur = nil
+				i = j + 1
+				continue
+			}
+		}
+
+		if s[i] == '&' && !hasValidEntityAt(i) {
+			cur.sawUnescaped = true
+			if errLine <= 0 || errLine == line {
+				return fmt.Sprintf("wrap content inside <%s> with <![CDATA[ ... ]]>", cur.name)
+			}
+		} else if s[i] == '<' {
+			cur.sawUnescaped = true
+		}
+		i++
+	}
+
+	if cur != nil && cur.sawUnescaped {
+		return fmt.Sprintf("wrap content inside <%s> with <![CDATA[ ... ]]>", cur.name)
+	}
+	return ""
 }
 
 // PlainText returns the document text and searchable attributes for full-text indexing.

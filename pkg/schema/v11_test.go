@@ -646,3 +646,78 @@ func TestPlainTextV11Projection(t *testing.T) {
 		t.Fatalf("v1.0 PlainText() = %q", d10.PlainText())
 	}
 }
+
+func TestMissingAssetInV11ContainersAndIndirectNestedStages(t *testing.T) {
+	missing := Options{HasAsset: func(string) bool { return false }}
+
+	// #31: MISSING_ASSET inside <step>, <tab>, <figure-group>
+	for name, body := range map[string]string{
+		"step":         `<steps><step title="S1"><figure src="./missing.png"/></step></steps>`,
+		"tab":          `<tabs><tab title="T1"><figure src="./missing.png"/></tab><tab title="T2"><md>x</md></tab></tabs>`,
+		"figure-group": `<figure-group cols="2"><figure src="./missing.png"/><figure src="./missing2.png"/></figure-group>`,
+	} {
+		_, issues := Parse([]byte(doc11(body)), missing)
+		if got := codes(issues); !slices.Contains(got, "MISSING_ASSET") {
+			t.Errorf("%s: codes = %v, want MISSING_ASSET\n%+v", name, got, issues)
+		}
+	}
+
+	// Nested <stages> indirectly via <stage><section><stages>
+	indirect := doc11(`<stages id="g1"><stage id="s1" title="S1"><section title="Inner"><stages id="g2"><stage id="s2" title="S2"><md>x</md></stage></stages></section></stage></stages>`)
+	_, issues := Parse([]byte(indirect), Options{})
+	if got := codes(issues); !slices.Equal(got, []string{"INVALID_STAGES"}) {
+		t.Fatalf("indirect nested stages codes = %v, want [INVALID_STAGES]\n%+v", got, issues)
+	}
+}
+
+func TestInvalidXMLCDATAHint(t *testing.T) {
+	cases := []struct {
+		name     string
+		xml      string
+		wantHint bool
+	}{
+		{
+			name:     "single-line bare ampersand inside md (#44)",
+			xml:      doc11(`<md>A & B</md>`),
+			wantHint: true,
+		},
+		{
+			name:     "single-line generic angle brackets inside md (#44)",
+			xml:      doc11(`<md>Use Vec<T> here</md>`),
+			wantHint: true,
+		},
+		{
+			name:     "multi-line generic angle brackets inside md (#44)",
+			xml:      "<document version=\"1.1\">" + metaBlock + "\n<body>\n<md>\nreturn Vec<Option<T>>\n</md>\n</body></document>",
+			wantHint: true,
+		},
+		{
+			name:     "multi-line bare ampersand inside mermaid",
+			xml:      "<document version=\"1.1\">" + metaBlock + "\n<body>\n<mermaid>\nA --> B & C\n</mermaid>\n</body></document>",
+			wantHint: true,
+		},
+		{
+			name:     "unrelated unclosed root does not attach CDATA hint",
+			xml:      `<document>`,
+			wantHint: false,
+		},
+		{
+			name:     "valid CDATA followed by unrelated broken tag does not attach CDATA hint",
+			xml:      doc11(`<md><![CDATA[Vec<T> & ok]]></md><section>`),
+			wantHint: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, issues := Parse([]byte(tc.xml), Options{})
+			if len(issues) != 1 || issues[0].Code != "INVALID_XML" {
+				t.Fatalf("issues = %+v, want single INVALID_XML", issues)
+			}
+			hasCDATA := strings.Contains(issues[0].Hint, "CDATA")
+			if hasCDATA != tc.wantHint {
+				t.Fatalf("Hint = %q, wantHint=%v (issue=%+v)", issues[0].Hint, tc.wantHint, issues[0])
+			}
+		})
+	}
+}

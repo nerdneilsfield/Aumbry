@@ -297,3 +297,55 @@ func TestContentIsServedSandboxed(t *testing.T) {
 		t.Errorf("Content-Security-Policy = %q, want default-src 'none'; sandbox", got)
 	}
 }
+
+func TestV11IngestFigureRewriteAndV10Gating(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dir := admin.createDir("", "V11", "")
+
+	sum := sha256.Sum256([]byte(testSVG))
+	wantAssetURL := "/api/v1/assets/" + hex.EncodeToString(sum[:])
+
+	// #31: <figure> inside <step>, <tab>, and <figure-group> all rewrite on ingest.
+	v11XML := `<document version="1.1">
+  <meta><title>V11 Figs</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta>
+  <body>
+    <steps><step title="S1"><figure src="./s.svg"/></step></steps>
+    <tabs><tab title="T1"><figure src="./t.svg"/></tab><tab title="T2"><md>ok</md></tab></tabs>
+    <figure-group cols="2"><figure src="./g1.svg"/><figure src="./g2.svg"/></figure-group>
+  </body>
+</document>`
+	resp := admin.ingest(ingestReq{
+		xml: v11XML,
+		assets: []figure{
+			{src: "./s.svg", name: "s.svg", data: []byte(testSVG)},
+			{src: "./t.svg", name: "t.svg", data: []byte(testSVG)},
+			{src: "./g1.svg", name: "g1.svg", data: []byte(testSVG)},
+			{src: "./g2.svg", name: "g2.svg", data: []byte(testSVG)},
+		},
+		dirs: []string{dir},
+	})
+	if resp.status != http.StatusCreated {
+		t.Fatalf("ingest v1.1 figures: %d %s", resp.status, resp.body)
+	}
+	id := resp.json()["id"].(string)
+	content := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body)
+	if gotCount := strings.Count(content, wantAssetURL); gotCount != 4 {
+		t.Fatalf("expected 4 rewritten %s paths, got %d\n%s", wantAssetURL, gotCount, content)
+	}
+
+	// #79 runnable part: re-uploading v1.0 document using <figure alt="..."> returns 422 TAG_REQUIRES_1_1 with hint.
+	badV10 := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><section title="S"><figure src="a.svg" alt="Alt"/></section></body></document>`
+	rej := admin.ingest(ingestReq{
+		xml:    badV10,
+		assets: []figure{{src: "a.svg", name: "a.svg", data: []byte(testSVG)}},
+	})
+	if rej.status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 on v1.0 with <figure alt>, got %d %s", rej.status, rej.body)
+	}
+	errs := rej.json()["errors"].([]any)
+	first := errs[0].(map[string]any)
+	if first["code"] != "TAG_REQUIRES_1_1" || first["hint"] == nil || first["hint"] == "" {
+		t.Fatalf("expected TAG_REQUIRES_1_1 with hint, got %v", first)
+	}
+}
