@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -154,4 +155,117 @@ func TestPushLocalFailuresSkipNetwork(t *testing.T) {
 	if _, err := runCLI(t, "push", "../examples/minimal-report.xml"); err == nil || !strings.Contains(err.Error(), "AUMBRY_TOKEN") {
 		t.Errorf("missing token error should name the fix: %v", err)
 	}
+}
+
+func TestPushV11FlagsAndPreflight(t *testing.T) {
+	t.Run("flag conflicts fail without touching network", func(t *testing.T) {
+		isolate(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("network must not be contacted on flag conflict")
+		}))
+		defer srv.Close()
+		t.Setenv("AUMBRY_SERVER", srv.URL)
+		t.Setenv("AUMBRY_TOKEN", "tok")
+
+		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--draft", "--dir", "D1"); err == nil || !strings.Contains(err.Error(), "--draft") {
+			t.Errorf("--draft --dir: got err=%v", err)
+		}
+		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--create-only", "--id", "ITEM1", "--key", "k"); err == nil || !strings.Contains(err.Error(), "--create-only") {
+			t.Errorf("--create-only --id: got err=%v", err)
+		}
+		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--create-only"); err == nil || !strings.Contains(err.Error(), "--key") {
+			t.Errorf("--create-only without --key: got err=%v", err)
+		}
+	})
+
+	t.Run("draft ignores default_dirs and preflights agent/dirs against v1.0 404", func(t *testing.T) {
+		isolate(t)
+		v10 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/agent/dirs" {
+				t.Fatalf("unexpected v1.0 call to %s before preflight failure", r.URL.Path)
+			}
+			http.Error(w, `{"error":"not_found"}`, http.StatusNotFound)
+		}))
+		defer v10.Close()
+		mustRun(t, "config", "set", "--server", v10.URL, "--token", "tok", "--dir", "DEF1")
+		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--draft"); err == nil || !strings.Contains(err.Error(), "404") {
+			t.Fatalf("expected 404 preflight error on v1.0 server, got %v", err)
+		}
+		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--create-only", "--key", "k:1"); err == nil || !strings.Contains(err.Error(), "404") {
+			t.Fatalf("expected 404 preflight error for create-only, got %v", err)
+		}
+	})
+
+	t.Run("draft sends draft=1 and full_url while ignoring AUMBRY_DIRS", func(t *testing.T) {
+		isolate(t)
+		var capturedDirs []string
+		var draftVal string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.HasSuffix(r.URL.Path, "/api/v1/agent/dirs") {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_ = r.ParseMultipartForm(1 << 20)
+			if r.MultipartForm != nil {
+				capturedDirs = r.MultipartForm.Value["dirs"]
+			}
+			draftVal = r.FormValue("draft")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"abcd12345678","type":"report","url":"/r/abcd12345678","dirs":[],"assets":0,"created":true,"draft":true,"published":false}`))
+		}))
+		defer srv.Close()
+		mustRun(t, "config", "set", "--server", srv.URL+"/sub", "--token", "tok", "--dir", "DEFAULT_DIR")
+		t.Setenv("AUMBRY_DIRS", "ENV_DIR")
+
+		out := mustRun(t, "push", "../examples/minimal-report.xml", "--draft", "--key", "k:d")
+		if draftVal != "1" || len(capturedDirs) != 0 {
+			t.Fatalf("draft=%q dirs=%v, want draft=1 and no dirs", draftVal, capturedDirs)
+		}
+		var res map[string]any
+		if err := json.Unmarshal([]byte(out), &res); err != nil {
+			t.Fatal(err)
+		}
+		if res["full_url"] != srv.URL+"/sub/r/abcd12345678" || res["draft"] != true || res["published"] != false {
+			t.Fatalf("response = %v", res)
+		}
+	})
+
+	t.Run("409 already_published and 422 UNSUPPORTED_VERSION hints", func(t *testing.T) {
+		isolate(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/api/v1/agent/dirs" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"already_published","message":"published"}`))
+		}))
+		defer srv.Close()
+		t.Setenv("AUMBRY_SERVER", srv.URL)
+		t.Setenv("AUMBRY_TOKEN", "tok")
+		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--draft", "--key", "k:pub"); err == nil || !strings.Contains(err.Error(), "unpublish") {
+			t.Fatalf("already_published error = %v", err)
+		}
+
+		v10Reject := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"valid":false,"errors":[{"code":"UNSUPPORTED_VERSION","field":"document.version","message":"version must be 1.0"}]}`))
+		}))
+		defer v10Reject.Close()
+		t.Setenv("AUMBRY_SERVER", v10Reject.URL)
+
+		var outBuf, errBuf bytes.Buffer
+		root := NewRootCmd()
+		root.SetOut(&outBuf)
+		root.SetErr(&errBuf)
+		root.SetArgs([]string{"push", "../examples/minimal-report.xml"})
+		err := root.Execute()
+		var failed *ValidationFailedError
+		if !errors.As(err, &failed) || !strings.Contains(errBuf.String(), "upgrade") {
+			t.Fatalf("err=%v stderr=%q stdout=%q", err, errBuf.String(), outBuf.String())
+		}
+	})
 }
