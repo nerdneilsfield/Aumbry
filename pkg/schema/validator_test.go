@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,13 +30,18 @@ func TestParseRules(t *testing.T) {
 		{"minimal valid", doc(``), nil},
 		{"malformed XML", `<document>`, []string{"INVALID_XML"}},
 		{"html entity is not XML", doc(`<section title="a"><md>&nbsp;</md></section>`), []string{"INVALID_XML"}},
+		{"doctype", `<!DOCTYPE document [<!ENTITY x "y">]>` + doc(`<section title="a"><md>&x;</md></section>`), []string{"INVALID_XML"}},
 		{"wrong root", `<report/>`, []string{"INVALID_ROOT"}},
 		{"bad version", strings.Replace(doc(``), `"1.0"`, `"2.0"`, 1), []string{"UNSUPPORTED_VERSION"}},
-		{"bad type and date",
+		{
+			"bad type and date",
 			`<document version="1.0"><meta><title>T</title><type>note</type><date>20-11-2026</date><summary>S</summary><source-agent>a</source-agent></meta><body/></document>`,
-			[]string{"INVALID_TYPE", "INVALID_DATE"}},
-		{"missing meta fields", `<document version="1.0"><meta><title>T</title></meta><body/></document>`,
-			[]string{"REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD"}},
+			[]string{"INVALID_TYPE", "INVALID_DATE"},
+		},
+		{
+			"missing meta fields", `<document version="1.0"><meta><title>T</title></meta><body/></document>`,
+			[]string{"REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD"},
+		},
 		{"section needs title", doc(`<section/>`), []string{"MISSING_ATTR"}},
 		{"unknown tag", doc(`<section title="a"><video/></section>`), []string{"UNKNOWN_TAG"}},
 		{"bare text in section", doc(`<section title="a">hello</section>`), []string{"UNEXPECTED_TEXT"}},
@@ -45,9 +51,11 @@ func TestParseRules(t *testing.T) {
 		{"collapse allows only md and figure", doc(`<section title="a"><collapse title="c"><callout type="info">x</callout></collapse></section>`), []string{"UNKNOWN_TAG"}},
 		{"sources need an entry", doc(`<sources/>`), []string{"MISSING_SOURCE"}},
 		{"source url", doc(`<sources><source title="t" url="ftp://x"/></sources>`), []string{"INVALID_URL"}},
-		{"table cell mismatch",
+		{
+			"table cell mismatch",
 			doc(`<section title="a"><compare-table><columns><col>a</col><col>b</col></columns><row><cell>1</cell><cell>2</cell></row><row><cell>1</cell></row></compare-table></section>`),
-			[]string{"TABLE_COL_MISMATCH"}},
+			[]string{"TABLE_COL_MISMATCH"},
+		},
 		{"table needs rows", doc(`<section title="a"><compare-table><columns><col>a</col></columns></compare-table></section>`), []string{"TABLE_NO_ROWS"}},
 		{"figure absolute path", doc(`<section title="a"><figure src="/etc/x.png"/></section>`), []string{"INVALID_ASSET_PATH"}},
 		{"figure remote", doc(`<section title="a"><figure src="https://x.org/a.png"/></section>`), []string{"INVALID_ASSET_PATH"}},
@@ -99,9 +107,84 @@ func TestRewriteAssetsKeepsEverythingElse(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := doc(`<section title="a"><md><![CDATA[<figure src="./x.png"/> & text]]></md>` +
-		`<figure src="/api/v1/assets/abc" caption="A &amp; B"/><figure src="/api/v1/assets/abc"></figure></section>`)
-	if string(out) != want {
+		`<figure src="/api/v1/assets/abc" caption="A &amp; B"/><figure src="/api/v1/assets/abc"/></section>`)
+	if strings.TrimSuffix(string(out), "\n") != want { // the serializer ends the document with a newline
 		t.Fatalf("rewrite =\n%s\nwant\n%s", out, want)
+	}
+}
+
+// Empty elements come back self-closing: the XML tree does not record whether the input used <a></a> or <a/>.
+func TestRewriteAssetsIsRepeatableAndKeepsDeclaration(t *testing.T) {
+	input := "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + doc(`<section title="a"><figure src="a.png"/></section>`)
+	d, issues := Parse([]byte(input), Options{})
+	if len(issues) != 0 {
+		t.Fatal(issues)
+	}
+	for range 2 {
+		out, err := d.RewriteAssets(map[string]string{"a.png": "/x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(string(out), "<?xml version=\"1.0\"") || !strings.Contains(string(out), `<figure src="/x"/>`) {
+			t.Fatalf("rewrite = %s", out)
+		}
+	}
+	if _, err := d.RewriteAssets(map[string]string{}); err == nil {
+		t.Fatal("missing mapping must fail")
+	}
+}
+
+func TestIssuesCarryCodeFieldAndLine(t *testing.T) {
+	input := "<document version=\"1.0\">" + metaBlock + "\n<body>\n<section title=\"a\">\n" +
+		"<compare-table><columns><col>a</col><col>b</col><col>c</col><col>d</col></columns>\n" +
+		"<row><cell>1</cell><cell>2</cell><cell>3</cell></row></compare-table>\n" +
+		"<paper-card title=\"p\" url=\"HTTP://x.org\"/><paper-card title=\"p\" url=\"http://\"/>\n</section></body></document>"
+	_, issues := Parse([]byte(input), Options{})
+	want := []ValidationError{
+		{Line: 5, Code: "TABLE_COL_MISMATCH", Field: "compare-table.row[1]", Message: "expected 4 cells to match columns, got 3"},
+		{Line: 6, Code: "INVALID_URL", Field: "paper-card.url", Message: "must be an http or https URL"},
+	}
+	if !slices.Equal(issues, want) {
+		t.Fatalf("issues = %+v\nwant %+v", issues, want)
+	}
+}
+
+func TestMetaAndAssetsOrder(t *testing.T) {
+	input := `<document version="1.0"><meta><title> T </title><type>post</type><date>2026-02-28</date><summary>S</summary>` +
+		`<source-agent>a</source-agent><canonical-url>https://x.org/p</canonical-url><tags><tag>go</tag><tag>xml</tag></tags>` +
+		`<related-ids><id>abcdefghij_-</id></related-ids></meta><body><section title="a">` +
+		`<figure src="b.png"/><collapse title="c"><figure src="./a/../a.SVG"/></collapse><figure src="b.png"/></section></body></document>`
+	d, issues := Parse([]byte(input), Options{})
+	if len(issues) != 0 {
+		t.Fatal(issues)
+	}
+	want := Metadata{
+		Title: "T", Type: "post", Date: "2026-02-28", Summary: "S", SourceAgent: "a", CanonicalURL: "https://x.org/p",
+		Tags: []string{"go", "xml"}, RelatedIDs: []string{"abcdefghij_-"},
+	}
+	if d.Meta.Title != want.Title || d.Meta.CanonicalURL != want.CanonicalURL ||
+		!slices.Equal(d.Meta.Tags, want.Tags) || !slices.Equal(d.Meta.RelatedIDs, want.RelatedIDs) {
+		t.Fatalf("meta = %+v", d.Meta)
+	}
+	if !slices.Equal(d.Assets, []string{"b.png", "a.SVG"}) {
+		t.Fatalf("assets = %v", d.Assets)
+	}
+	_, issues = Parse([]byte(strings.Replace(input, "2026-02-28", "2026-02-30", 1)), Options{})
+	if got := codes(issues); !slices.Equal(got, []string{"INVALID_DATE"}) {
+		t.Fatalf("impossible date: %v", got)
+	}
+}
+
+func TestNormalizeAssetPath(t *testing.T) {
+	for src, want := range map[string]string{"a.png": "a.png", "./imgs//a.png": "imgs/a.png", "x/../a.png": "a.png"} {
+		if got, ok := NormalizeAssetPath(src); !ok || got != want {
+			t.Errorf("NormalizeAssetPath(%q) = %q, %v; want %q", src, got, ok, want)
+		}
+	}
+	for _, src := range []string{"", ".", "..", "../a.png", "a/../../b.png", "/a.png", "//h/a.png", "https://x.org/a.png", "data:image/png;base64,AA"} {
+		if got, ok := NormalizeAssetPath(src); ok {
+			t.Errorf("NormalizeAssetPath(%q) = %q, want rejection", src, got)
+		}
 	}
 }
 

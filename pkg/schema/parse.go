@@ -1,136 +1,104 @@
 package schema
 
 import (
-	"bytes"
-	"encoding/xml"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
+
+	"github.com/lestrrat-go/helium"
+	"github.com/lestrrat-go/helium/xpath1"
 )
 
-func lineAt(input []byte, offset int64) int {
-	if offset > int64(len(input)) {
-		offset = int64(len(input))
+// find evaluates a constant XPath expression. The expressions in this package are fixed
+// strings, so a compile or evaluation error is a programming error.
+func find(tree *helium.Document, expr string) []helium.Node {
+	nodes, err := xpath1.Find(context.Background(), tree, expr)
+	if err != nil {
+		panic(fmt.Sprintf("schema: xpath %q: %v", expr, err))
 	}
-	return bytes.Count(input[:offset], []byte{'\n'}) + 1
+	return nodes
 }
 
-// parseTree builds the element tree. Syntax errors are reported as INVALID_XML.
-func parseTree(input []byte) (*node, *ValidationError) {
-	decoder := xml.NewDecoder(bytes.NewReader(input))
-	invalid := func(message string) (*node, *ValidationError) {
-		return nil, &ValidationError{
-			Line: lineAt(input, decoder.InputOffset()), Code: "INVALID_XML", Field: "document", Message: message,
-		}
+func text(n helium.Node) string { return strings.TrimSpace(string(n.Content())) }
+
+func texts(tree *helium.Document, expr string) []string {
+	var out []string
+	for _, n := range find(tree, expr) {
+		out = append(out, text(n))
 	}
-	var root *node
-	var stack []*node
-	for {
-		before := decoder.InputOffset()
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return invalid(err.Error())
-		}
-		switch t := token.(type) {
-		case xml.StartElement:
-			n := &node{
-				name: t.Name.Local, attrs: t.Attr, line: lineAt(input, before),
-				start: before, end: decoder.InputOffset(),
-			}
-			n.selfClosing = bytes.HasSuffix(input[n.start:n.end], []byte("/>"))
-			if len(stack) == 0 {
-				if root != nil {
-					return invalid("multiple root elements")
-				}
-				root = n
-			} else {
-				parent := stack[len(stack)-1]
-				parent.kids = append(parent.kids, n)
-			}
-			stack = append(stack, n)
-		case xml.EndElement:
-			stack = stack[:len(stack)-1]
-		case xml.CharData:
-			if len(stack) > 0 {
-				stack[len(stack)-1].text += string(t)
+	return out
+}
+
+func parseTree(input []byte) (*helium.Document, *ValidationError) {
+	tree, err := helium.NewParser().Parse(context.Background(), input)
+	if err != nil {
+		issue := &ValidationError{Code: "INVALID_XML", Field: "document", Message: err.Error()}
+		var pe helium.ErrParseError
+		if errors.As(err, &pe) {
+			issue.Line = pe.LineNumber
+			if pe.Err != nil {
+				issue.Message = pe.Err.Error()
 			}
 		}
+		return nil, issue
 	}
-	if root == nil {
-		return invalid("document is empty")
+	// The protocol has no use for DTDs; refusing them rules out entity tricks outright.
+	if dtd := tree.IntSubset(); dtd != nil {
+		return nil, &ValidationError{Line: dtd.Line(), Code: "INVALID_XML", Field: "document", Message: "DOCTYPE declarations are not allowed"}
 	}
-	return root, nil
+	return tree, nil
+}
+
+func (d *Document) readMeta() {
+	field := func(name string) string {
+		if values := texts(d.tree, "/document/meta/"+name+"[1]"); len(values) > 0 {
+			return values[0]
+		}
+		return ""
+	}
+	d.Meta = Metadata{
+		Title: field("title"), Type: field("type"), Date: field("date"), Summary: field("summary"),
+		SourceAgent: field("source-agent"), CanonicalURL: field("canonical-url"),
+		Tags: texts(d.tree, "/document/meta/tags/tag"), RelatedIDs: texts(d.tree, "/document/meta/related-ids/id"),
+	}
 }
 
 // RewriteAssets returns the XML with every <figure src> replaced via mapping,
-// which is keyed by normalized path. All other bytes are preserved.
+// which is keyed by normalized path. Everything else, CDATA sections included, is
+// carried over by the XML tree round trip; empty elements are written in the self-closing form
+// and an XML declaration is only written if the input had one.
 func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
-	var figures []*node
-	var collect func(*node)
-	collect = func(n *node) {
-		if n.name == "figure" {
-			figures = append(figures, n)
-		}
-		for _, k := range n.kids {
-			collect(k)
-		}
+	// Work on a fresh tree so the Document stays unchanged and can be rewritten again.
+	tree, issue := parseTree(d.input)
+	if issue != nil {
+		return nil, errors.New(issue.Message)
 	}
-	collect(d.root)
-
-	var out bytes.Buffer
-	var pos int64
-	for _, fig := range figures {
-		src, _ := fig.attr("src")
+	for _, n := range find(tree, figureXPath) {
+		fig := n.(*helium.Element)
+		src, _ := fig.GetAttribute("src")
 		normalized, _ := NormalizeAssetPath(src)
 		replacement, ok := mapping[normalized]
 		if !ok {
 			return nil, fmt.Errorf("no replacement for figure src %q", src)
 		}
-		out.Write(d.input[pos:fig.start])
-		out.WriteString("<figure")
-		for _, a := range fig.attrs {
-			value := a.Value
-			if a.Name.Local == "src" {
-				value = replacement
-			}
-			var escaped strings.Builder
-			if err := xml.EscapeText(&escaped, []byte(value)); err != nil {
-				return nil, err
-			}
-			fmt.Fprintf(&out, ` %s="%s"`, a.Name.Local, escaped.String())
+		if err := fig.SetAttribute("src", replacement); err != nil {
+			return nil, err
 		}
-		if fig.selfClosing {
-			out.WriteString("/>")
-		} else {
-			out.WriteString(">")
-		}
-		pos = fig.end
 	}
-	out.Write(d.input[pos:])
-	return out.Bytes(), nil
+	var out strings.Builder
+	if err := helium.NewWriter().XMLDeclaration(tree.Version() != "").WriteTo(&out, tree); err != nil {
+		return nil, err
+	}
+	return []byte(out.String()), nil
 }
 
 // PlainText returns the document text and searchable attributes for full-text indexing.
 func (d *Document) PlainText() string {
 	var b strings.Builder
-	var walk func(*node)
-	walk = func(n *node) {
-		for _, name := range []string{"title", "caption", "name", "authors"} {
-			if v, ok := n.attr(name); ok {
-				b.WriteString(v)
-				b.WriteByte(' ')
-			}
-		}
-		b.WriteString(n.text)
+	for _, n := range find(d.tree, "//@title | //@caption | //@name | //@authors | //text()") {
+		b.Write(n.Content())
 		b.WriteByte(' ')
-		for _, k := range n.kids {
-			walk(k)
-		}
 	}
-	walk(d.root)
 	return strings.Join(strings.Fields(b.String()), " ")
 }
