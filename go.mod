@@ -8,6 +8,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/httplog/v3 v3.5.0
 	github.com/go-chi/httprate v0.16.1
+	github.com/gofrs/flock v0.13.1
 	github.com/gorilla/securecookie v1.1.2
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lestrrat-go/helium v0.11.0

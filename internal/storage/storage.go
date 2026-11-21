@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"time"
 
 	"github.com/studio-b12/gowebdav"
@@ -36,6 +37,7 @@ type Store interface {
 	Open(ctx context.Context, name string) (io.ReadCloser, error)
 	Exists(ctx context.Context, name string) (bool, error)
 	Delete(ctx context.Context, name string) error
+	List(ctx context.Context, dir string) ([]string, error)
 	Probe(ctx context.Context) error
 }
 
@@ -126,6 +128,23 @@ func (w *WebDAV) Delete(_ context.Context, name string) error {
 		return err
 	}
 	return nil
+}
+
+// List returns the full object paths directly inside dir, excluding subdirectories.
+func (w *WebDAV) List(_ context.Context, dir string) ([]string, error) {
+	entries, err := w.client.ReadDir(dir)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	paths := make([]string, 0, len(entries))
+	for _, info := range entries {
+		if info.IsDir() {
+			continue
+		}
+		paths = append(paths, path.Join("/", dir, info.Name()))
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // Probe performs a bounded Stat("/") against the WebDAV root and classifies failures.

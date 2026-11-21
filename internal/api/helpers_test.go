@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"net/url"
+	"path"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,6 +77,20 @@ func (m *memStore) Delete(_ context.Context, name string) error {
 	defer m.mu.Unlock()
 	delete(m.files, name)
 	return nil
+}
+
+func (m *memStore) List(_ context.Context, dir string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := strings.TrimSuffix(path.Clean("/"+dir), "/") + "/"
+	var out []string
+	for name := range m.files {
+		if strings.HasPrefix(name, prefix) && !strings.Contains(strings.TrimPrefix(name, prefix), "/") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (m *memStore) Probe(_ context.Context) error {

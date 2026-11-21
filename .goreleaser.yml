@@ -41,6 +41,42 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    files:
+      - LICENSE*
+      - README*
+      - skills/aumbry/**/*
+
+dockers_v2:
+  - id: aumbry
+    ids:
+      - cli
+      - server
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/nerdneilsfield/aumbry
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}{{ .Major }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: false
+    labels:
+      org.opencontainers.image.source: https://github.com/nerdneilsfield/Aumbry
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.description: "Private, searchable hub for AI-agent research reports"
+    annotations:
+      "index,manifest:org.opencontainers.image.source": https://github.com/nerdneilsfield/Aumbry
+      "index,manifest:org.opencontainers.image.version": "{{ .Version }}"
+      "index,manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "index,manifest:org.opencontainers.image.created": "{{ .Date }}"
+      "index,manifest:org.opencontainers.image.licenses": MIT
+      "index,manifest:org.opencontainers.image.description": "Private, searchable hub for AI-agent research reports"
 
 release:
   github:

@@ -48,7 +48,12 @@ func newRootCmd(logger *slog.Logger) *cobra.Command {
 		},
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", "", "path to TOML configuration file")
-	root.AddCommand(newCheckConfigCmd(&configPath))
+	root.AddCommand(
+		newCheckConfigCmd(&configPath),
+		newBackupCmd(&configPath),
+		newVerifyStorageCmd(&configPath),
+		newGCCmd(&configPath),
+	)
 	return root
 }
 
@@ -103,6 +108,15 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 	if err != nil {
 		return fmt.Errorf("configure WebDAV storage: %w", err)
 	}
+	lock, err := db.TryLockDataDir(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil {
+			logger.Error("release data directory lock", "error", closeErr)
+		}
+	}()
 	database, err := db.Open(cfg.DataDir)
 	if err != nil {
 		return err

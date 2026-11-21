@@ -20,6 +20,11 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+func sqliteDSN(dataDir string, pragmas ...string) string {
+	query := url.Values{"_pragma": pragmas}
+	return filepath.Join(dataDir, "aumbry.db") + "?" + query.Encode()
+}
+
 // Open initializes the database in dataDir and applies schema migrations.
 //
 // The PRAGMAs are part of the DSN so every connection the pool ever opens gets them. The pool
@@ -29,8 +34,7 @@ func Open(dataDir string) (*sqlx.DB, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	query := url.Values{"_pragma": {"busy_timeout(5000)", "journal_mode(WAL)", "foreign_keys(1)"}}
-	dsn := filepath.Join(dataDir, "aumbry.db") + "?" + query.Encode()
+	dsn := sqliteDSN(dataDir, "busy_timeout(5000)", "journal_mode(WAL)", "foreign_keys(1)")
 	database, err := sqlx.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
@@ -39,6 +43,28 @@ func Open(dataDir string) (*sqlx.DB, error) {
 
 	if err := migrate(context.Background(), database); err != nil {
 		return nil, errors.Join(err, database.Close())
+	}
+	return database, nil
+}
+
+// OpenExisting opens an existing database in dataDir without creating a new database or running migrations.
+func OpenExisting(dataDir string) (*sqlx.DB, error) {
+	dbPath := filepath.Join(dataDir, "aumbry.db")
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("database at %s: %w", dbPath, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("database path %s is a directory", dbPath)
+	}
+	dsn := sqliteDSN(dataDir, "busy_timeout(5000)", "foreign_keys(1)")
+	database, err := sqlx.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open SQLite database: %w", err)
+	}
+	database.SetMaxOpenConns(1)
+	if err := database.PingContext(context.Background()); err != nil {
+		return nil, errors.Join(fmt.Errorf("ping SQLite database: %w", err), database.Close())
 	}
 	return database, nil
 }

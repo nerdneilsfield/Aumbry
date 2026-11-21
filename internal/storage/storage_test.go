@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,34 @@ func TestWebDAVRoundTrip(t *testing.T) {
 	}
 	if ok, _ := store.Exists(ctx, "/xml/a.xml"); ok {
 		t.Fatal("still exists after delete")
+	}
+}
+
+func TestWebDAVList(t *testing.T) {
+	server := httptest.NewServer(&webdav.Handler{FileSystem: webdav.NewMemFS(), LockSystem: webdav.NewMemLS()})
+	defer server.Close()
+	store, err := NewWebDAV(server.URL, "u", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	if _, err := store.List(ctx, "/xml"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("List missing dir = %v, want ErrNotFound", err)
+	}
+
+	for _, name := range []string{"/xml/b.xml", "/xml/a.xml", "/xml/sub/c.xml"} {
+		if err := store.Put(ctx, name, strings.NewReader("<x/>")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.List(ctx, "/xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/xml/a.xml", "/xml/b.xml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("List(/xml) = %v, want %v", got, want)
 	}
 }
 

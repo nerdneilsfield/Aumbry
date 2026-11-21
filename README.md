@@ -77,9 +77,12 @@ By default `trusted_proxies` is empty, so `X-Forwarded-For` and `X-Forwarded-Pro
 
 When running behind a reverse proxy, set `trusted_proxies` (or `AUMBRY_TRUSTED_PROXIES`) to the proxy's IP(s) or CIDR(s), e.g. `trusted_proxies = ["10.0.0.0/8"]`. Only requests whose direct TCP peer falls inside `trusted_proxies` have their `X-Forwarded-For` (walked right-to-left skipping trusted hops) and `X-Forwarded-Proto: https` honored; untrusted peers cannot spoof these headers.
 
-### Single-instance constraint, limits and notes
+### Single-instance constraint, backup, and storage maintenance
 
 - **Single instance only**: Aumbry uses a single SQLite writer connection and in-memory rate limiters. Run only one server instance against a given `data_dir` and WebDAV store; running multiple replicas causes database lock contention and inconsistent rate limiting.
+- **WAL-safe backup (`backup`)**: Do **not** back up SQLite by copying `aumbry.db` directly while running in WAL mode, as uncheckpointed pages in `-wal` would be omitted. Use `aumbry-server backup --out <path>` instead (runs `VACUUM INTO`, safe online while the server is running). Note that `backup` captures only the SQLite database; updating an item later deletes the superseded XML from WebDAV. For a full point-in-time recovery, pair the database snapshot with a simultaneous WebDAV snapshot, run `aumbry-server verify-storage` after restoring, and open a sample report and figure to confirm.
+- **Storage verification (`verify-storage`)**: `aumbry-server verify-storage` checks that every XML and asset path referenced in SQLite exists on WebDAV and exits non-zero if any object is missing.
+- **Garbage collection (`gc`)**: `aumbry-server gc --dry-run` lists unreferenced WebDAV XML/asset objects (including failed-upload remnants) and orphan `assets` rows; safe while running. Destructive `aumbry-server gc` (without `--dry-run`) refuses to run while `aumbry-server` holds the `data_dir` lock—stop the server first to avoid deleting objects uploaded by an in-flight `POST /api/v1/ingest` transaction.
 - `POST /api/v1/ingest` accepts at most 100 MB per request, 10 MB for the XML and 20 MB per figure (png, jpeg, webp or svg, detected from the file content). The CLI sends each figure's `src` in a repeated `asset_srcs` field in the same order as the `assets[]` files.
 - WebDAV client requests bound dial (5s) and response-header wait (30s); `/readyz` uses a dedicated 2s probe deadline.
 - Search uses SQLite FTS5 with the trigram tokenizer. Query terms shorter than three characters (typical for two-character Chinese words) cannot use the index and fall back to a `LIKE` scan.
@@ -93,6 +96,8 @@ To run the CLI:
 The validator emits JSON by default; `--format text` selects human-readable output.
 
 ## Container
+
+Multi-architecture images (`linux/amd64`, `linux/arm64`) are published to GHCR at `ghcr.io/nerdneilsfield/aumbry` (with `aumbry-server` as `ENTRYPOINT` and `aumbry` at `/usr/local/bin/aumbry`). After the very first release push, set the package visibility to **public** once in GitHub package settings if anonymous pulls are desired.
 
 Official images do not embed `AUMBRY_*` environment defaults, so `data_dir` / `AUMBRY_DATA_DIR` must be provided via TOML or env. Two standalone `docker-compose.yml` profiles are provided:
 
