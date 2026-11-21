@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hkdf"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -14,6 +15,21 @@ import (
 	"github.com/gorilla/securecookie"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type secureRequestKey struct{}
+
+// WithSecureRequest records whether the request arrived over HTTPS (via TLS or a trusted proxy).
+func WithSecureRequest(ctx context.Context, secure bool) context.Context {
+	return context.WithValue(ctx, secureRequestKey{}, secure)
+}
+
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	secure, _ := r.Context().Value(secureRequestKey{}).(bool)
+	return secure
+}
 
 const (
 	adminCookie   = "aumbry_admin"
@@ -161,7 +177,7 @@ func newCookie(r *http.Request, name, value string, maxAge time.Duration) *http.
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   isSecureRequest(r),
 	}
 	if maxAge < 0 {
 		c.MaxAge = -1

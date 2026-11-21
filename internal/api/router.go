@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -13,11 +14,24 @@ import (
 	"github.com/go-chi/httplog/v3"
 	"github.com/go-chi/httprate"
 	"github.com/jmoiron/sqlx"
+	"github.com/unrolled/secure"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
 	"github.com/nerdneilsfield/aumbry/internal/storage"
 	"github.com/nerdneilsfield/aumbry/internal/webembed"
 )
+
+const (
+	ingestConcurrencyLimit = 4
+	writeRateLimitPerMin   = 120
+)
+
+// RouterOptions configures proxy trust and readiness probing behavior on the HTTP router.
+type RouterOptions struct {
+	TrustedProxies []netip.Prefix
+	ReadyCacheTTL  time.Duration
+	ReadyTimeout   time.Duration
+}
 
 // Server holds the dependencies shared by all handlers.
 type Server struct {
@@ -25,30 +39,48 @@ type Server struct {
 	store  storage.Store
 	auth   *auth.Sessions
 	logger *slog.Logger
+	ready  *ReadinessChecker
 }
 
 // NewRouter creates the API routes and embedded frontend handler.
-func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, logger *slog.Logger) (http.Handler, error) {
+func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, logger *slog.Logger, opts ...RouterOptions) (http.Handler, error) {
 	frontend, err := webembed.Files()
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{db: database, store: store, auth: sessions, logger: logger}
+	var opt RouterOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	s := &Server{
+		db:     database,
+		store:  store,
+		auth:   sessions,
+		logger: logger,
+		ready:  NewReadinessChecker(database, store, logger, opt.ReadyCacheTTL, opt.ReadyTimeout),
+	}
+
+	logSchema := httplog.SchemaECS.Concise(true)
+	logSchema.RequestRemoteIP = httplog.SchemaECS.RequestRemoteIP
 
 	router := chi.NewRouter()
-	// The client IP is the TCP peer. Behind a reverse proxy, replace this with the matching
-	// middleware.ClientIPFrom* for your proxy; never trust forwarding headers by default.
-	router.Use(middleware.ClientIPFromRemoteAddr)
+	router.Use(clientIPMiddleware(opt.TrustedProxies))
+	router.Use(securityHeaders())
 	router.Use(httplog.RequestLogger(logger, &httplog.Options{
 		Level:         slog.LevelInfo,
-		Schema:        httplog.SchemaECS.Concise(true),
+		Schema:        logSchema,
 		RecoverPanics: true,
 		Skip:          func(r *http.Request, _ int) bool { return r.URL.Path == "/healthz" },
 	}))
 
 	router.Get("/healthz", health)
+	router.Get("/readyz", s.readyz)
 	router.Route("/api/v1", func(r chi.Router) {
-		r.Post("/ingest", s.ingest)
+		writeLimit := writeLimiter()
+		r.Group(func(r chi.Router) {
+			r.Use(writeLimit)
+			r.With(middleware.Throttle(ingestConcurrencyLimit)).Post("/ingest", s.ingest)
+		})
 
 		r.Get("/dirs/{id}", s.getDir)
 		r.With(attemptLimiter()).Post("/dirs/{id}/unlock", s.unlockDir)
@@ -86,14 +118,34 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 	return router, nil
 }
 
+func securityHeaders() func(http.Handler) http.Handler {
+	return secure.New(secure.Options{
+		FrameDeny:          true,
+		ContentTypeNosniff: true,
+		ReferrerPolicy:     "no-referrer",
+	}).Handler
+}
+
+func clientIPKey(r *http.Request) (string, error) {
+	return httprate.CanonicalizeIP(middleware.GetClientIP(r.Context())), nil
+}
+
 // attemptLimiter allows 10 requests per minute per client IP for password-checking endpoints.
 func attemptLimiter() func(http.Handler) http.Handler {
 	return httprate.LimitBy(10, time.Minute,
-		func(r *http.Request) (string, error) {
-			return httprate.CanonicalizeIP(middleware.GetClientIP(r.Context())), nil
-		},
+		clientIPKey,
 		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many attempts, try again later")
+		}),
+	)
+}
+
+// writeLimiter allows 120 requests per minute per client IP across write/agent endpoints.
+func writeLimiter() func(http.Handler) http.Handler {
+	return httprate.LimitBy(writeRateLimitPerMin, time.Minute,
+		clientIPKey,
+		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusTooManyRequests, "too_many_requests", "rate limit exceeded, try again later")
 		}),
 	)
 }

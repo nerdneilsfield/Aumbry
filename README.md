@@ -11,28 +11,48 @@ Aumbry is a Go monorepo for a private, searchable hub for AI-agent research repo
 ## Local development
 
 ```sh
-cp .env.example .env
-# Fill in all required settings in .env.
+cp config.example.toml aumbry.toml && chmod 600 aumbry.toml
+# Fill in all required settings in aumbry.toml.
 make setup
 make test
 make build
+./aumbry-server check-config
+./aumbry-server
+```
+
+Env-only local runs are still supported via `.env.example`:
+
+```sh
+cp .env.example .env
+# Fill in all required settings in .env.
 make run
 ```
 
-The server listens on `AUMBRY_LISTEN_ADDR` (default `:8080`) and exposes `GET /healthz`. `AUMBRY_DATA_DIR` must be writable. Admin credentials, API tokens, a 32-byte cookie secret, and private WebDAV credentials are required by the PRD; the example file intentionally contains no secrets. The `.env` file is ignored by Git.
+The server listens on `listen_addr` / `AUMBRY_LISTEN_ADDR` (default `:8080`) and exposes `GET /healthz` (lightweight liveness) and `GET /readyz` (readiness probe checking SQLite and WebDAV with a 2s timeout and 5s WebDAV cache). `data_dir` / `AUMBRY_DATA_DIR` must be writable. Both `aumbry.toml` and `.env` are ignored by Git (keep permissions restricted with `chmod 600`).
 
 ## Server operations
 
 ### Configuration
 
-| Variable | Notes |
-| :-- | :-- |
-| `AUMBRY_LISTEN_ADDR` | default `:8080` |
-| `AUMBRY_DATA_DIR` | holds `aumbry.db` (SQLite, WAL); back up this file |
-| `AUMBRY_ADMIN_USER`, `AUMBRY_ADMIN_PASSWORD_HASH` | admin login; the hash must be bcrypt, the server exits at startup otherwise |
-| `AUMBRY_API_TOKENS` | comma separated bearer tokens for `POST /api/v1/ingest` |
-| `AUMBRY_COOKIE_SECRET` | at least 32 bytes; the cookie encryption and signing keys are derived from it. Changing it signs everyone out |
-| `AUMBRY_WEBDAV_URL`, `AUMBRY_WEBDAV_USER`, `AUMBRY_WEBDAV_PASS` | private object store for `/xml/{id}.xml` and `/assets/{sha256}.{ext}`. The server is its only reader and writer |
+Configuration can be supplied via TOML, environment variables, or both.
+
+- **TOML discovery order** (first match wins): `--config <path>` -> `AUMBRY_CONFIG` -> `./aumbry.toml` -> `/etc/aumbry/config.toml`. Explicit paths (`--config` or `AUMBRY_CONFIG`) must exist; if no implicit path exists, the server runs in env-only mode.
+- **Precedence**: environment variables override TOML keys, which override built-in defaults (`listen_addr = ":8080"`).
+- **Strict validation**: unknown TOML keys are rejected at startup. All missing required keys are reported together. Secrets readable by group/other emit a startup warning (`chmod 600` recommended).
+- **Validate without starting**: `aumbry-server check-config [--config path]` prints the effective configuration with secrets masked to their last 4 characters and exits without opening SQLite or connecting to WebDAV.
+
+| TOML key | Environment variable | Required | Notes |
+| :-- | :-- | :-- | :-- |
+| `listen_addr` | `AUMBRY_LISTEN_ADDR` | No | default `:8080` |
+| `data_dir` | `AUMBRY_DATA_DIR` | Yes | holds `aumbry.db` (SQLite, WAL) |
+| `admin.user` | `AUMBRY_ADMIN_USER` | Yes | admin login username |
+| `admin.password_hash` | `AUMBRY_ADMIN_PASSWORD_HASH` | Yes | valid bcrypt hash; validated at startup |
+| `api_tokens` | `AUMBRY_API_TOKENS` | Yes | TOML array or comma-separated env bearer tokens for `POST /api/v1/ingest` |
+| `cookie_secret` | `AUMBRY_COOKIE_SECRET` | Yes | at least 32 bytes; changing it signs everyone out |
+| `webdav.url` | `AUMBRY_WEBDAV_URL` | Yes | private WebDAV root URL |
+| `webdav.user` | `AUMBRY_WEBDAV_USER` | Yes | WebDAV username |
+| `webdav.password` | `AUMBRY_WEBDAV_PASS` | Yes | WebDAV password |
+| `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | No | TOML array or comma-separated IP/CIDR list; default empty |
 
 Generate the admin password hash with Apache's `htpasswd` (`apache2-utils` / `httpd-tools`):
 
@@ -40,25 +60,29 @@ Generate the admin password hash with Apache's `htpasswd` (`apache2-utils` / `ht
 htpasswd -nbBC 10 '' 'your-password' | cut -d: -f2
 ```
 
-The hash contains `$` characters. In `.env` wrap it in single quotes, for example `AUMBRY_ADMIN_PASSWORD_HASH='$2y$10$...'`, otherwise `make run` (which sources the file) and `docker compose` (which interpolates `$VARIABLE`) will corrupt it. If you put it in an `environment:` block of `docker-compose.yml` instead, write every `$` as `$$`.
+Inside TOML double-quoted strings (`"..."`), `$` does not need escaping. In `.env`, wrap the hash in single quotes (`AUMBRY_ADMIN_PASSWORD_HASH='$2y$10$...'`), otherwise `make run` and `docker compose` will expand `$VARIABLES`. If you put it in an `environment:` block of `docker-compose.yml`, write every `$` as `$$`.
 
 ### Security behaviour
 
-- Visitors unlock a password-protected directory with `POST /api/v1/dirs/{id}/unlock`; the unlocked set lives in an encrypted, signed, `HttpOnly`, `SameSite=Lax` cookie (30 days; admin session 7 days). `Secure` is set when the request arrives over TLS or with `X-Forwarded-Proto: https`.
+- All HTTP responses include `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`.
+- Visitors unlock a password-protected directory with `POST /api/v1/dirs/{id}/unlock`; the unlocked set lives in an encrypted, signed, `HttpOnly`, `SameSite=Lax` cookie (30 days; admin session 7 days). `Secure` is set only when the connection arrives over TLS or via a `trusted_proxies` peer carrying `X-Forwarded-Proto: https`.
 - Changing or clearing a directory password invalidates the sessions that were issued for the old password.
-- Unlock and admin login are limited to 10 requests per minute per client IP (in memory, per process, so it resets on restart).
-- Uploaded figures are served through the server only, with `Cache-Control: private`, `X-Content-Type-Options: nosniff` and a `sandbox` CSP so an SVG opened directly cannot run scripts.
+- Unlock and admin login are limited to 10 requests per minute per client IP (in memory, per process).
+- Write endpoints (`POST /api/v1/ingest` and future agent endpoints) are rate-limited to 120 requests per minute per client IP, and `POST /api/v1/ingest` caps concurrent in-flight uploads at 4.
+- Uploaded figures and item XML are served through the server only, with `Cache-Control: private`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: default-src 'none'; sandbox` so an SVG or XML opened directly cannot run scripts.
 
 ### Behind a reverse proxy
 
-The rate limiter keys on the TCP peer (`r.RemoteAddr`). Behind a reverse proxy every visitor therefore shares the proxy's address and one bucket. Forwarding headers are deliberately **not** trusted by default, because a client could forge them to evade the limit. If your proxy is trusted, replace `middleware.ClientIPFromRemoteAddr` in `internal/api/router.go` with the chi `middleware.ClientIPFrom*` that matches it (for example `ClientIPFromXFF("10.0.0.0/8")` or `ClientIPFromHeader("X-Real-IP")` for a proxy that overwrites that header). Do not use chi's `RealIP`, which trusts the headers from anyone. Terminate TLS at the proxy and forward `X-Forwarded-Proto` so cookies get the `Secure` flag.
+By default `trusted_proxies` is empty, so `X-Forwarded-For` and `X-Forwarded-Proto` are ignored and the direct TCP peer (`r.RemoteAddr`) is used.
 
-### Limits and notes
+When running behind a reverse proxy, set `trusted_proxies` (or `AUMBRY_TRUSTED_PROXIES`) to the proxy's IP(s) or CIDR(s), e.g. `trusted_proxies = ["10.0.0.0/8"]`. Only requests whose direct TCP peer falls inside `trusted_proxies` have their `X-Forwarded-For` (walked right-to-left skipping trusted hops) and `X-Forwarded-Proto: https` honored; untrusted peers cannot spoof these headers.
 
+### Single-instance constraint, limits and notes
+
+- **Single instance only**: Aumbry uses a single SQLite writer connection and in-memory rate limiters. Run only one server instance against a given `data_dir` and WebDAV store; running multiple replicas causes database lock contention and inconsistent rate limiting.
 - `POST /api/v1/ingest` accepts at most 100 MB per request, 10 MB for the XML and 20 MB per figure (png, jpeg, webp or svg, detected from the file content). The CLI sends each figure's `src` in a repeated `asset_srcs` field in the same order as the `assets[]` files.
+- WebDAV client requests bound dial (5s) and response-header wait (30s); `/readyz` uses a dedicated 2s probe deadline.
 - Search uses SQLite FTS5 with the trigram tokenizer. Query terms shorter than three characters (typical for two-character Chinese words) cannot use the index and fall back to a `LIKE` scan.
-- Images that no item references any more stay in the private storage; there is no garbage collection in v1.
-- The SQLite pool uses a single connection, which serializes writers; this is intended for a personal or small-team instance.
 
 To run the CLI:
 
@@ -70,18 +94,28 @@ The validator emits JSON by default; `--format text` selects human-readable outp
 
 ## Container
 
-After completing `.env`, run `docker compose up --build`. SQLite data is stored in the `aumbry-data` volume. Configure a private WebDAV service separately; the compose file does not expose or provision one.
+Official images do not embed `AUMBRY_*` environment defaults, so `data_dir` / `AUMBRY_DATA_DIR` must be provided via TOML or env. Two standalone `docker-compose.yml` profiles are provided:
+
+```sh
+# 1. TOML-only (using ./aumbry.toml, no .env needed)
+docker compose --profile toml up --build
+
+# 2. Env-only (using .env, no aumbry.toml needed)
+docker compose --profile env up --build
+```
+
+SQLite data is persisted in the `aumbry-data` volume. Configure a private WebDAV service separately; the compose file does not expose or provision one.
 
 ## Repository layout
 
 ```text
 main.go              Template-style CLI entry point and signal handling
 cmd/                 Cobra command tree, version, validate, config, and push
-cmd/server/          HTTP server entry point
-internal/api/        HTTP router, ingest, directory, item, asset, search and admin handlers
+cmd/server/          HTTP server entry point and server subcommands
+internal/api/        HTTP router, proxy trust, readiness, ingest, directory, item, asset, search and admin handlers
 internal/auth/       API tokens, admin login and signed session cookies
 internal/buildinfo/  version, commit, and date injected at link time
-internal/config/     Environment configuration and validation
+internal/config/     TOML + environment configuration loading and validation
 internal/db/         SQLite connection and initial migrations
 internal/logging/    CLI Zap logger writing to stderr
 internal/storage/    Storage interface and the private WebDAV adapter

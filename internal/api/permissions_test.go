@@ -221,8 +221,8 @@ func TestUnlockSessions(t *testing.T) {
 	if strings.Contains(set, "Secure") {
 		t.Errorf("Secure set on plain http: %q", set)
 	}
-	if !strings.Contains(unlockSetCookieTLS(t, e, f), "Secure") {
-		t.Error("Secure not set behind X-Forwarded-Proto=https")
+	if strings.Contains(unlockSetCookieTLS(t, e, f), "Secure") {
+		t.Error("Secure set by untrusted X-Forwarded-Proto=https under default config")
 	}
 
 	// The whole protected subtree is open now: dir, inner dir, items, search and assets.

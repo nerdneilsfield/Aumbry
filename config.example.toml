@@ -1,0 +1,43 @@
+# Copy to aumbry.toml (or /etc/aumbry/config.toml), fill in all required values,
+# and restrict permissions because this file contains secrets: chmod 600 aumbry.toml
+#
+# Config lookup order (first match wins):
+#   --config <path> -> AUMBRY_CONFIG -> ./aumbry.toml -> /etc/aumbry/config.toml
+# Any AUMBRY_* environment variable overrides the corresponding TOML key.
+#
+# IMPORTANT — SINGLE INSTANCE ONLY:
+# Aumbry uses a single SQLite writer connection and in-memory rate limiters.
+# Do NOT run multiple server replicas against the same data_dir or WebDAV store.
+
+# HTTP listen address (env: AUMBRY_LISTEN_ADDR, default: ":8080")
+listen_addr = ":8080"
+
+# Directory for SQLite database aumbry.db (env: AUMBRY_DATA_DIR, required)
+data_dir = "./data"
+
+# Bearer tokens accepted by POST /api/v1/ingest (env: AUMBRY_API_TOKENS, comma-separated, required)
+api_tokens = ["replace-with-random-bearer-token"]
+
+# At least 32 random bytes, e.g. `openssl rand -hex 32` (env: AUMBRY_COOKIE_SECRET, required)
+cookie_secret = "replace-with-at-least-32-random-bytes-for-cookies"
+
+# Reverse proxy IPs or CIDRs whose X-Forwarded-For and X-Forwarded-Proto headers are trusted.
+# Empty by default (all forwarding headers ignored). (env: AUMBRY_TRUSTED_PROXIES, comma-separated)
+trusted_proxies = []
+
+[admin]
+# Administrator username (env: AUMBRY_ADMIN_USER, required)
+user = "admin"
+
+# bcrypt hash of the admin password (env: AUMBRY_ADMIN_PASSWORD_HASH, required):
+#   htpasswd -nbBC 10 '' 'your-password' | cut -d: -f2
+# Note: "$" does NOT need escaping inside TOML basic strings.
+password_hash = "$2y$10$replaceThisWithABcryptHashGeneratedByHtpasswd000000000"
+
+[webdav]
+# Private WebDAV root URL holding XML and image objects (env: AUMBRY_WEBDAV_URL, required)
+url = "https://dav.example.com/aumbry"
+
+# WebDAV credentials (env: AUMBRY_WEBDAV_USER, AUMBRY_WEBDAV_PASS, required)
+user = "aumbry"
+password = "replace-with-webdav-password"

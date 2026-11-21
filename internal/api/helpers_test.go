@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -33,11 +34,18 @@ const (
 
 // memStore is an in-memory storage.Store.
 type memStore struct {
-	mu    sync.Mutex
-	files map[string][]byte
+	mu         sync.Mutex
+	files      map[string][]byte
+	probeErr   error
+	probeCalls atomic.Int32
+	onProbe    func()
+	onPut      func()
 }
 
 func (m *memStore) Put(_ context.Context, name string, body io.Reader) error {
+	if m.onPut != nil {
+		m.onPut()
+	}
 	data, err := io.ReadAll(body)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -69,6 +77,22 @@ func (m *memStore) Delete(_ context.Context, name string) error {
 	return nil
 }
 
+func (m *memStore) Probe(_ context.Context) error {
+	m.probeCalls.Add(1)
+	if m.onProbe != nil {
+		m.onProbe()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.probeErr
+}
+
+func (m *memStore) setProbeErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.probeErr = err
+}
+
 func (m *memStore) count(prefix string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -96,12 +120,18 @@ func (m *memStore) has(prefix, content string) bool {
 type env struct {
 	t      *testing.T
 	srv    *httptest.Server
+	router http.Handler
 	store  *memStore
 	secret string
 	dir    string // scratch slot for tests
 }
 
 func newEnv(t *testing.T) *env {
+	t.Helper()
+	return newEnvWithOptions(t, RouterOptions{}, nil)
+}
+
+func newEnvWithOptions(t *testing.T, opts RouterOptions, logger *slog.Logger) *env {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -119,13 +149,16 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	store := &memStore{files: map[string][]byte{}}
-	router, err := NewRouter(database, store, sessions, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	router, err := NewRouter(database, store, sessions, logger, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, store: store, secret: cookieSecret}
+	return &env{t: t, srv: srv, router: router, store: store, secret: cookieSecret}
 }
 
 // client is an HTTP client with its own cookie jar, i.e. one browser.
