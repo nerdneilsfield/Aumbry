@@ -93,7 +93,30 @@ To run the CLI:
 ./aumbry validate examples/minimal-report.xml
 ```
 
-The validator emits JSON by default; `--format text` selects human-readable output.
+The validator emits JSON by default; `--format text` selects human-readable output. Run `./aumbry schema` to inspect the supported v1.0/v1.1 XML protocol reference.
+
+## 安装 Skill
+
+仓库内随附 Agent Skill 位于 [`skills/aumbry/`](skills/aumbry/SKILL.md)（每次 GitHub Release 压缩包也会在 `skills/aumbry/` 下打包同一份目录，包含 `references/` 与 `assets/examples/`）。
+
+将 Skill 复制或软链到你的 Agent skills 目录（例如 `~/.agents/skills/aumbry`）：
+
+```sh
+# 方式一：软链仓库目录（随 git pull 同步）
+mkdir -p ~/.agents/skills
+ln -sfn "$(pwd)/skills/aumbry" ~/.agents/skills/aumbry
+
+# 方式二：从仓库或 Release 解压目录复制
+mkdir -p ~/.agents/skills
+cp -R skills/aumbry ~/.agents/skills/aumbry
+```
+
+配置 CLI 连接与 Token 后即可让 Agent 按 Skill 自动发现目录、校验并推送：
+
+```sh
+aumbry config set --server https://your-aumbry.example --token amb_...
+aumbry config show
+```
 
 ## Container
 
@@ -115,9 +138,9 @@ SQLite data is persisted in the `aumbry-data` volume. Configure a private WebDAV
 
 ```text
 main.go              Template-style CLI entry point and signal handling
-cmd/                 Cobra command tree, version, validate, config, and push
+cmd/                 Cobra command tree (version, validate, schema, config, push, dirs, list, unpublish, delete)
 cmd/server/          HTTP server entry point and server subcommands
-internal/api/        HTTP router, proxy trust, readiness, ingest, directory, item, asset, search and admin handlers
+internal/api/        HTTP router, proxy trust, readiness, ingest, agent, directory, item, asset, search and admin handlers
 internal/auth/       API tokens, admin login and signed session cookies
 internal/buildinfo/  version, commit, and date injected at link time
 internal/config/     TOML + environment configuration loading and validation
@@ -125,6 +148,7 @@ internal/db/         SQLite connection and initial migrations
 internal/logging/    CLI Zap logger writing to stderr
 internal/storage/    Storage interface and the private WebDAV adapter
 internal/webembed/   Embedded frontend filesystem
-pkg/schema/          Shared XML types, validation, and text extraction
+pkg/schema/          Shared XML types, v1.0/v1.1 validation, spec, and text extraction
+skills/aumbry/       Bundled Agent Skill, generated schema reference, and 5 structural examples
 web/                 Vue 3 + TypeScript + Vite application
 ```

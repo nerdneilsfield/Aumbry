@@ -6,7 +6,7 @@ date := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 ldflags := -X $(pkg)/internal/buildinfo.Version=$(version) -X $(pkg)/internal/buildinfo.Commit=$(commit) -X $(pkg)/internal/buildinfo.Date=$(date)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup frontend build build-server build-cli install run test clean fmt fmt-check vet lint check hooks release-check release-test
+.PHONY: help setup frontend build build-server build-cli install run test clean fmt fmt-check vet lint check hooks release-check release-test skill-refs skill-check
 
 help: ## list makefile targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -69,4 +69,14 @@ release-check: ## validate GoReleaser config
 release-test: setup frontend ## build a local snapshot release
 	goreleaser release --snapshot --clean
 
-check: fmt-check lint vet test release-check ## run all checks
+skill-refs: ## regenerate skill XML tag reference from CLI schema
+	CGO_ENABLED=0 go run . schema --format md > skills/aumbry/references/xml-tags.md
+
+skill-check: ## check generated skill reference and validate all skill examples
+	@tmpbin=$$(mktemp) && trap 'rm -f "$$tmpbin"' EXIT && \
+	CGO_ENABLED=0 go build -o "$$tmpbin" . && \
+	"$$tmpbin" schema --format md > skills/aumbry/references/xml-tags.md && \
+	git diff --exit-code -- skills/aumbry/references/xml-tags.md && \
+	for f in skills/aumbry/assets/examples/*.xml; do "$$tmpbin" validate "$$f" > /dev/null || exit 1; done
+
+check: fmt-check lint vet test skill-check release-check ## run all checks

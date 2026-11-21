@@ -44,7 +44,7 @@ archives:
     files:
       - LICENSE*
       - README*
-      - skills/aumbry/**/*
+      - skills/aumbry/**
 
 dockers_v2:
   - id: aumbry

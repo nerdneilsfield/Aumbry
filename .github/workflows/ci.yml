@@ -39,6 +39,8 @@ jobs:
           args: -c .golangci.yml
       - name: Check Go
         run: make setup build-server fmt-check vet test
+      - name: Check Skill
+        run: make skill-check
 
   release-check:
     runs-on: ubuntu-24.04
