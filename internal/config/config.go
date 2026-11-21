@@ -3,81 +3,52 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"strings"
+
+	"github.com/caarlos0/env/v11"
 )
 
 // Config contains the server's runtime settings.
 type Config struct {
-	ListenAddr        string
-	DataDir           string
-	AdminUser         string
-	AdminPasswordHash string
-	APITokens         []string
-	CookieSecret      string
-	WebDAVURL         string
-	WebDAVUser        string
-	WebDAVPassword    string
+	ListenAddr        string   `env:"AUMBRY_LISTEN_ADDR" envDefault:":8080"`
+	DataDir           string   `env:"AUMBRY_DATA_DIR,required,notEmpty"`
+	AdminUser         string   `env:"AUMBRY_ADMIN_USER,required,notEmpty"`
+	AdminPasswordHash string   `env:"AUMBRY_ADMIN_PASSWORD_HASH,required,notEmpty"`
+	APITokens         []string `env:"AUMBRY_API_TOKENS,required,notEmpty" envSeparator:","`
+	CookieSecret      string   `env:"AUMBRY_COOKIE_SECRET,required,notEmpty"`
+	WebDAVURL         string   `env:"AUMBRY_WEBDAV_URL,required,notEmpty"`
+	WebDAVUser        string   `env:"AUMBRY_WEBDAV_USER,required,notEmpty"`
+	WebDAVPassword    string   `env:"AUMBRY_WEBDAV_PASS,required,notEmpty"`
 }
+
+// verbatim lists the secrets that are used exactly as given; every other value is trimmed.
+var verbatim = map[string]bool{"AUMBRY_COOKIE_SECRET": true, "AUMBRY_WEBDAV_PASS": true}
 
 // Load reads and validates the required AUMBRY_* environment variables.
 func Load() (Config, error) {
-	cfg := Config{
-		ListenAddr:        envOr("AUMBRY_LISTEN_ADDR", ":8080"),
-		DataDir:           strings.TrimSpace(os.Getenv("AUMBRY_DATA_DIR")),
-		AdminUser:         strings.TrimSpace(os.Getenv("AUMBRY_ADMIN_USER")),
-		AdminPasswordHash: strings.TrimSpace(os.Getenv("AUMBRY_ADMIN_PASSWORD_HASH")),
-		APITokens:         splitTokens(os.Getenv("AUMBRY_API_TOKENS")),
-		CookieSecret:      os.Getenv("AUMBRY_COOKIE_SECRET"),
-		WebDAVURL:         strings.TrimSpace(os.Getenv("AUMBRY_WEBDAV_URL")),
-		WebDAVUser:        strings.TrimSpace(os.Getenv("AUMBRY_WEBDAV_USER")),
-		WebDAVPassword:    os.Getenv("AUMBRY_WEBDAV_PASS"),
-	}
-
-	var missing []string
-	required := []struct {
-		key   string
-		value string
-	}{
-		{"AUMBRY_DATA_DIR", cfg.DataDir},
-		{"AUMBRY_ADMIN_USER", cfg.AdminUser},
-		{"AUMBRY_ADMIN_PASSWORD_HASH", cfg.AdminPasswordHash},
-		{"AUMBRY_COOKIE_SECRET", cfg.CookieSecret},
-		{"AUMBRY_WEBDAV_URL", cfg.WebDAVURL},
-		{"AUMBRY_WEBDAV_USER", cfg.WebDAVUser},
-		{"AUMBRY_WEBDAV_PASS", cfg.WebDAVPassword},
-	}
-	for _, field := range required {
-		if strings.TrimSpace(field.value) == "" {
-			missing = append(missing, field.key)
+	environment := env.ToMap(os.Environ())
+	for key, value := range environment {
+		if !verbatim[key] {
+			environment[key] = strings.TrimSpace(value)
 		}
 	}
-	if len(cfg.APITokens) == 0 {
-		missing = append(missing, "AUMBRY_API_TOKENS")
+	cfg, err := env.ParseAsWithOptions[Config](env.Options{Environment: environment})
+	if err != nil {
+		return Config{}, err
 	}
-	if len(missing) > 0 {
-		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+
+	tokens := cfg.APITokens[:0]
+	for _, token := range cfg.APITokens {
+		if token = strings.TrimSpace(token); token != "" {
+			tokens = append(tokens, token)
+		}
+	}
+	if cfg.APITokens = tokens; len(tokens) == 0 {
+		return Config{}, errors.New(`required environment variable "AUMBRY_API_TOKENS" has no tokens`)
 	}
 	if len(cfg.CookieSecret) < 32 {
 		return Config{}, errors.New("AUMBRY_COOKIE_SECRET must contain at least 32 bytes")
 	}
 	return cfg, nil
-}
-
-func envOr(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func splitTokens(value string) []string {
-	var tokens []string
-	for _, token := range strings.Split(value, ",") {
-		if token = strings.TrimSpace(token); token != "" {
-			tokens = append(tokens, token)
-		}
-	}
-	return tokens
 }

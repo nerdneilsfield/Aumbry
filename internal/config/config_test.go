@@ -14,8 +14,30 @@ func TestLoadRejectsMissingRequiredSettings(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "AUMBRY_DATA_DIR") {
-		t.Fatalf("Load() error = %v, want missing required settings", err)
+	if err == nil {
+		t.Fatal("Load() succeeded, want missing required settings")
+	}
+	// Every missing variable is reported at once, not just the first.
+	for _, key := range []string{
+		"AUMBRY_DATA_DIR", "AUMBRY_ADMIN_USER", "AUMBRY_ADMIN_PASSWORD_HASH",
+		"AUMBRY_API_TOKENS", "AUMBRY_COOKIE_SECRET", "AUMBRY_WEBDAV_URL",
+		"AUMBRY_WEBDAV_USER", "AUMBRY_WEBDAV_PASS",
+	} {
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("Load() error = %v, want it to name %s", err, key)
+		}
+	}
+}
+
+func TestLoadTreatsWhitespaceOnlyAsMissing(t *testing.T) {
+	for key, value := range map[string]string{"AUMBRY_ADMIN_USER": "   ", "AUMBRY_API_TOKENS": " , ,"} {
+		t.Run(key, func(t *testing.T) {
+			setRequiredEnvironment(t)
+			t.Setenv(key, value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), key) {
+				t.Fatalf("Load() error = %v, want %s rejected", err, key)
+			}
+		})
 	}
 }
 

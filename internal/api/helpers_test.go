@@ -81,6 +81,18 @@ func (m *memStore) count(prefix string) int {
 	return n
 }
 
+// has reports whether an object whose name starts with prefix holds exactly content.
+func (m *memStore) has(prefix, content string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, data := range m.files {
+		if strings.HasPrefix(name, prefix) && string(data) == content {
+			return true
+		}
+	}
+	return false
+}
+
 type env struct {
 	t      *testing.T
 	srv    *httptest.Server

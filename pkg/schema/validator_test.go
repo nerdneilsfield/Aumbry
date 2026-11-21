@@ -42,6 +42,8 @@ func TestParseRules(t *testing.T) {
 			"missing meta fields", `<document version="1.0"><meta><title>T</title></meta><body/></document>`,
 			[]string{"REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD"},
 		},
+		{"second body is never rendered", strings.Replace(doc(``), `</document>`, `<body/></document>`, 1), []string{"DUPLICATE_BODY"}},
+		{"second meta", strings.Replace(doc(``), `<body>`, metaBlock+`<body>`, 1), []string{"DUPLICATE_META"}},
 		{"section needs title", doc(`<section/>`), []string{"MISSING_ATTR"}},
 		{"unknown tag", doc(`<section title="a"><video/></section>`), []string{"UNKNOWN_TAG"}},
 		{"bare text in section", doc(`<section title="a">hello</section>`), []string{"UNEXPECTED_TEXT"}},

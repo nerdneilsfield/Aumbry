@@ -177,7 +177,10 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 		Related:      []itemSummary{},
 	}
 	for _, d := range visible {
-		detail.Dirs = append(detail.Dirs, dirRef{ID: d, Name: t.dirs[d].Name})
+		// A mount whose directory is missing from the loaded tree has no name to show.
+		if rec := t.dirs[d]; rec != nil {
+			detail.Dirs = append(detail.Dirs, dirRef{ID: d, Name: rec.Name})
+		}
 	}
 	detail.Related, err = s.relatedItems(ctx, t, v, row.RelatedJSON)
 	if err != nil {
@@ -243,5 +246,7 @@ func (s *Server) getItemContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Tenant-written XML opened directly must not run scripts (XHTML/SVG elements) in the app origin.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	_, _ = io.Copy(w, body)
 }

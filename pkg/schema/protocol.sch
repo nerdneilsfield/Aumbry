@@ -18,6 +18,8 @@
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|document|&lt;document&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
       <assert test="meta">MISSING_META|document.meta|&lt;meta&gt; is required</assert>
       <assert test="body">MISSING_BODY|document.body|&lt;body&gt; is required</assert>
+      <assert test="count(meta) le 1">DUPLICATE_META|document.meta|&lt;document&gt; must contain exactly one &lt;meta&gt;</assert>
+      <assert test="count(body) le 1">DUPLICATE_BODY|document.body|&lt;document&gt; must contain exactly one &lt;body&gt;</assert>
     </rule>
     <rule context="/document/*[not(self::meta or self::body)]">
       <report test="true()">UNKNOWN_TAG|document|unexpected &lt;<value-of select="name()"/>&gt; inside &lt;document&gt;</report>

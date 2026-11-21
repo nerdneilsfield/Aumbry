@@ -64,9 +64,13 @@ func (s *Server) getDir(w http.ResponseWriter, r *http.Request) {
 		Breadcrumb: []crumb{}, Children: []childDir{}, Items: []itemSummary{},
 	}
 	// Walk up while the ancestors are still visible; a hidden ancestor ends the trail.
-	for cur := d; cur != nil && t.accessible(v, cur.ID); cur = t.dirs[cur.ParentID] {
+	t.ancestors(d.ID, func(cur *dirRec) bool {
+		if !t.accessible(v, cur.ID) {
+			return false
+		}
 		view.Breadcrumb = append([]crumb{{ID: cur.ID, Name: cur.Name}}, view.Breadcrumb...)
-	}
+		return true
+	})
 	if d.ParentID != "" && t.accessible(v, d.ParentID) {
 		parent := d.ParentID
 		view.ParentID = &parent

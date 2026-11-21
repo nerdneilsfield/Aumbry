@@ -250,31 +250,41 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	xmlPath := "/xml/" + itemID + ".xml"
-	if err := s.store.Put(ctx, xmlPath, bytes.NewReader(rewritten)); err != nil {
+	// The content is stored under a path derived from its hash, so a version is never overwritten:
+	// the live item keeps serving its old object until the transaction commits the new path.
+	sum := sha256.Sum256(rewritten)
+	xmlPath := "/xml/" + itemID + "-" + hex.EncodeToString(sum[:]) + ".xml"
+	present, err := s.store.Exists(ctx, xmlPath)
+	if err == nil && !present {
+		err = s.store.Put(ctx, xmlPath, bytes.NewReader(rewritten))
+	}
+	if err != nil {
 		s.storageError(w, r, err)
 		return
 	}
 
-	mounted, err := s.saveItem(ctx, saveItem{
+	mounted, oldPath, err := s.saveItem(ctx, saveItem{
 		id: itemID, created: created, externalKey: externalKey, doc: doc, xmlPath: xmlPath, assets: stored, dirs: dirs,
 	})
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
-		return
-	case db.IsUniqueViolation(err):
-		if created {
+	if err != nil {
+		// Drop the object this request wrote, but never one that already existed (it may be live).
+		if !present {
 			_ = s.store.Delete(ctx, xmlPath)
 		}
-		writeError(w, http.StatusConflict, "conflict", "external_key is already used by another item")
-		return
-	case err != nil:
-		if created {
-			_ = s.store.Delete(ctx, xmlPath)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
+		case db.IsUniqueViolation(err):
+			writeError(w, http.StatusConflict, "conflict", "external_key is already used by another item")
+		default:
+			internalError(w, r, err)
 		}
-		internalError(w, r, err)
 		return
+	}
+	if oldPath != "" && oldPath != xmlPath {
+		if err := s.store.Delete(ctx, oldPath); err != nil {
+			s.logger.WarnContext(ctx, "delete superseded item content", "item", itemID, "path", oldPath, "error", err)
+		}
 	}
 
 	prefix, status := "/r/", http.StatusOK
@@ -314,16 +324,17 @@ type saveItem struct {
 }
 
 // saveItem writes the item, its assets, its search index row and its new mounts in one transaction
-// and returns the resulting mount set. Existing mounts are kept.
-func (s *Server) saveItem(ctx context.Context, in saveItem) ([]string, error) {
+// and returns the resulting mount set and, for an update, the xml path it replaced. Existing mounts
+// are kept.
+func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, oldPath string, err error) {
 	meta := in.doc.Meta
 	tags, err := marshalJSON(orEmpty(meta.Tags))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	related, err := marshalJSON(orEmpty(meta.RelatedIDs))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	plain := in.doc.PlainText()
 	var key any
@@ -333,7 +344,7 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) ([]string, error) {
 
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -344,59 +355,57 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) ([]string, error) {
 			in.id, key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
 			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain)
 	} else {
-		var res sql.Result
-		res, err = tx.ExecContext(ctx, `UPDATE items SET external_key = COALESCE(?, external_key), type = ?, title = ?,
+		// Reading the replaced path first also proves the item still exists (sql.ErrNoRows otherwise).
+		if err = tx.GetContext(ctx, &oldPath, `SELECT xml_storage_path FROM items WHERE id = ?`, in.id); err != nil {
+			return nil, "", err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE items SET external_key = COALESCE(?, external_key), type = ?, title = ?,
 			report_date = ?, summary = ?, tags_json = ?, source_agent = ?, canonical_url = ?, related_ids_json = ?,
 			xml_storage_path = ?, plain_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
 			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.id)
-		if err == nil {
-			if n, _ := res.RowsAffected(); n == 0 {
-				err = sql.ErrNoRows
-			}
-		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM item_assets WHERE item_id = ?`, in.id); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for _, a := range in.assets {
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?)`,
 			a.hash, a.mime, a.size, a.path); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_assets (item_id, asset_hash) VALUES (?, ?)`, in.id, a.hash); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, in.id); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO items_fts (item_id, title, summary, tags, plain_text) VALUES (?, ?, ?, ?, ?)`,
 		in.id, meta.Title, meta.Summary, strings.Join(meta.Tags, " "), plain); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	for _, dir := range in.dirs {
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO directory_items (directory_id, item_id) VALUES (?, ?)`, dir, in.id); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	mounted, err := itemMounts(ctx, tx, in.id)
+	mounted, err = itemMounts(ctx, tx, in.id)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if mounted == nil {
 		mounted = []string{}
 	}
-	return mounted, nil
+	return mounted, oldPath, nil
 }
 
 func orEmpty(values []string) []string {

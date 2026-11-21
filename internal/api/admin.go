@@ -179,18 +179,19 @@ func (s *Server) adminUpdateDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	t, err := s.loadTree(r.Context())
+	exists, err := s.dirExists(r.Context(), id)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
-	if t.dirs[id] == nil {
+	if !exists {
 		writeError(w, http.StatusNotFound, "not_found", "directory not found")
 		return
 	}
 
 	var sets []string
 	var args []any
+	var moveTo *string // set when parent_id is present and not null; checked against the tree in the transaction
 	for key, raw := range fields {
 		switch key {
 		case "name":
@@ -239,14 +240,7 @@ func (s *Server) adminUpdateDir(w http.ResponseWriter, r *http.Request) {
 				sets = append(sets, "parent_id = NULL")
 				break
 			}
-			if t.dirs[*parent] == nil {
-				writeError(w, http.StatusBadRequest, "parent_not_found", "parent directory does not exist")
-				return
-			}
-			if t.within(*parent, id) {
-				writeError(w, http.StatusBadRequest, "invalid_parent", "a directory cannot be moved into itself or its descendants")
-				return
-			}
+			moveTo = parent
 			sets, args = append(sets, "parent_id = ?"), append(args, *parent)
 		default:
 			writeError(w, http.StatusBadRequest, "invalid_request", "unknown field "+key)
@@ -257,8 +251,37 @@ func (s *Server) adminUpdateDir(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+
+	// Read the tree, check for a cycle and update in one transaction. The pool has a single
+	// connection, so concurrent moves run one after the other and cannot create a cycle together.
+	ctx := r.Context()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if moveTo != nil {
+		t, err := loadTreeFrom(ctx, tx)
+		if err != nil {
+			internalError(w, r, err)
+			return
+		}
+		if t.dirs[*moveTo] == nil {
+			writeError(w, http.StatusBadRequest, "parent_not_found", "parent directory does not exist")
+			return
+		}
+		if t.within(*moveTo, id) {
+			writeError(w, http.StatusBadRequest, "invalid_parent", "a directory cannot be moved into itself or its descendants")
+			return
+		}
+	}
 	query := `UPDATE directories SET ` + strings.Join(sets, ", ") + `, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-	if _, err := s.db.ExecContext(r.Context(), query, append(args, id)...); err != nil {
+	if _, err := tx.ExecContext(ctx, query, append(args, id)...); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		internalError(w, r, err)
 		return
 	}

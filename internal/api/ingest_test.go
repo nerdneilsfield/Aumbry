@@ -60,8 +60,11 @@ func TestIngestFigureRewriteAndDedup(t *testing.T) {
 	if got := e.store.files["/assets/"+hash+".svg"]; string(got) != testSVG {
 		t.Errorf("asset not stored at /assets/%s.svg", hash)
 	}
-	if got := e.store.files["/xml/"+id+".xml"]; string(got) != xml {
-		t.Error("xml not stored at /xml/{id}.xml")
+	if n := e.store.count("/xml/" + id); n != 1 {
+		t.Errorf("%d xml objects stored for the item, want 1", n)
+	}
+	if !e.store.has("/xml/"+id, xml) {
+		t.Error("served xml is not what is stored for the item")
 	}
 
 	// Same bytes under another src and in another item: one stored object.
@@ -243,5 +246,54 @@ func TestAdminDeleteItemCleansUp(t *testing.T) {
 	}
 	if got := admin.do("DELETE", "/api/v1/admin/items/"+id, nil).status; got != http.StatusNotFound {
 		t.Errorf("second delete = %d, want 404", got)
+	}
+}
+
+// A failed update must leave the item exactly as it was: same content served, same object stored.
+func TestFailedUpdateKeepsOldContent(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	id := admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Original", md: "oldtext"})})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Holder"}), key: "taken"})
+	before := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body)
+
+	resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Replacement", md: "newtext"}), itemID: id, key: "taken"})
+	if resp.status != http.StatusConflict {
+		t.Fatalf("update with a taken external_key = %d %s, want 409", resp.status, resp.body)
+	}
+	if after := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body); after != before || !strings.Contains(after, "oldtext") {
+		t.Errorf("content after a failed update changed:\n%s", after)
+	}
+	if n := e.store.count("/xml/" + id); n != 1 || !e.store.has("/xml/"+id, before) {
+		t.Errorf("storage holds %d objects for the item, want only the old one", n)
+	}
+	if got := admin.do("GET", "/api/v1/items/"+id, nil).json()["title"]; got != "Original" {
+		t.Errorf("title after a failed update = %v", got)
+	}
+
+	// A successful update serves the new content and removes the superseded object.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Replacement", md: "newtext"}), itemID: id}); resp.status != http.StatusOK {
+		t.Fatalf("update = %d %s", resp.status, resp.body)
+	}
+	after := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body)
+	if !strings.Contains(after, "newtext") || e.store.count("/xml/"+id) != 1 || !e.store.has("/xml/"+id, after) {
+		t.Errorf("after a successful update: %d objects, content %s", e.store.count("/xml/"+id), after)
+	}
+	// Re-sending identical content keeps the object that is live.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Replacement", md: "newtext"}), itemID: id}); resp.status != http.StatusOK {
+		t.Fatalf("identical update = %d %s", resp.status, resp.body)
+	}
+	if got := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body); got != after {
+		t.Errorf("content after an identical update changed")
+	}
+}
+
+func TestContentIsServedSandboxed(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	id := admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "T"})})
+	resp := admin.do("GET", "/api/v1/items/"+id+"/content", nil)
+	if got := resp.header.Get("Content-Security-Policy"); got != "default-src 'none'; sandbox" {
+		t.Errorf("Content-Security-Policy = %q, want default-src 'none'; sandbox", got)
 	}
 }
