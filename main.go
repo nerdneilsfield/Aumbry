@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,6 +17,10 @@ func main() {
 	err := cmd.Execute(ctx)
 	stop()
 	if err != nil {
+		var invalid *cmd.ValidationFailedError
+		if errors.As(err, &invalid) {
+			os.Exit(1) // the validation report is already on stdout
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

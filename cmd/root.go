@@ -3,7 +3,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -44,29 +43,4 @@ func loggerFrom(command *cobra.Command) *zap.Logger {
 		return logger
 	}
 	return zap.NewNop()
-}
-
-func newConfigCommand() *cobra.Command {
-	command := &cobra.Command{Use: "config", Short: "Manage CLI profiles"}
-	for _, name := range []string{"set", "show", "use"} {
-		command.AddCommand(&cobra.Command{
-			Use:   name,
-			Short: "Manage the active profile",
-			RunE: func(_ *cobra.Command, _ []string) error {
-				return errors.New("config profiles are not implemented yet")
-			},
-		})
-	}
-	return command
-}
-
-func newPushCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "push <file.xml>",
-		Short: "Upload or update a document",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return errors.New("push is not implemented yet")
-		},
-	}
 }

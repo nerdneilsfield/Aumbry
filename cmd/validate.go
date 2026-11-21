@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -23,27 +24,11 @@ func newValidateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if format == "json" {
-				encoder := json.NewEncoder(command.OutOrStdout())
-				encoder.SetIndent("", "  ")
-				if err := encoder.Encode(result); err != nil {
-					return err
-				}
-			} else if result.Valid {
-				_, err = fmt.Fprintln(command.OutOrStdout(), "valid:", result.File)
-			} else {
-				for _, issue := range result.Errors {
-					_, err = fmt.Fprintf(command.OutOrStdout(), "%s: %s: %s\n", issue.Code, issue.Field, issue.Message)
-					if err != nil {
-						return err
-					}
-				}
-			}
-			if err != nil {
+			if err := writeValidation(command.OutOrStdout(), result, format); err != nil {
 				return err
 			}
 			if !result.Valid {
-				return &validationFailedError{}
+				return &ValidationFailedError{}
 			}
 			return nil
 		},
@@ -52,6 +37,27 @@ func newValidateCommand() *cobra.Command {
 	return command
 }
 
-type validationFailedError struct{}
+// writeValidation prints a validation result in the requested format.
+func writeValidation(w io.Writer, result schema.ValidationResult, format string) error {
+	if format == "json" {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if result.Valid {
+		_, err := fmt.Fprintln(w, "valid:", result.File)
+		return err
+	}
+	for _, issue := range result.Errors {
+		if _, err := fmt.Fprintf(w, "%s: %s: %s\n", issue.Code, issue.Field, issue.Message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-func (*validationFailedError) Error() string { return "document validation failed" }
+// ValidationFailedError reports that the document was invalid. The details have
+// already been printed to stdout, so callers should only set the exit status.
+type ValidationFailedError struct{}
+
+func (*ValidationFailedError) Error() string { return "document validation failed" }
