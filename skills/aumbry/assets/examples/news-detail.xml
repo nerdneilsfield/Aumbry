@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>深度拆解：DriveFlow v0.2 推理算子与工程权衡</title>
+    <type>post</type>
+    <date>2026-11-20</date>
+    <summary>独立新闻详情示例：含顶置 tldr、原文引述 quote、事件时间线 timeline、待核验声明与 related-ids 回指简报。</summary>
+    <source-agent>news-detail-agent</source-agent>
+    <tags>
+      <tag>News Detail</tag>
+      <tag>Inference</tag>
+    </tags>
+    <related-ids>
+      <id>V1StGXR8_Z5j</id>
+    </related-ids>
+  </meta>
+  <body>
+    <tldr title="详情核心结论" placement="top">
+      <point>延迟下降主要来自跨相机 KV Cache 合并与 FP8 量化，并非重新训练主干。</point>
+      <verdict>结论：可直接作为独立条目检索与授权分享，回链至当日简报。</verdict>
+    </tldr>
+
+    <section title="核心声明与原文引述">
+      <quote author="DriveFlow Maintainers" source="Release Notes §2.1" url="https://github.com/open-drive/driveflow">
+        <![CDATA[我们合并了多相机视角之间的 Key-Value 张量布局，使 TensorRT 引擎消除 42% 的非对齐显存拷贝。]]>
+      </quote>
+
+      <claim level="unverified" source="社区 Issue 讨论">
+        <![CDATA[据称在 L40S 显卡上启用同一引擎时，FP8 量化在极端低照度场景存在轻度色偏（待官方复核）。]]>
+      </claim>
+    </section>
+
+    <section title="版本演进与参考">
+      <timeline>
+        <event date="2026-10" title="v0.1 开源首版">仅提供 PyTorch Eager 参考实现。</event>
+        <event date="2026-11-20" title="v0.2 引擎合并">合入融合算子与导出工具。</event>
+      </timeline>
+
+      <references>
+        <ref id="df02" title="DriveFlow v0.2 Release" authors="OpenDrive Team" year="2026" url="https://github.com/open-drive/driveflow" read-depth="full"/>
+      </references>
+
+      <sources>
+        <source title="DriveFlow GitHub Repository" url="https://github.com/open-drive/driveflow"/>
+      </sources>
+    </section>
+  </body>
+</document>
