@@ -196,3 +196,102 @@ func TestPlainText(t *testing.T) {
 		t.Fatalf("PlainText() = %q", got)
 	}
 }
+
+func doc11(body string) string {
+	return `<document version="1.1">` + metaBlock + `<body>` + body + `</body></document>`
+}
+
+func TestV11GatingAndGeneralizedXPath(t *testing.T) {
+	always := Options{HasAsset: func(string) bool { return true }}
+
+	t.Run("v1.0 rejects v1.1 tags with single TAG_REQUIRES_1_1 and no UNKNOWN_TAG", func(t *testing.T) {
+		for _, body := range []string{
+			`<claim level="claim">x</claim>`,
+			`<section title="a"><claim level="claim">x</claim></section>`,
+			`<section title="a"><collapse title="c"><claim level="claim">x</claim></collapse></section>`,
+			`<section title="a"><stages id="s"><stage id="s1" title="one"><md>x</md></stage></stages></section>`,
+			`<section title="a"><tldr><point>p</point></tldr></section>`,
+		} {
+			_, issues := Parse([]byte(doc(body)), always)
+			if got := codes(issues); !slices.Equal(got, []string{"TAG_REQUIRES_1_1"}) {
+				t.Fatalf("body %s: codes = %v, want [TAG_REQUIRES_1_1]\n%+v", body, got, issues)
+			}
+			if issues[0].Hint == "" {
+				t.Fatalf("body %s: expected non-empty Hint on TAG_REQUIRES_1_1", body)
+			}
+		}
+	})
+
+	t.Run("v1.0 still rejects v1.0 container violations with UNKNOWN_TAG", func(t *testing.T) {
+		_, issues := Parse([]byte(doc(`<md>hello</md>`)), always)
+		if got := codes(issues); !slices.Equal(got, []string{"UNKNOWN_TAG"}) {
+			t.Fatalf("codes = %v, want [UNKNOWN_TAG]\n%+v", got, issues)
+		}
+	})
+
+	t.Run("v1.0 explicitly gates new v1.1 attributes", func(t *testing.T) {
+		cases := []string{
+			`<section id="sec1" title="a"/>`,
+			`<section title="a"><figure id="f1" src="a.png"/></section>`,
+			`<section title="a"><figure alt="alt" src="a.png"/></section>`,
+			`<section title="a"><compare-table><columns><col>a</col></columns><row><cell tag="evidence">1</cell></row></compare-table></section>`,
+			`<section title="a"><paper-card title="p" url="https://x.org" venue="ICML"/></section>`,
+			`<section title="a"><paper-card title="p" url="https://x.org" doi="10.1000/1"/></section>`,
+			`<section title="a"><paper-card title="p" url="https://x.org" code-url="https://github.com/x/y"/></section>`,
+			`<section title="a"><paper-card title="p" url="https://x.org" read-depth="full"/></section>`,
+			`<section title="a"><repo-card name="r" url="https://github.com/x/y" license="MIT"/></section>`,
+			`<section title="a"><repo-card name="r" url="https://github.com/x/y" commit="abc123"/></section>`,
+		}
+		for _, body := range cases {
+			_, issues := Parse([]byte(doc(body)), always)
+			if got := codes(issues); !slices.Equal(got, []string{"TAG_REQUIRES_1_1"}) {
+				t.Fatalf("body %s: codes = %v, want [TAG_REQUIRES_1_1]\n%+v", body, got, issues)
+			}
+		}
+	})
+
+	t.Run("v1.1 accepts generalized figure and url xpaths", func(t *testing.T) {
+		input := doc11(
+			`<md>hi</md>` +
+				`<steps><step title="s1"><figure src="./s.png"/></step></steps>` +
+				`<tabs><tab title="t1"><figure src="./t.png"/></tab><tab title="t2"><md>x</md></tab></tabs>` +
+				`<figure-group cols="2"><figure src="./g1.png"/><figure src="./g2.png"/></figure-group>`,
+		)
+		d, issues := Parse([]byte(input), always)
+		if len(issues) != 0 {
+			t.Fatalf("unexpected issues: %+v", issues)
+		}
+		if d.Version != "1.1" {
+			t.Fatalf("Version = %q, want 1.1", d.Version)
+		}
+		wantAssets := []string{"s.png", "t.png", "g1.png", "g2.png"}
+		if !slices.Equal(d.Assets, wantAssets) {
+			t.Fatalf("Assets = %v, want %v", d.Assets, wantAssets)
+		}
+		rewritten, err := d.RewriteAssets(map[string]string{
+			"s.png":  "/api/v1/assets/1",
+			"t.png":  "/api/v1/assets/2",
+			"g1.png": "/api/v1/assets/3",
+			"g2.png": "/api/v1/assets/4",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, needle := range []string{"/api/v1/assets/1", "/api/v1/assets/2", "/api/v1/assets/3", "/api/v1/assets/4"} {
+			if !strings.Contains(string(rewritten), needle) {
+				t.Fatalf("missing rewritten asset %s in %s", needle, rewritten)
+			}
+		}
+
+		badURLs := doc11(
+			`<paper-card title="p" url="https://x.org" code-url="javascript:1"/>` +
+				`<references><ref id="r1" title="r" url="ftp://x.org"/></references>` +
+				`<quote url="javascript:2">text</quote>` +
+				`<news-item title="n" url="file:///etc/passwd">sum</news-item>`,
+		)
+		_, issues = Parse([]byte(badURLs), always)
+		if got := codes(issues); !slices.Equal(got, []string{"INVALID_URL", "INVALID_URL", "INVALID_URL", "INVALID_URL"}) {
+			t.Fatalf("bad URLs codes = %v\n%+v", got, issues)
+		}
+	})
+}

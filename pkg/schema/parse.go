@@ -51,6 +51,9 @@ func parseTree(input []byte) (*helium.Document, *ValidationError) {
 }
 
 func (d *Document) readMeta() {
+	if root := d.tree.DocumentElement(); root != nil {
+		d.Version, _ = root.GetAttribute("version")
+	}
 	field := func(name string) string {
 		if values := texts(d.tree, "/document/meta/"+name+"[1]"); len(values) > 0 {
 			return values[0]

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Aumbry XML protocol v1.0 (docs/prd_spec_v1.0/prd.md section 6.2) as an ISO Schematron schema.
-  Every assert/report message is "CODE|field|human readable text"; the validator splits it into
-  ValidationError.Code, .Field and .Message. The line comes from the offending node.
-  Checks that need the filesystem or net/url (figure src, http(s) URLs) live in validator.go.
+  Aumbry XML protocol v1.0 / v1.1 (docs/prd_spec_v1.1/prd.md section 6) as an ISO Schematron schema.
+  Every assert/report message is "CODE|field|human readable text[|optional hint]"; the validator splits it
+  into ValidationError.Code, .Field, .Message and .Hint. The line comes from the offending node.
+  Checks requiring JSON Schema, filesystem, net/url, rune counting or shared id namespaces live in Go.
 -->
 <schema xmlns="http://purl.oclc.org/dsdl/schematron" queryBinding="xpath3">
   <pattern id="root">
@@ -14,7 +14,7 @@
 
   <pattern id="document">
     <rule context="/document">
-      <assert test="@version = '1.0'">UNSUPPORTED_VERSION|document.version|version must be "1.0"</assert>
+      <assert test="@version = ('1.0', '1.1')">UNSUPPORTED_VERSION|document.version|version must be "1.0" or "1.1"</assert>
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|document|&lt;document&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
       <assert test="meta">MISSING_META|document.meta|&lt;meta&gt; is required</assert>
       <assert test="body">MISSING_BODY|document.body|&lt;body&gt; is required</assert>
@@ -48,78 +48,134 @@
     </rule>
   </pattern>
 
-  <pattern id="containers">
-    <rule context="/document/body">
+  <!-- Gate v1.1-only elements inside v1.0 documents without emitting duplicate UNKNOWN_TAG errors. -->
+  <pattern id="v10-gating">
+    <rule context="/document[@version='1.0']/body//*[local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail') and not(ancestor::*[local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail')])]">
+      <report test="true()">TAG_REQUIRES_1_1|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</report>
+    </rule>
+  </pattern>
+
+  <!-- Gate v1.1-only attributes added to existing v1.0 elements inside v1.0 documents. -->
+  <pattern id="v10-attr-gating">
+    <rule context="/document[@version='1.0']/body//section">
+      <assert test="not(@id)">TAG_REQUIRES_1_1|section.id|attribute "id" on &lt;section&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+    </rule>
+    <rule context="/document[@version='1.0']/body//figure">
+      <assert test="not(@id)">TAG_REQUIRES_1_1|figure.id|attribute "id" on &lt;figure&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+      <assert test="not(@alt)">TAG_REQUIRES_1_1|figure.alt|attribute "alt" on &lt;figure&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+    </rule>
+    <rule context="/document[@version='1.0']/body//compare-table/row/cell">
+      <assert test="not(@tag)">TAG_REQUIRES_1_1|cell.tag|attribute "tag" on &lt;cell&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+    </rule>
+    <rule context="/document[@version='1.0']/body//paper-card">
+      <assert test="not(@venue)">TAG_REQUIRES_1_1|paper-card.venue|attribute "venue" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+      <assert test="not(@doi)">TAG_REQUIRES_1_1|paper-card.doi|attribute "doi" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+      <assert test="not(@code-url)">TAG_REQUIRES_1_1|paper-card.code-url|attribute "code-url" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+      <assert test="not(@read-depth)">TAG_REQUIRES_1_1|paper-card.read-depth|attribute "read-depth" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+    </rule>
+    <rule context="/document[@version='1.0']/body//repo-card">
+      <assert test="not(@license)">TAG_REQUIRES_1_1|repo-card.license|attribute "license" on &lt;repo-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+      <assert test="not(@commit)">TAG_REQUIRES_1_1|repo-card.commit|attribute "commit" on &lt;repo-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
+    </rule>
+  </pattern>
+
+  <pattern id="v10-containers">
+    <rule context="/document[@version='1.0']/body">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|body|&lt;body&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
-    <rule context="/document/body/*[not(self::section or self::sources)]">
+    <rule context="/document[@version='1.0']/body/*[not(self::section or self::sources) and not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
       <report test="true()">UNKNOWN_TAG|body|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;body&gt;</report>
     </rule>
-    <rule context="/document/body/section | /document/body/section/collapse">
+    <rule context="/document[@version='1.0']/body/section | /document[@version='1.0']/body/section/collapse">
       <assert test="normalize-space(@title) != ''">MISSING_ATTR|<value-of select="name()"/>.title|&lt;<value-of select="name()"/>&gt; requires the "title" attribute</assert>
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
-    <rule context="/document/body/section/*[not(self::md or self::figure or self::paper-card or self::repo-card or self::compare-table or self::callout or self::collapse or self::sources)]">
+    <rule context="/document[@version='1.0']/body/section/*[not(self::md or self::figure or self::paper-card or self::repo-card or self::compare-table or self::callout or self::collapse or self::sources) and not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
       <report test="true()">UNKNOWN_TAG|section|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;section&gt;</report>
     </rule>
-    <rule context="/document/body/section/collapse/*[not(self::md or self::figure)]">
+    <rule context="/document[@version='1.0']/body/section/collapse/*[not(self::md or self::figure) and not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
       <report test="true()">UNKNOWN_TAG|collapse|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;collapse&gt;</report>
     </rule>
   </pattern>
 
+  <pattern id="v11-containers">
+    <rule context="/document[@version='1.1']/body | /document[@version='1.1']/body//stages/stage">
+      <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
+    </rule>
+    <rule context="/document[@version='1.1']/body//section | /document[@version='1.1']/body//collapse">
+      <assert test="normalize-space(@title) != ''">MISSING_ATTR|<value-of select="name()"/>.title|&lt;<value-of select="name()"/>&gt; requires the "title" attribute</assert>
+      <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
+    </rule>
+    <rule context="/document[@version='1.1']/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document[@version='1.1']/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+      <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
+    </rule>
+    <rule context="/document[@version='1.1']/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+      <report test="true()">UNKNOWN_TAG|stage|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;stage&gt;</report>
+    </rule>
+    <rule context="/document[@version='1.1']/body//collapse/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'search-log'))]">
+      <report test="true()">UNKNOWN_TAG|collapse|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;collapse&gt;</report>
+    </rule>
+    <rule context="/document[@version='1.1']/body//tab/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote'))] | /document[@version='1.1']/body//step/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote'))]">
+      <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
+    </rule>
+  </pattern>
+
   <pattern id="leaves">
-    <rule context="/document/body/section/*[self::md or self::figure or self::paper-card or self::repo-card or self::callout]/* | /document/body/section/collapse/*[self::md or self::figure]/*">
+    <rule context="/document[@version='1.0']/body//section/*[self::md or self::figure or self::paper-card or self::repo-card or self::callout]/*[not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))] | /document[@version='1.0']/body//collapse/*[self::md or self::figure]/*[not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
+      <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name(..)"/>&gt; cannot contain child elements</report>
+    </rule>
+    <rule context="/document[@version='1.1']/body//*[self::md or self::figure or self::paper-card or self::repo-card or self::callout or self::claim or self::equation or self::mermaid or self::chart or self::code-block or self::quote]/*">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name(..)"/>&gt; cannot contain child elements</report>
     </rule>
   </pattern>
 
   <pattern id="blocks">
-    <rule context="/document/body/section/figure | /document/body/section/collapse/figure">
+    <rule context="/document/body//figure">
       <assert test="normalize-space(@src) != ''">MISSING_ATTR|figure.src|&lt;figure&gt; requires the "src" attribute</assert>
     </rule>
-    <rule context="/document/body/section/paper-card">
+    <rule context="/document/body//paper-card">
       <assert test="normalize-space(@title) != ''">MISSING_ATTR|paper-card.title|&lt;paper-card&gt; requires the "title" attribute</assert>
       <assert test="normalize-space(@url) != ''">MISSING_ATTR|paper-card.url|&lt;paper-card&gt; requires the "url" attribute</assert>
       <assert test="not(@related-id) or matches(@related-id, '^[A-Za-z0-9_-]{12}$')">INVALID_ID|paper-card.related-id|related-id must be a 12-character item id</assert>
     </rule>
-    <rule context="/document/body/section/repo-card">
+    <rule context="/document/body//repo-card">
       <assert test="normalize-space(@name) != ''">MISSING_ATTR|repo-card.name|&lt;repo-card&gt; requires the "name" attribute</assert>
       <assert test="normalize-space(@url) != ''">MISSING_ATTR|repo-card.url|&lt;repo-card&gt; requires the "url" attribute</assert>
     </rule>
-    <rule context="/document/body/section/callout">
+    <rule context="/document/body//callout">
       <assert test="@type = ('info', 'warn', 'insight')">INVALID_ATTR|callout.type|callout type must be info, warn or insight</assert>
     </rule>
   </pattern>
 
   <pattern id="compare-table">
-    <rule context="/document/body/section/compare-table">
+    <rule context="/document/body//compare-table">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|compare-table|&lt;compare-table&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
       <assert test="columns/col">TABLE_NO_COLUMNS|compare-table.columns|&lt;compare-table&gt; requires &lt;columns&gt; with at least one &lt;col&gt;</assert>
       <assert test="row">TABLE_NO_ROWS|compare-table.row|&lt;compare-table&gt; requires at least one &lt;row&gt;</assert>
     </rule>
-    <rule context="/document/body/section/compare-table/*[not(self::columns or self::row)]">
+    <rule context="/document/body//compare-table/*[not(self::columns or self::row)]">
       <report test="true()">UNKNOWN_TAG|compare-table|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;compare-table&gt;</report>
     </rule>
-    <rule context="/document/body/section/compare-table/columns/*[not(self::col)]">
+    <rule context="/document/body//compare-table/columns/*[not(self::col)]">
       <report test="true()">UNKNOWN_TAG|compare-table.columns|&lt;columns&gt; may only contain &lt;col&gt;</report>
     </rule>
-    <rule context="/document/body/section/compare-table/row/*[not(self::cell)]">
+    <rule context="/document/body//compare-table/row/*[not(self::cell)]">
       <report test="true()">UNKNOWN_TAG|compare-table.row|&lt;row&gt; may only contain &lt;cell&gt;</report>
     </rule>
-    <rule context="/document/body/section/compare-table/row">
+    <rule context="/document/body//compare-table/row">
       <assert test="not(../columns/col) or count(cell) = count(../columns/col)">TABLE_COL_MISMATCH|compare-table.row[<value-of select="count(preceding-sibling::row) + 1"/>]|expected <value-of select="count(../columns/col)"/> cells to match columns, got <value-of select="count(cell)"/></assert>
     </rule>
   </pattern>
 
   <pattern id="sources">
-    <rule context="/document/body/sources | /document/body/section/sources">
+    <rule context="/document/body//sources">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|sources|&lt;sources&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
       <assert test="source">MISSING_SOURCE|sources|&lt;sources&gt; requires at least one &lt;source&gt;</assert>
     </rule>
-    <rule context="/document/body/sources/*[not(self::source)] | /document/body/section/sources/*[not(self::source)]">
+    <rule context="/document/body//sources/*[not(self::source)]">
       <report test="true()">UNKNOWN_TAG|sources|&lt;sources&gt; may only contain &lt;source&gt;</report>
     </rule>
-    <rule context="/document/body/sources/source | /document/body/section/sources/source">
+    <rule context="/document/body//sources/source">
       <assert test="normalize-space(@title) != ''">MISSING_ATTR|source.title|&lt;source&gt; requires the "title" attribute</assert>
       <assert test="normalize-space(@url) != ''">MISSING_ATTR|source.url|&lt;source&gt; requires the "url" attribute</assert>
     </rule>

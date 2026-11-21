@@ -6,6 +6,7 @@ type ValidationError struct {
 	Code    string `json:"code"`
 	Field   string `json:"field"`
 	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
 }
 
 // ValidationResult is the stable output shape used by the CLI and the ingest API.
