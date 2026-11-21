@@ -6,6 +6,7 @@ import { dedent } from 'ts-dedent'
 import { createHighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 import githubDark from 'shiki/themes/github-dark.mjs'
+import { safeUrl } from '@/lib/url'
 import 'katex/dist/katex.min.css'
 
 // Top-level await: only the lazily loaded reader chunk imports this module.
@@ -43,11 +44,15 @@ const md = new MarkdownIt({
 })
 md.use(texmath, { engine: katex, delimiters: 'dollars', katexOptions: { throwOnError: false } })
 
-// Defence in depth on top of markdown-it's own filter: http(s), same-origin paths and anchors only.
-md.validateLink = (url) => /^(https?:\/\/|\/(?!\/)|#)/i.test(url.trim())
+// Defence in depth on top of markdown-it's own filter: http(s), same-origin URLs and anchors only (see safeUrl).
+md.validateLink = (url) => !!safeUrl(url)
 
-// Second line of defence: sanitise the final HTML. texmath wraps formulas in <eq>/<eqn>.
+// Second line of defence: sanitise the final HTML with the same rule. texmath wraps formulas in <eq>/<eqn>.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  for (const name of ['href', 'src']) {
+    const v = node.getAttribute(name)
+    if (v !== null && !safeUrl(v)) node.removeAttribute(name)
+  }
   if (node.tagName === 'A' && /^https?:/i.test(node.getAttribute('href') ?? '')) {
     node.setAttribute('target', '_blank')
     node.setAttribute('rel', 'noopener noreferrer')

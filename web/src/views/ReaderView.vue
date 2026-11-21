@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, shallowRef, watch } from 'vue'
+import { computed, shallowRef, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useIntersectionObserver, useTitle } from '@vueuse/core'
@@ -31,15 +31,17 @@ const doc = computed(() => {
   }
 })
 const toc = computed(() => (doc.value && 'toc' in doc.value ? doc.value.toc : []))
+// The parsed document once <XmlRenderer> is actually in the DOM (item loaded, no error, XML valid).
+const rendered = computed(() => (!err.value && item.value && doc.value && !('error' in doc.value) ? doc.value : undefined))
 
 // Scroll-spy: the active TOC entry is the last section whose heading crossed the top of the viewport.
 const active = shallowRef('')
 const sections = shallowRef<HTMLElement[]>([])
-watch(toc, async (t) => {
-  await nextTick()
+// Re-run when the renderer mounts too: the content query may resolve before the item query.
+watch([toc, rendered], ([t]) => {
   sections.value = t.flatMap((e) => document.getElementById(e.id) ?? [])
   active.value = t[0]?.id ?? ''
-})
+}, { flush: 'post', immediate: true })
 useIntersectionObserver(sections, (entries) => entries.forEach((e) => e.isIntersecting && (active.value = e.target.id)), {
   rootMargin: '0px 0px -75% 0px',
 })
@@ -82,7 +84,7 @@ const jump = (sectionId: string) => document.getElementById(sectionId)?.scrollIn
     <div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
       <article class="min-w-0">
         <p v-if="doc && 'error' in doc" class="card border-red-500/40 p-4 text-sm text-red-300">{{ doc.error }}</p>
-        <XmlRenderer v-else-if="doc" :body="doc.body" />
+        <XmlRenderer v-else-if="doc" :key="id" :body="doc.body" />
       </article>
 
       <aside v-if="toc.length" class="hidden lg:block">

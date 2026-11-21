@@ -27,7 +27,8 @@ export class ApiError extends Error {
 
 export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : '未知错误')
 
-// ofetch handles JSON bodies, 204/empty responses and content-type based parsing (XML comes back as text).
+// ofetch handles JSON bodies, 204/empty responses and content-type based parsing: application/xml comes back
+// as text on success, application/json error bodies as objects (so no forced responseType anywhere).
 const http = ofetch.create({
   baseURL: '/api/v1',
   credentials: 'same-origin',
@@ -46,7 +47,7 @@ export const api = {
   searchDir: (id: string, q: string, limit: number, offset: number) =>
     http<SearchPage>(`/dirs/${enc(id)}/search`, { query: { q, limit, offset } }),
   item: (id: string) => http<ItemDetail>(`/items/${enc(id)}`),
-  itemContent: (id: string) => http<string, 'text'>(`/items/${enc(id)}/content`, { responseType: 'text' }),
+  itemContent: (id: string) => http<string, 'text'>(`/items/${enc(id)}/content`),
 
   admin: {
     login: (username: string, password: string) => http('/admin/login', { method: 'POST', body: { username, password } }),

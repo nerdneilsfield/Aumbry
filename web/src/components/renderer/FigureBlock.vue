@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, useTemplateRef } from 'vue'
+import { computed, onBeforeUnmount, useTemplateRef, watch } from 'vue'
 import mediumZoom, { type Zoom } from 'medium-zoom'
 import { attr } from '@/lib/xml'
 import { imageSrc } from '@/lib/url'
@@ -8,13 +8,15 @@ const props = defineProps<{ node: Element }>()
 const img = useTemplateRef<HTMLImageElement>('img')
 let zoom: Zoom | undefined
 
-onMounted(() => {
-  if (img.value) zoom = mediumZoom(img.value, { background: 'rgba(3, 7, 18, 0.92)', margin: 24 })
-})
+// <img> only exists while src is valid, so (re)attach zoom whenever the element appears or goes away.
+watch(img, (el) => {
+  zoom?.detach()
+  zoom = el ? mediumZoom(el, { background: 'rgba(3, 7, 18, 0.92)', margin: 24 }) : undefined
+}, { flush: 'post' })
 onBeforeUnmount(() => zoom?.detach())
 
-const src = imageSrc(attr(props.node, 'src'))
-const caption = attr(props.node, 'caption')
+const src = computed(() => imageSrc(attr(props.node, 'src')))
+const caption = computed(() => attr(props.node, 'caption'))
 </script>
 
 <template>

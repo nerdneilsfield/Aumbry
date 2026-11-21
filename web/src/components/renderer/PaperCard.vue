@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ExternalLink, FileText, BookOpen } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
@@ -6,9 +7,9 @@ import { httpUrl } from '@/lib/url'
 import MarkdownBlock from './MarkdownBlock.vue'
 
 const props = defineProps<{ node: Element }>()
-const url = httpUrl(attr(props.node, 'url'))
-const relatedId = attr(props.node, 'related-id')
-const meta = [attr(props.node, 'authors'), attr(props.node, 'date')].filter(Boolean)
+const url = computed(() => httpUrl(attr(props.node, 'url')))
+const relatedId = computed(() => attr(props.node, 'related-id'))
+const meta = computed(() => [attr(props.node, 'authors'), attr(props.node, 'date')].filter(Boolean))
 </script>
 
 <template>

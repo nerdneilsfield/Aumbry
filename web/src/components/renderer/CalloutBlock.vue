@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Info, Lightbulb, TriangleAlert } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
 import MarkdownBlock from './MarkdownBlock.vue'
@@ -10,8 +11,7 @@ const styles = {
   warn: { icon: TriangleAlert, box: 'border-amber-500/40 bg-amber-500/10', accent: 'text-amber-300' },
   insight: { icon: Lightbulb, box: 'border-violet-500/40 bg-violet-500/10', accent: 'text-violet-300' },
 }
-const type = attr(props.node, 'type')
-const s = styles[type as keyof typeof styles] ?? styles.info
+const s = computed(() => styles[attr(props.node, 'type') as keyof typeof styles] ?? styles.info)
 </script>
 
 <template>

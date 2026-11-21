@@ -6,6 +6,7 @@ import { ExternalLink, Trash2 } from 'lucide-vue-next'
 import { api, errorMessage } from '@/api/client'
 import { itemPath } from '@/lib/url'
 import { useAdmin } from '@/composables/useAdmin'
+import ConfirmDialog from '../ConfirmDialog.vue'
 import Modal from '../Modal.vue'
 import DirTree from './DirTree.vue'
 
@@ -32,7 +33,8 @@ const remove = useMutation({
   },
 })
 
-const confirmRemove = () => confirm(`确定删除「${item.value?.title}」？此操作不可恢复。`) && remove.mutate()
+const confirming = ref(false)
+const doRemove = () => remove.mutate(undefined, { onSettled: () => (confirming.value = false) })
 const error = () => saveMounts.error.value ?? remove.error.value ?? loadError.value
 </script>
 
@@ -62,8 +64,15 @@ const error = () => saveMounts.error.value ?? remove.error.value ?? loadError.va
 
     <p v-if="error()" class="mt-4 text-sm text-red-400">{{ errorMessage(error()) }}</p>
     <div v-if="item" class="mt-6 flex justify-between gap-2">
-      <button class="btn btn-danger" :disabled="remove.isPending.value" @click="confirmRemove"><Trash2 class="size-4" />删除条目</button>
+      <button class="btn btn-danger" :disabled="remove.isPending.value" @click="confirming = true"><Trash2 class="size-4" />删除条目</button>
       <button class="btn btn-primary" :disabled="saveMounts.isPending.value" @click="saveMounts.mutate()">保存挂载</button>
     </div>
+    <ConfirmDialog
+      v-model:open="confirming"
+      title="删除条目"
+      :description="`确定删除「${item?.title}」？此操作不可恢复。`"
+      :pending="remove.isPending.value"
+      @confirm="doRemove"
+    />
   </Modal>
 </template>

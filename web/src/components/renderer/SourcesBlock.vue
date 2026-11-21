@@ -1,13 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Link2 } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
 import { httpUrl } from '@/lib/url'
 
 const props = defineProps<{ node: Element }>()
-const sources = Array.from(props.node.querySelectorAll('source')).map((s) => ({
-  title: attr(s, 'title'),
-  url: httpUrl(attr(s, 'url')),
-}))
+const sources = computed(() =>
+  Array.from(props.node.querySelectorAll('source')).map((s) => ({
+    title: attr(s, 'title'),
+    url: httpUrl(attr(s, 'url')),
+  })),
+)
 </script>
 
 <template>

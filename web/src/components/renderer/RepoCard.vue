@@ -1,13 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { ExternalLink, FolderGit2, Star, Code } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
 import { httpUrl } from '@/lib/url'
 import MarkdownBlock from './MarkdownBlock.vue'
 
 const props = defineProps<{ node: Element }>()
-const url = httpUrl(attr(props.node, 'url'))
-const stars = attr(props.node, 'stars')
-const lang = attr(props.node, 'lang')
+const url = computed(() => httpUrl(attr(props.node, 'url')))
+const stars = computed(() => attr(props.node, 'stars'))
+const lang = computed(() => attr(props.node, 'lang'))
 </script>
 
 <template>

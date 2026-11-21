@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { attr, children } from '@/lib/xml'
 
 const props = defineProps<{ node: Element }>()
 const text = (el: Element) => el.textContent?.trim() ?? ''
-const cols = Array.from(props.node.querySelectorAll('columns > col')).map(text)
-const rows = children(props.node)
-  .filter((c) => c.tagName === 'row')
-  .map((r) => children(r).filter((c) => c.tagName === 'cell').map(text))
+const cols = computed(() => Array.from(props.node.querySelectorAll('columns > col')).map(text))
+const rows = computed(() =>
+  children(props.node)
+    .filter((c) => c.tagName === 'row')
+    .map((r) => children(r).filter((c) => c.tagName === 'cell').map(text)),
+)
 </script>
 
 <template>

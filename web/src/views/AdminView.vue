@@ -11,6 +11,7 @@ import DirDialog from '@/components/admin/DirDialog.vue'
 import DirTree from '@/components/admin/DirTree.vue'
 import ItemDialog from '@/components/admin/ItemDialog.vue'
 import LoginForm from '@/components/admin/LoginForm.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ItemList from '@/components/ItemList.vue'
 import SelectBox from '@/components/SelectBox.vue'
 
@@ -71,9 +72,8 @@ const removeDir = useMutation({
     return invalidate()
   },
 })
-function confirmRemoveDir(id: string, name: string) {
-  if (confirm(`确定删除目录「${name}」及其所有子目录？其中的条目不会被删除，但会失去这些挂载。`)) removeDir.mutate(id)
-}
+const dirToRemove = ref<{ id: string; name: string }>()
+const doRemoveDir = () => dirToRemove.value && removeDir.mutate(dirToRemove.value.id, { onSettled: () => (dirToRemove.value = undefined) })
 </script>
 
 <template>
@@ -126,7 +126,7 @@ function confirmRemoveDir(id: string, name: string) {
               <button class="btn" @click="dialog = { mode: 'edit', dirId: selectedDir.id }"><Pencil class="size-4" />编辑</button>
               <button class="btn" @click="dialog = { mode: 'password', dirId: selectedDir.id }"><KeyRound class="size-4" />密码</button>
               <button class="btn" @click="dialog = { mode: 'move', dirId: selectedDir.id }"><FolderInput class="size-4" />移动</button>
-              <button class="btn btn-danger" @click="confirmRemoveDir(selectedDir.id, selectedDir.name)"><Trash2 class="size-4" />删除</button>
+              <button class="btn btn-danger" @click="dirToRemove = { id: selectedDir.id, name: selectedDir.name }"><Trash2 class="size-4" />删除</button>
             </div>
           </div>
         </div>
@@ -141,6 +141,14 @@ function confirmRemoveDir(id: string, name: string) {
     </div>
 
     <DirDialog v-if="dialog" :mode="dialog.mode" :dir="dialogDir" :parent-id="dialog.parentId" @close="dialog = undefined" />
+    <ConfirmDialog
+      :open="!!dirToRemove"
+      title="删除目录"
+      :description="`确定删除目录「${dirToRemove?.name}」及其所有子目录？其中的条目不会被删除，但会失去这些挂载。`"
+      :pending="removeDir.isPending.value"
+      @update:open="dirToRemove = undefined"
+      @confirm="doRemoveDir"
+    />
     <ItemDialog v-if="itemId" :item-id="itemId" @close="itemId = undefined" />
   </div>
 </template>

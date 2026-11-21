@@ -27,7 +27,8 @@ const searchQuery = useInfiniteQuery({
   queryFn: ({ pageParam }) => api.searchDir(id.value, dq.value.trim(), 20, pageParam),
   initialPageParam: 0,
   getNextPageParam: (last) => (last.results.length >= last.limit ? last.offset + last.limit : undefined),
-  enabled: () => !!dq.value.trim(),
+  // dq lags q by the debounce: only search once it has caught up, so a stale term never hits another directory.
+  enabled: () => !!dq.value.trim() && dq.value.trim() === q.value.trim(),
   placeholderData: keepPreviousData,
 })
 const results = computed(() => searchQuery.data.value?.pages.flatMap((p) => p.results) ?? [])
