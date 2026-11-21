@@ -13,6 +13,8 @@
     </tags>
   </meta>
   <body>
+    <!-- 本示例演示多轮精读完整写法：<tldr>/<quiz>/<next-steps>/<section> 等均为按需可选。 -->
+    <!-- 若在第 1 轮仅写单个 <stage> 且内容较短，可省略 <tldr>，且切勿添加指向尚不存在的未来 <stage> 的 <next-steps>。 -->
     <tldr title="全篇核心要点" placement="top">
       <point>用一步流匹配替代 16 步扩散去噪，实现单卡 H100 30 FPS 多视角预测。</point>
       <point>未来联合预测 3D 占用与轨迹速度场，避免纯 2D 生成丢失几何尺度。</point>
@@ -35,6 +37,7 @@
           <option>完全移除规划头并改用规则避障</option>
           <explain>流匹配沿直线路径学习速度场，使 1–2 步欧拉积分即可收敛（见 §3.1）。</explain>
         </quiz>
+        <!-- 注：此处 #stage-r2 仅因下文已有 <stage id="r2"> 才合法；单 stage 的第 1 轮草稿勿放指向未来 stage 的 option（会 INVALID_TARGET） -->
         <next-steps>
           <option target="#stage-r2">继续：第二轮方法与证据</option>
           <option target="#fig-pipe">跳到管线图</option>

@@ -23,9 +23,9 @@
 | `MISSING_ATTR` | 缺少必填属性或属性为空（如 `section@title`、`figure@src`、`paper-card@title/url`、`repo-card@name/url`、`source@title/url`、`ref@title`、`term@name`、`event@title`、`figure-group@cols`） | 补齐对应必填属性 |
 | `INVALID_ATTR` | 属性枚举值不合法（如 `callout@type`、`claim@level`、`cell@tag`、`read-depth`）或数量/重复限制（`<tabs>` <2 个、`<steps interactive="true">` <2 个、`<glossary>` 重名 `term`、`figure-group` 非 `2..6` 图、`<next-steps>` 超出 `1..5` 项） | 对照 [xml-tags.md](xml-tags.md) 的枚举值与数量上下限修正 |
 | `INVALID_URL` | `canonical-url`、`paper-card@url/code-url`、`repo-card@url`、`source@url`、`ref@url`、`quote@url`、`news-item@url` 不是绝对 `http://` 或 `https://` URL | 补全为 `http://` 或 `https://` 绝对 URL（页内跳转请用 Markdown 锚点或 `<next-steps>`） |
-| `INVALID_ASSET_PATH` | `<figure src>` 为外链、`data:`、绝对路径或用 `..` 逃逸出文档所在目录 | 改为文档相对路径，如 `./imgs/fig.png` |
+| `INVALID_ASSET_PATH` | `<figure src>` 为外链、`data:`、绝对路径或用 `..` 逃逸出 **XML 文档自身所在目录** | 改为相对于 XML 文档自身目录（而非当前工作目录）的路径，如 `./imgs/fig.png` |
 | `INVALID_ASSET_TYPE` | `<figure src>` 扩展名不是 `.png`/`.jpg`/`.jpeg`/`.webp`/`.svg` | 转换为支持的图片格式 |
-| `MISSING_ASSET` | `<figure src>` 指向的本地文件不存在（`step`/`tab`/`figure-group` 内同样检查） | 确认图片已落盘于相对路径 |
+| `MISSING_ASSET` | 按 **XML 文档自身所在目录**解析 `<figure src>` 后本地文件不存在（`step`/`tab`/`figure-group` 内同样检查） | 将图片放在文档同级相对路径（如 `./imgs/...`）并核对文件名；注意 `validate` 不以当前工作目录（CWD）为基准 |
 | `INVALID_ASSET` *(服务端)* | 上传文件真实 MIME 内容非 png/jpeg/webp/svg（如把 HTML 改名 `.png`） | 上传真实的图片文件内容 |
 | `TABLE_NO_COLUMNS` / `TABLE_NO_ROWS` / `TABLE_COL_MISMATCH` | `<compare-table>` 缺 `<columns>/<col>`、缺 `<row>` 或某行 `<cell>` 数与 `<col>` 数不一致 | 对齐列头与每行 `<cell>` 数量 |
 | `MISSING_SOURCE` | `<sources>` 内没有 `<source>` | 至少加一条 `<source title="..." url="..."/>` 或移除空的 `<sources>` |
@@ -40,7 +40,7 @@
 | `DUPLICATE_ID` | `section`/`stages`/`stage`/`quiz`/`figure`/`equation`/`ref` 的 `@id` 跨组或跨类型重名 | 使用文档内全局唯一的 `@id` |
 | `DUPLICATE_TAB` | 同一个 `<tabs>` 内出现同名 `<tab title>` | 为每个 `<tab>` 起唯一标题 |
 | `INVALID_TARGET` | `<next-steps>/<option target="#...">` 不匹配 `^#[a-z0-9-]+$`、前缀与元素不符、用了位置锚点 `#sec-N` 或目标不存在；或 `<code-block eq="...">` 无对应 `<equation id>` | `target` 使用有效前缀 `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-`；`code-block@eq` 写不带 `#` 和前缀的原始 `<equation id>` |
-| `INVALID_CHART` | `type` 非法（`bar`/`line`/`pie`/`scatter`）、JSON 语法错、Schema 校验失败、长度不等、`NaN`/`Infinity`（含未加引号 `NaN`）、总点数 >2000、`pie`/`scatter` 带 `err` 或 `err` 为负/长度不等 | 按错误中的 JSON 路径（如 `/series/0/data/1`、`/series/0/err`）修复 JSON 数据 |
+| `INVALID_CHART` | `type` 非法（`bar`/`line`/`pie`/`scatter`）、JSON 语法错、Schema 校验失败（如写了未定义字段 `title`/`xAxis`）、长度不等、`NaN`/`Infinity`（含未加引号 `NaN`）、总点数 >2000、`pie`/`scatter` 带 `err` 或 `err` 为负/长度不等 | 对照 [xml-tags.md](xml-tags.md#chart-json-schema-chart) 的字段表与错误中的 JSON 路径（如 `/series/0/data/1`、`/series/0/err`）修复 JSON 数据（图表标题请放到 `<chart caption="...">`） |
 | `INVALID_EQUATION` | `<equation>` 内容为空或超出 4 KB（4096 字节） | 补充非空 LaTeX 或拆分公式 |
 | `INVALID_MERMAID` | `<mermaid>` 内容为空或超出 20 KB（20480 字节） | 精简 Mermaid 源码并包入 CDATA |
 | `INVALID_CODE_BLOCK` | `<code-block>` 内容为空、超 32 KB、`diff` 非 `true/false` 或 `highlight` 行号格式错（如 `9-3`） | 修正内容长度或 `highlight="3,5-7"` 格式 |
@@ -59,6 +59,7 @@
 
 | 状态码 / 场景 | 错误标识 / 现象 | 原因与处理 |
 | :--- | :--- | :--- |
+| 未配置服务端 / 离线写作 | `dirs`/`list`/`push --dry-run` 报 ``no server configured: run `aumbry config set --server URL` or set AUMBRY_SERVER``（exit 1）或连接失败 | `aumbry dirs`/`list`/`push --dry-run` 均需已配置且可达的服务端（`--dry-run` 先做本地校验，再请求 `GET /api/v1/agent/dirs`）；但撰写 XML 与 `aumbry validate` **完全离线可用**，可先完成本地编写与校验，推送前再执行 `aumbry config set` |
 | 本地参数校验失败 | `--draft` 与 `--dir` 冲突；`--create-only` 与 `--id` 冲突或缺少 `--key`；`delete` 未带 `--yes` | 按互斥条件拆开命令；`--draft` 会自动忽略配置中的 `default_dirs`/`AUMBRY_DIRS`；删除必须显式 `--yes` |
 | `400` | `invalid_request` / `unknown_dirs` | 检查 `external_key`（trim 后 1..200 字符且无控制字符）、或用 `aumbry dirs` 重新确认有效目录 ID |
 | `401` | `unauthorized` | 未配置 Token、Token 无效或格式非 Bearer；运行 `aumbry config show` / `aumbry config set --token ...` |

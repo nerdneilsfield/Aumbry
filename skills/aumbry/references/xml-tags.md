@@ -133,6 +133,68 @@
 | `<news-item>` | 1.1 | body, section, stage | `title (1.1)*`, `source (1.1)`, `url (1.1)`, `published (1.1)`, `importance (1.1)=[high|normal]`, `detail-id (1.1)` | children: 0..1; <= 600 runes — News digest entry with inline summary (<= 600 Unicode runes) and optional expandable <detail>. |
 | `<detail>` | 1.1 | news-item | - | <= 8192 B — Optional inline expandable detail Markdown (<= 8 KB; indexed). |
 
+## Chart JSON Schema (`<chart>`)
+
+`<chart>` takes XML attributes `type` (required: `bar`, `line`, `pie`, `scatter`) and `caption` (optional chart title). Both the top-level JSON object and each `series[]` object set `additionalProperties: false` — unknown keys such as `title`, `xAxis`, or `yAxis` fail validation with `INVALID_CHART` (put the chart title in `<chart caption="...">` and axis labels in `x_label`/`y_label`). Wrap the JSON body in `<![CDATA[ ... ]]>`.
+
+### Top-Level JSON Fields
+
+| Field | Type | Applies To | Description |
+| :--- | :--- | :--- | :--- |
+| `categories` | `string[]` (`minItems: 1`) | Required for `bar`, `line`, `pie`; **disallowed** for `scatter` | X-axis or slice labels; non-scatter `series[].data` length must equal `categories` length |
+| `series` | `object[]` (`minItems: 1`) | Required (`bar`/`line`/`scatter`: `1..20`; `pie`: exact `1`) | Data series list |
+| `x_label` | `string` | Optional (`bar`, `line`, `pie`, `scatter`) | Optional X-axis label |
+| `y_label` | `string` | Optional (`bar`, `line`, `pie`, `scatter`) | Optional Y-axis label |
+
+### `series[]` Item Fields
+
+| Field | Type | Applies To | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | `string` (`minLength: 1`) | Required (`bar`, `line`, `pie`, `scatter`) | Series legend label (trimmed non-empty) |
+| `data` | `number[]` (`bar`/`line`/`pie`) or `[number, number][]` (`scatter`), `minItems: 1` | Required (all types) | Finite JSON numbers only; `bar`/`line`/`pie` length must match `categories`; `scatter` takes `[x, y]` numeric pairs |
+| `err` | `number[]` (`>= 0`) | Optional for `bar`, `line`; **disallowed** for `pie`, `scatter` | Non-negative finite error-bar magnitudes; length must equal `data` |
+
+### Cross-Field Rules & Limits
+
+- Series count: `1..20` for `bar`, `line`, and `scatter` (multi-series supported); exact `1` for `pie`.
+- Point & block caps: total data points across all series in one `<chart>` <= `2000`; max `10` `<chart>` blocks per document (`TOO_MANY_BLOCKS`).
+- Finite numbers only: `NaN`, `Infinity`, `-Infinity`, nulls, or strings in `data`/`err` fail with `INVALID_CHART` and a JSON Pointer path (e.g. `chart/series/0/data/1`).
+
+### Minimal Examples by Type
+
+`type="line"` or `type="bar"` (multi-series + optional `err`):
+
+```json
+{
+  "categories": ["2-cam", "4-cam", "6-cam"],
+  "series": [
+    {"name": "Ours", "data": [48.0, 36.2, 29.4], "err": [0.9, 0.7, 0.6]},
+    {"name": "Baseline", "data": [15.0, 11.2, 8.0]}
+  ],
+  "x_label": "Cameras",
+  "y_label": "FPS"
+}
+```
+
+`type="pie"` (exact 1 series, no `err`):
+
+```json
+{
+  "categories": ["Encoder", "Flow", "Planner"],
+  "series": [{"name": "Latency Share (%)", "data": [28, 52, 20]}]
+}
+```
+
+`type="scatter"` (no `categories`, no `err`; `[x, y]` pairs):
+
+```json
+{
+  "series": [{"name": "Seeds", "data": [[1.0, 29.1], [2.0, 29.8]]}],
+  "x_label": "Steps",
+  "y_label": "FPS"
+}
+```
+
 ## Anchor Prefixes
 
 | Element | Format | Valid `next-steps` Target |

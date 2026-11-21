@@ -12,19 +12,26 @@
     </tags>
   </meta>
   <body>
+    <!-- 注意：本示例只演示积木搭配，所有块均为可选！按内容取舍，不需要时直接删除对应块，切勿照抄骨架。 -->
+    <!-- 极简短文甚至只需 1 个 <md>（或仅 <md> + <figure>）即可通过校验。 -->
+
+    <!-- <md>：唯一几乎总是需要的核心正文块 -->
     <md><![CDATA[
 这篇短评只回答一个问题：流匹配是否真能把多视角世界模型压进 35ms 预算。正文无需强拆章节，参考架构见 [Fig. 1](#fig-arch)。
     ]]></md>
 
+    <!-- [可选，不需要可删] <claim>：有明确证据等级标注时使用 -->
     <claim level="evidence" source="Table 2">
       <![CDATA[单卡 H100、`batch=1` 下实测 **30 FPS**（33.3ms/帧），满足 35ms 预算。]]>
     </claim>
 
+    <!-- [可选，不需要可删] <metrics>：仅有关键数字卡片需求时使用 -->
     <metrics>
       <metric label="实测帧率" value="30" unit="FPS" delta="+22 vs Vista-v2" trend="up"/>
       <metric label="单帧延迟" value="33.3" unit="ms" trend="down"/>
     </metrics>
 
+    <!-- [可选，不需要可删] <chart>：需要交互图表时使用，标题放 caption，字段严格受 Schema 约束 -->
     <chart type="bar" caption="同硬件单步推理帧率对比"><![CDATA[{
   "categories": ["DriveFlow", "Vista-v2"],
   "series": [{ "name": "FPS", "data": [30, 8] }],
@@ -32,8 +39,10 @@
   "y_label": "FPS"
 }]]></chart>
 
+    <!-- [可选，不需要可删] <figure>：src 相对本 XML 文件所在目录解析 -->
     <figure id="arch" src="./imgs/world_model_arch.svg" alt="Encoder -> World Model -> Planner pipeline" caption="图 1：编码器-世界模型-规划头三段流水线"/>
 
+    <!-- [可选，不需要可删] <next-steps>：仅在确实需要读者跳转锚点时添加，目标元素必须存在 -->
     <next-steps>
       <option target="#fig-arch">查看流水线图</option>
     </next-steps>
