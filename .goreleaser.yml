@@ -1,0 +1,64 @@
+version: 2
+env:
+  - CGO_ENABLED=0
+
+before:
+  hooks:
+    - make setup
+    - make frontend
+
+builds:
+  - id: cli
+    main: .
+    binary: aumbry
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X github.com/nerdneilsfield/aumbry/internal/buildinfo.Version={{.Version}}
+      - -X github.com/nerdneilsfield/aumbry/internal/buildinfo.Commit={{.FullCommit}}
+      - -X github.com/nerdneilsfield/aumbry/internal/buildinfo.Date={{.Date}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+  - id: server
+    main: ./cmd/server
+    binary: aumbry-server
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X github.com/nerdneilsfield/aumbry/internal/buildinfo.Version={{.Version}}
+      - -X github.com/nerdneilsfield/aumbry/internal/buildinfo.Commit={{.FullCommit}}
+      - -X github.com/nerdneilsfield/aumbry/internal/buildinfo.Date={{.Date}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - ids: [cli, server]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+release:
+  github:
+    owner: nerdneilsfield
+    name: Aumbry
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^test:'
+      - '^chore'
+      - 'merge conflict'
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy

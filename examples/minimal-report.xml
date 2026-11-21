@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.0">
+  <meta>
+    <title>Aumbry example report</title>
+    <type>report</type>
+    <date>2026-11-20</date>
+    <summary>A minimal valid document for trying the shared XML validator.</summary>
+    <source-agent>example-agent</source-agent>
+    <tags>
+      <tag>example</tag>
+    </tags>
+  </meta>
+  <body>
+    <section title="Overview">
+      <md><![CDATA[This report is ready to validate and demonstrates a Markdown block.]]></md>
+    </section>
+  </body>
+</document>
