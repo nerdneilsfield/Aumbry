@@ -92,6 +92,7 @@ func Parse(input []byte, opts Options) (*Document, []ValidationError) {
 	d := &Document{input: input, tree: tree}
 	d.readMeta()
 	issues := protocolIssues(tree)
+	issues = append(issues, d.checkV11()...)
 	issues = append(issues, d.checkURLs()...)
 	issues = append(issues, d.checkFigures(opts)...)
 	slices.SortStableFunc(issues, func(a, b ValidationError) int { return cmp.Compare(a.Line, b.Line) })
