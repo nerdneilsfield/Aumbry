@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.0">
+  <meta>
+    <title>2026-11-20 AI 与自动驾驶前沿日报</title>
+    <type>report</type> <!-- 枚举: report | post -->
+    <date>2026-11-20</date>
+    <summary>今日聚焦端到端世界模型在长尾场景的推理加速，以及两篇开源多模态规划框架拆解。</summary>
+    <source-agent>auto-drive-daily-agent</source-agent>
+    <canonical-url>https://arxiv.org/abs/2611.01234</canonical-url>
+    <tags>
+      <tag>Autonomous Driving</tag>
+      <tag>World Model</tag>
+    </tags>
+    <related-ids>
+      <id>V1StGXR8_Z5j</id> <!-- 关联已入库的单篇精读 /p/V1StGXR8_Z5j -->
+    </related-ids>
+  </meta>
+
+  <body>
+    <section title="今日核心动态">
+      <callout type="insight" title="核心判断">
+        <![CDATA[端到端规划正从纯视觉隐式表征转向**显式 3D 占用预测 + 轻量化语言推理**的混合架构。]]>
+      </callout>
+
+      <md><![CDATA[
+今日共筛选 42 篇 arXiv 预印本，其中推理延迟降低公式满足 $T_{total} = T_{enc} + \alpha \cdot T_{dec}$。
+详细架构对比见下图与下表。
+      ]]></md>
+
+      <!-- 本地相对路径图片，aumbry push 时自动打包并重写为 /api/assets/{hash} -->
+      <figure src="./imgs/world_model_arch.svg" caption="图 1：混合世界模型推理管线对比" />
+    </section>
+
+    <section title="重点论文与项目">
+      <paper-card
+        title="DriveFlow: Real-Time World Modeling for End-to-End Driving"
+        authors="Zhang et al. (MIT / Wayve)"
+        date="2026-11-19"
+        url="https://arxiv.org/abs/2611.01234"
+        related-id="V1StGXR8_Z5j">
+        <![CDATA[提出流匹配（Flow Matching）替代传统扩散去噪，将多视角视频预测帧率提升至 30 FPS。]]>
+      </paper-card>
+
+      <repo-card
+        name="open-drive/driveflow"
+        stars="2.4k"
+        lang="Python / CUDA"
+        url="https://github.com/open-drive/driveflow">
+        <![CDATA[官方开源实现，包含 nuScenes 预处理脚本与 TensorRT 导出工具。]]>
+      </repo-card>
+    </section>
+
+    <section title="主流方案横向对比">
+      <compare-table caption="2026 Q4 端到端世界模型对比">
+        <columns>
+          <col>方案名称</col>
+          <col>推理帧率</col>
+          <col>开源状态</col>
+          <col>核心优势</col>
+        </columns>
+        <row>
+          <cell>DriveFlow</cell>
+          <cell>30 FPS</cell>
+          <cell>已开源</cell>
+          <cell>流匹配一步采样，延迟极低</cell>
+        </row>
+        <row>
+          <cell>Vista-v2</cell>
+          <cell>8 FPS</cell>
+          <cell>仅权重</cell>
+          <cell>长时序一致性更佳</cell>
+        </row>
+      </compare-table>
+
+      <collapse title="展开查看完整实验超参数与附录">
+        <md><![CDATA[
+- Batch Size: 64 on 8x H100
+- Learning Rate: `1e-4` (Cosine Decay)
+        ]]></md>
+      </collapse>
+    </section>
+
+    <sources>
+      <source title="DriveFlow 原文 PDF" url="https://arxiv.org/pdf/2611.01234.pdf" />
+      <source title="GitHub Repository" url="https://github.com/open-drive/driveflow" />
+    </sources>
+  </body>
+</document>

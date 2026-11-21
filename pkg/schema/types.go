@@ -1,44 +1,56 @@
-// Package schema defines the shared Aumbry XML protocol and validation types.
+// Package schema defines the shared Aumbry XML protocol, validation and text extraction.
 package schema
 
 import "encoding/xml"
 
-// Document is the envelope shared by the CLI validator and server ingest path.
-type Document struct {
-	XMLName xml.Name `xml:"document"`
-	Version string   `xml:"version,attr"`
-	Meta    Metadata `xml:"meta"`
-	Body    Body     `xml:"body"`
-}
-
-// Body preserves the XML content for the rich-text renderer.
-type Body struct {
-	InnerXML string `xml:",innerxml"`
-}
-
-// Metadata contains the required document fields and optional links.
+// Metadata is the parsed <meta> block of a document.
 type Metadata struct {
-	Title        string   `xml:"title"`
-	Type         string   `xml:"type"`
-	Date         string   `xml:"date"`
-	Summary      string   `xml:"summary"`
-	SourceAgent  string   `xml:"source-agent"`
-	CanonicalURL string   `xml:"canonical-url"`
-	Tags         []string `xml:"tags>tag"`
-	RelatedIDs   []string `xml:"related-ids>id"`
+	Title        string
+	Type         string
+	Date         string
+	Summary      string
+	SourceAgent  string
+	CanonicalURL string
+	Tags         []string
+	RelatedIDs   []string
 }
 
-// ValidationError is a machine-readable validation issue.
-type ValidationError struct {
-	Line    int    `json:"line,omitempty"`
-	Code    string `json:"code"`
-	Field   string `json:"field"`
-	Message string `json:"message"`
+// Document is a parsed Aumbry document. It is only returned together with the
+// validation issues found while parsing it; callers must treat any issue as fatal.
+type Document struct {
+	Meta Metadata
+	// Assets lists the normalized local paths referenced by <figure src>, in document order, without duplicates.
+	Assets []string
+
+	input []byte
+	root  *node
 }
 
-// ValidationResult is the stable output shape used by the CLI.
-type ValidationResult struct {
-	Valid  bool              `json:"valid"`
-	File   string            `json:"file,omitempty"`
-	Errors []ValidationError `json:"errors"`
+// node is one XML element with the source position needed for error lines and rewriting.
+type node struct {
+	name        string
+	attrs       []xml.Attr
+	kids        []*node
+	text        string
+	line        int
+	start, end  int64 // byte range of the start tag
+	selfClosing bool
+}
+
+func (n *node) attr(name string) (string, bool) {
+	for _, a := range n.attrs {
+		if a.Name.Local == name {
+			return a.Value, true
+		}
+	}
+	return "", false
+}
+
+func (n *node) child(name string) *node {
+	for _, k := range n.kids {
+		if k.name == name {
+			return k
+		}
+	}
+	return nil
 }
