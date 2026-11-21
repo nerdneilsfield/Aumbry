@@ -36,7 +36,7 @@ const usedTags = computed(() => [...new Set(rows.value.flat().flatMap((c) => (c.
               :key="j"
               :class="[
                 'relative min-w-32 px-4 py-2.5 align-top',
-                cell.tag === 'na' ? 'bg-gray-500/15 text-gray-400' : 'text-gray-300',
+                cell.tag === 'na' ? 'bg-gray-500/15 text-gray-400' : cell.tag === 'unreported' ? 'border border-dashed border-gray-500 bg-transparent text-gray-500' : 'text-gray-300',
                 cell.tag && 'pt-5',
               ]"
               :data-tag="cell.tag"
@@ -48,7 +48,9 @@ const usedTags = computed(() => [...new Set(rows.value.flat().flatMap((c) => (c.
               >
                 <component :is="LEVELS[cell.tag].icon" class="size-2.5" aria-hidden="true" />{{ LEVELS[cell.tag].label }}
               </span>
-              <span :class="cell.tag === 'na' && 'italic'">{{ cell.text }}</span>
+              <!-- unreported is never shown as a number: the cell says so, the original text is only a tooltip -->
+              <span v-if="cell.tag === 'unreported'" class="italic" :title="cell.text || undefined">未报告</span>
+              <span v-else :class="cell.tag === 'na' && 'italic'">{{ cell.text }}</span>
             </td>
           </tr>
         </tbody>

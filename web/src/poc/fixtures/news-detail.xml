@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>DriveFlow 开源：车端世界模型进入实时区间了吗？</title>
+    <type>post</type>
+    <date>2026-11-19</date>
+    <summary>一篇关于 DriveFlow 论文与代码同日发布的详情：发生了什么、作者怎么说、哪些说法还没有证据。</summary>
+    <source-agent>news-daily-agent</source-agent>
+    <canonical-url>https://arxiv.org/abs/2611.01234</canonical-url>
+    <tags>
+      <tag>新闻详情</tag>
+      <tag>World Model</tag>
+    </tags>
+    <related-ids>
+      <id>NewsDigest01</id>
+    </related-ids>
+  </meta>
+
+  <body>
+    <tldr>
+      <point>论文与代码同日放出，Table 2 在 **H100** 上给出 30 FPS，对比扩散式基线 8 FPS。</point>
+      <point>「进入实时区间」是对**数据中心 GPU** 成立的结论；车端没有证据。</point>
+      <point>首日社区已报告 TensorRT 导出在 CUDA 12.2 上失败。</point>
+      <verdict>可以关注，但别把 30 FPS 当成车端数字去引用。</verdict>
+    </tldr>
+
+    <section title="发生了什么">
+      <tldr title="事实部分">
+        <point>2026-11-19，论文上线 arXiv，官方仓库同日公开。</point>
+        <point>仓库含训练脚本、权重与 nuScenes 预处理。</point>
+      </tldr>
+
+      <timeline>
+        <event date="2026-11-19" title="论文与代码同日发布"><![CDATA[arXiv 预印本与 GitHub 仓库同时公开，首日 **1.2k star**。]]></event>
+        <event date="2026-11-19" title="首个 issue：TensorRT 导出失败"><![CDATA[在 CUDA 12.2 上导出失败，维护者回复「计划在 12.4 修复」。]]></event>
+        <event date="2026-11-20" title="社区复现帖出现"><![CDATA[一位用户在 4×A100 上跑通推理，报告约 14 FPS（硬件不同，**不能与 Table 2 直接比**）。]]></event>
+      </timeline>
+    </section>
+
+    <section title="作者怎么说">
+      <quote source="§1 Introduction" author="Zhang et al." url="https://arxiv.org/abs/2611.01234"><![CDATA[Our method reduces inference latency by an order of magnitude while preserving prediction quality comparable to diffusion-based baselines.]]></quote>
+
+      <claim level="claim" source="§1 Abstract">推理延迟较扩散式方法降低一个数量级，同时保持相当的预测质量。</claim>
+      <claim level="evidence" source="Table 2">H100 · FP16 · batch=1 · 480×832：30 FPS 对 8 FPS。</claim>
+    </section>
+
+    <section title="还没有证据的部分">
+      <tldr>
+        <point>车端延迟、随机种子数、夜间场景表现，论文都没有给出。</point>
+      </tldr>
+
+      <claim level="unverified" source="Appendix C">官方仓库声称提供 TensorRT 导出，但论文中没有 Orin 上的实测延迟。据称导出后可达到 10 FPS 以上，没有可复核的来源。</claim>
+      <claim level="unverified">社区帖子里的「14 FPS」来自一个未公开脚本的自测，硬件也不同。</claim>
+
+      <section title="为什么不能直接外推">
+        <md><![CDATA[
+H100 与车规芯片在**显存带宽、算子支持、精度**上都不同。同一个模型换了平台，延迟可以差一个数量级，所以「H100 上 30 FPS」只是个上界参考。
+        ]]></md>
+
+        <section title="一个粗略的估算">
+          <md><![CDATA[
+按算力比例粗估：若 Orin-X 稠密算力约为 H100 的 1/10，则延迟上界约 3 FPS 量级——这只是数量级估计，不是测量。
+          ]]></md>
+        </section>
+      </section>
+    </section>
+
+    <sources>
+      <source title="arXiv：DriveFlow" url="https://arxiv.org/abs/2611.01234"/>
+      <source title="GitHub：open-drive/driveflow" url="https://github.com/open-drive/driveflow"/>
+    </sources>
+  </body>
+</document>

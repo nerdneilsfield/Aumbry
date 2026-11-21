@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>BEV 感知学习路径：从入门到能读懂前沿论文</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>三个阶段：入门（坐标系与投影）、进阶（LSS 与 BEVFormer 两条路线）、专家（时序、占用与车端部署）。每个阶段以测验收尾。</summary>
+    <source-agent>interactive-guide</source-agent>
+    <tags>
+      <tag>BEV</tag>
+      <tag>学习路径</tag>
+      <tag>Perception</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <tldr title="这条路径讲什么">
+      <point>**入门**：先搞清自车、相机、BEV 三个坐标系，以及一个 3D 点怎么落到图像上。</point>
+      <point>**进阶**：从图像到 BEV 有两条路线——LSS 的「深度提升」和 BEVFormer 的「查询采样」。</point>
+      <point>**专家**：时序融合、占用预测与车端部署，难点在对齐与延迟预算，不在网络结构。</point>
+      <verdict>每个阶段读完做测验，答不对的回头看对应小节；不必一次读完，进度会保存在浏览器里。</verdict>
+    </tldr>
+
+    <stages id="path">
+      <stage id="s-intro" n="1" title="入门：坐标系与投影" level="入门">
+        <tldr>
+          <point>三个坐标系：自车（x 前、y 左、z 上）、相机、图像；BEV 是自车坐标系的俯视栅格。</point>
+          <point>相机把 3D 点投到图像：先外参（平移+旋转），再内参（焦距与主点）。</point>
+        </tldr>
+
+        <md><![CDATA[
+BEV（Bird's-Eye View，鸟瞰图）把多路相机的信息统一到**自车坐标系的俯视栅格**里，规划与预测都在这个空间里做。
+先弄清一个 3D 点怎么变成图像上的一个像素，后面所有方法都是在这个关系上反着做。
+        ]]></md>
+
+        <equation id="proj" number="1" caption="针孔相机投影"><![CDATA[z_c\begin{bmatrix}u\\v\\1\end{bmatrix}=K\,[R\mid t]\begin{bmatrix}X\\Y\\Z\\1\end{bmatrix}]]></equation>
+
+        <glossary>
+          <term name="外参 (Extrinsics)">相机相对自车的**位姿**，一个旋转 R 加一个平移 t。标定出错会让 BEV 特征整体错位。</term>
+          <term name="内参 (Intrinsics)">相机自身的**成像参数**：焦距与主点，写成矩阵 K。</term>
+          <term name="BEV 栅格">自车周围一个固定范围（如 ±50 m）的俯视网格，每个格子是一个特征向量。</term>
+        </glossary>
+
+        <steps interactive="true">
+          <step title="1. 世界点">
+            <md><![CDATA[在自车坐标系里有一个点 $(X, Y, Z)$，比如前方 20 m、左侧 3 m、高 0.5 m 的一个障碍物。]]></md>
+          </step>
+          <step title="2. 外参：换到相机坐标系">
+            <md><![CDATA[用外参 $[R\mid t]$ 把点换到相机坐标系，得到 $(x_c, y_c, z_c)$。$z_c$ 就是深度。]]></md>
+          </step>
+          <step title="3. 内参：投到像素">
+            <md><![CDATA[用内参 $K$ 投影并除以深度 $z_c$，得到像素坐标 $(u, v)$。**深度在这一步被丢掉了**，这是 BEV 方法要补回来的信息。]]></md>
+          </step>
+        </steps>
+
+        <quiz id="q-intro">
+          <question><![CDATA[一个像素 $(u,v)$ 对应空间里的什么？]]></question>
+          <option>一个确定的 3D 点</option>
+          <option correct="true">一条射线上的所有点，深度未知</option>
+          <option>一个平面</option>
+          <option>取决于外参，与内参无关</option>
+          <explain><![CDATA[投影时除以了深度 $z_c$，所以同一个像素对应从相机中心出发的整条射线。把图像「提升」到 BEV，本质上就是要估计或学习这个深度。]]></explain>
+        </quiz>
+
+        <next-steps>
+          <option target="#stage-s-adv">继续：进阶</option>
+          <option target="#eq-proj">回看投影公式</option>
+        </next-steps>
+      </stage>
+
+      <stage id="s-adv" n="2" title="进阶：两条路线" level="进阶">
+        <tldr>
+          <point>**LSS**：给每个像素预测深度分布，沿射线撒点，再「拍扁」到 BEV 栅格。</point>
+          <point>**BEVFormer**：在 BEV 栅格上放查询，反过来投到图像上采样特征，不显式预测深度。</point>
+          <point>前者推理快、依赖深度质量；后者依赖标定、更吃算力。</point>
+        </tldr>
+
+        <mermaid caption="两条路线的数据流"><![CDATA[flowchart LR
+  I[多视角图像] --> E[图像编码器]
+  E --> L[LSS：像素深度分布<br/>沿射线撒点]
+  E --> F[BEVFormer：BEV 查询<br/>投到图像采样]
+  L --> S[Splat 到 BEV 栅格]
+  F --> A[注意力聚合]
+  S --> B((BEV 特征))
+  A --> B]]></mermaid>
+
+        <compare-table caption="两条路线的取舍（判断标签为本文的）">
+          <columns><col>维度</col><col>LSS</col><col>BEVFormer</col></columns>
+          <row><cell>深度</cell><cell tag="claim">显式预测深度分布</cell><cell tag="claim">不显式预测</cell></row>
+          <row><cell>推理开销</cell><cell tag="inference">较小，Splat 可用专用算子加速</cell><cell tag="inference">较大，可变形注意力对硬件不友好</cell></row>
+          <row><cell>对标定敏感度</cell><cell tag="inference">中</cell><cell tag="inference">高：投影点偏了采样就偏了</cell></row>
+          <row><cell>nuScenes NDS（同量级主干）</cell><cell tag="unreported"></cell><cell tag="approx">≈ 0.57</cell></row>
+        </compare-table>
+
+        <quiz id="q-adv">
+          <question><![CDATA[你的车端芯片对**可变形注意力**算子支持很差，标定也不太稳定。优先考虑哪条路线？]]></question>
+          <option correct="true">LSS：算子简单，且对标定误差相对宽容</option>
+          <option>BEVFormer：精度一定更高</option>
+          <option>两者都不行，只能用 2D 检测</option>
+          <option>随便选，部署成本没有区别</option>
+          <explain><![CDATA[BEVFormer 的可变形注意力在不少车端推理框架里要自己写算子，而且投影点依赖标定。LSS 的 Splat 虽然也要优化，但数据流更规则。当然最终要以你的芯片实测为准。]]></explain>
+        </quiz>
+
+        <next-steps>
+          <option target="#stage-s-pro">继续：专家</option>
+          <option target="#stage-s-intro">回到入门</option>
+        </next-steps>
+      </stage>
+
+      <stage id="s-pro" n="3" title="专家：时序、占用与部署" level="专家">
+        <tldr>
+          <point>时序融合要先用自车运动把上一帧 BEV 对齐到当前帧，再融合。</point>
+          <point>占用预测把「框」换成体素语义，能表达异形障碍物，代价是显存和标注。</point>
+          <point>车端部署以延迟预算倒推结构：先定预算，再选主干与栅格分辨率。</point>
+        </tldr>
+
+        <claim level="claim" source="多篇论文的共同做法">把上一帧 BEV 特征按自车运动做仿射对齐再与当前帧融合，比直接拼接的速度估计更稳。</claim>
+        <claim level="inference">栅格分辨率每提高一倍，BEV 特征的显存与算量约增加到四倍；在车端预算里，这通常比换更大的主干更快用完预算。</claim>
+        <claim level="unverified">「占用网络一定优于检测框」在公开榜单上没有受控对比，目前只有定性案例。</claim>
+
+        <equation id="warp" number="2" caption="用自车运动对齐上一帧 BEV"><![CDATA[B_{t-1}'(p)=B_{t-1}\bigl(T_{t\to t-1}\,p\bigr)]]></equation>
+
+        <steps>
+          <step title="先定延迟预算">
+            <md><![CDATA[从端到端预算倒推：感知占多少毫秒，BEV 部分占多少。]]></md>
+          </step>
+          <step title="再选栅格分辨率">
+            <md><![CDATA[0.5 m 的栅格通常是精度与算量的折中；0.25 m 要有明确收益再上。]]></md>
+          </step>
+          <step title="最后才是主干与量化">
+            <md><![CDATA[INT8 量化前先看逐层精度损失，别一次量化全部。]]></md>
+          </step>
+        </steps>
+
+        <quiz id="q-pro">
+          <question><![CDATA[做时序融合时，下面哪个顺序是对的？]]></question>
+          <option>直接把上一帧 BEV 与当前帧在通道维拼接</option>
+          <option correct="true">先用自车运动把上一帧 BEV 变换到当前帧坐标，再融合</option>
+          <option>先融合，再对整个结果做运动补偿</option>
+          <option>时序融合只对静态障碍物有用</option>
+          <explain><![CDATA[自车在移动，同一个栅格位置在两帧里对应不同的世界位置。不先对齐就拼接，等于让网络自己去学一个它本来可以直接算出的变换（见 [式 (2)](#eq-warp)）。]]></explain>
+        </quiz>
+
+        <quiz id="q-pro2">
+          <question><![CDATA[下面哪些做法能降低 BEV 栅格的车端延迟？（多选）]]></question>
+          <option correct="true">降低栅格分辨率（如 0.5 m 换成 1 m）</option>
+          <option correct="true">缩小感知范围（如 ±50 m 缩到 ±40 m）</option>
+          <option>在不改结构的前提下增加 BEV 特征的通道数</option>
+          <option correct="true">对 Splat 或注意力算子做融合与量化</option>
+          <explain><![CDATA[延迟主要由栅格格数与每格特征量决定。增加通道数只会让它更慢。]]></explain>
+        </quiz>
+
+        <next-steps>
+          <option target="#stage-s-intro">回到入门，重读坐标系</option>
+          <option target="#eq-warp">再看一遍时序对齐公式</option>
+        </next-steps>
+      </stage>
+    </stages>
+  </body>
+</document>

@@ -1,45 +1,34 @@
 import type { ShikiTransformer } from 'shiki/core'
-import { transformerNotationDiff, transformerNotationHighlight } from '@shikijs/transformers'
+import { transformerMetaHighlight, transformerNotationDiff, transformerNotationHighlight } from '@shikijs/transformers'
 import { dualTheme, highlighter, loadedLangs } from '@/lib/highlighter'
 
-type LineKind = 'add' | 'remove' | undefined
-
-/** Unified-diff text -> plain code (markers stripped, so the language grammar sees real code) + per-line kinds. */
-function splitDiff(code: string): { code: string; kinds: LineKind[] } {
-  const kinds: LineKind[] = []
-  const out = code.split('\n').map((l) => {
-    if (/^(\+\+\+|---) (a\/|b\/|\/dev\/null)|^(@@|diff )/.test(l)) {
-      kinds.push(undefined)
-      return l
-    }
-    const c = l[0]
-    kinds.push(c === '+' ? 'add' : c === '-' ? 'remove' : undefined)
-    return c === '+' || c === '-' || c === ' ' ? l.slice(1) : l
-  })
-  return { code: out.join('\n'), kinds }
-}
-
 /**
- * Highlights code with shiki (light+dark dual theme) and @shikijs/transformers: `// [!code highlight]` marks a line,
- * `// [!code ++]` / `// [!code --]` mark diff lines; with diff=true, leading +/- of a unified diff do the same.
+ * Highlights code with shiki (light+dark dual theme). The language grammar does the colouring:
+ *  - a unified diff (`diff="true"` or `lang="diff"`, leading +/- on each line) uses shiki's built-in `diff` language, as is;
+ *  - `highlight="3,5-7"` marks lines through @shikijs/transformers' meta-highlight (`{3,5-7}`), `// [!code highlight]` marks
+ *    one line, `// [!code ++]` / `// [!code --]` mark diff lines in ordinary code (those directives only read comments).
  * Returns HTML produced by shiki, which escapes the code itself.
  */
-export function highlightCode(source: string, lang: string, diff: boolean): string {
-  // a unified diff's own grammar would colour whole lines as add/remove: highlight the stripped code as markdown instead
-  const l = diff && lang === 'diff' ? 'markdown' : loadedLangs.has(lang) ? lang : 'text'
-  const sp = diff ? splitDiff(source) : { code: source, kinds: [] as LineKind[] }
-  const transformers: ShikiTransformer[] = [transformerNotationDiff(), transformerNotationHighlight()]
-  if (diff) {
+export function highlightCode(source: string, lang: string, diff: boolean, highlight = ''): string {
+  const l = diff ? 'diff' : loadedLangs.has(lang) ? lang : 'text'
+  const rows = source.split('\n')
+  const transformers: ShikiTransformer[] = [transformerNotationDiff(), transformerNotationHighlight(), transformerMetaHighlight()]
+  if (l === 'diff') {
+    // the diff grammar colours the text; this also tints the whole line so added / removed lines read at a glance
     transformers.push({
-      name: 'aumbry-unified-diff',
+      name: 'aumbry-diff-lines',
       pre(node) {
         this.addClassToHast(node, 'has-diff')
       },
       line(node, line) {
-        const k = sp.kinds[line - 1]
-        if (k) this.addClassToHast(node, `diff ${k}`)
+        const row = rows[line - 1] ?? ''
+        if (/^(\+\+\+|---)( |$)/.test(row)) return
+        if (row.startsWith('+')) this.addClassToHast(node, 'diff add')
+        else if (row.startsWith('-')) this.addClassToHast(node, 'diff remove')
       },
     })
   }
-  return highlighter.codeToHtml(sp.code, { lang: l, ...dualTheme, transformers })
+  // `highlight="3,5-7"` (digits, commas and ranges only) becomes shiki's meta string `{3,5-7}`
+  const meta = /^\d+(-\d+)?(,\d+(-\d+)?)*$/.test(highlight.trim()) ? { __raw: `{${highlight.trim()}}` } : undefined
+  return highlighter.codeToHtml(source, { lang: l, ...dualTheme, transformers, meta })
 }

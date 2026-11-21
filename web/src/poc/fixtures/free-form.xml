@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>周三凌晨 P99 抖动：一次没有套路的排查记录</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>结构故意和其他示例都不一样：body 直接放 claim 与图，章节名自拟、顺序颠倒，一处嵌套三层，只有一节有 tldr，没有分阶段。</summary>
+    <source-agent>ops-notes-agent</source-agent>
+    <tags>
+      <tag>排查</tag>
+      <tag>延迟</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <claim level="evidence" source="监控面板">周三 02:10–02:40，推理服务的 P99 延迟从 38 ms 涨到 210 ms，持续约 30 分钟后自行恢复；错误率没有变化。</claim>
+
+    <chart type="line" caption="周三凌晨 P99 延迟（每 10 分钟取点，单位 ms）">
+      <![CDATA[{
+  "categories": ["01:50", "02:00", "02:10", "02:20", "02:30", "02:40", "02:50"],
+  "series": [
+    { "name": "P99", "data": [37, 39, 188, 210, 176, 52, 38] },
+    { "name": "P50", "data": [12, 12, 13, 13, 13, 12, 12] }
+  ],
+  "x_label": "时间",
+  "y_label": "ms"
+}]]>
+    </chart>
+
+    <section id="conclusion" title="先说结论，再说我有多确定">
+      <claim level="inference">最可能的原因是凌晨 02:00 的**索引合并**占满了磁盘 I/O，把尾部请求拖慢；P50 没变说明大多数请求没被影响。</claim>
+      <claim level="unverified">合并任务是否真的在 02:10 才开始：日志里只有结束时间，没有开始时间。</claim>
+      <callout type="warn" title="这是推断">
+        <![CDATA[我没有直接证据证明合并任务就是原因，下面的「我怎么查的」只是排除了其他几个常见嫌疑。]]>
+      </callout>
+    </section>
+
+    <section title="我怎么查的">
+      <md><![CDATA[
+顺序不是按重要性，而是按「查起来便宜的先查」。
+      ]]></md>
+
+      <section title="先排除了什么">
+        <md><![CDATA[
+流量没有突增，GC 日志也没有异常停顿。下面两项各花了不到十分钟。
+        ]]></md>
+
+        <section title="网络与负载均衡">
+          <md><![CDATA[
+抖动期间负载均衡的上游连接数、重试数都在正常范围，跨机房 RTT 稳定在 0.6 ms。**可以排除网络。**
+          ]]></md>
+          <metrics>
+            <metric label="上游连接数" value="412" delta="0%" trend="flat"/>
+            <metric label="重试率" value="0.01" unit="%" trend="flat"/>
+            <metric label="跨机房 RTT" value="0.6" unit="ms" trend="flat"/>
+          </metrics>
+        </section>
+      </section>
+
+      <section title="磁盘 I/O 看起来不对">
+        <md><![CDATA[
+`iostat` 显示 02:10–02:35 `await` 从 1 ms 涨到 40 ms 以上，而这个窗口正好和延迟抖动重合。
+        ]]></md>
+      </section>
+    </section>
+
+    <section title="涉及的公式与代码">
+      <md><![CDATA[
+尾延迟放大可以用排队论粗略解释：服务时间变长时，队列里的平均请求数按 Little 定律上升。
+      ]]></md>
+
+      <equation id="little" number="1" caption="Little 定律"><![CDATA[L=\lambda\,W]]></equation>
+
+      <code-block lang="yaml" file="index/merge.yaml" lines="3-8" caption="把合并任务限速并错开高峰"><![CDATA[merge:
+  schedule: "0 2 * * *"            # [!code --]
+  schedule: "0 4 * * *"            # [!code ++]
+  max_bytes_per_sec: 0             # [!code --]
+  max_bytes_per_sec: 67108864      # [!code ++]
+  io_class: idle                   # [!code ++]]]></code-block>
+    </section>
+
+    <section title="外面有没有类似的报告">
+      <tldr title="这一节的小结">
+        <point>有一个开源搜索引擎的 issue 描述了相同现象，维护者的建议是合并限速。</point>
+        <point>另一条来自博客，只给了现象，没有给定位过程。</point>
+      </tldr>
+
+      <news-item title="开源搜索引擎 issue：段合并导致 P99 抖动" source="GitHub issue" url="https://example.com/issues/1234" published="2026-09-14" importance="high">
+        维护者建议给合并任务加 **I/O 限速**，并避开读流量高峰；该 issue 已关闭。
+      </news-item>
+
+      <news-item title="博客：凌晨的神秘尾延迟" source="个人博客" url="https://example.com/blog/tail-latency" published="2026-10-02">
+        只描述了现象和监控截图，没有给出定位过程。
+        <detail><![CDATA[
+这篇博客的参考价值有限：作者在 **另一套存储引擎** 上遇到类似的曲线，但没有说明是否也由后台合并引起。
+        ]]></detail>
+      </news-item>
+
+      <claim level="unverified" source="博客评论区">有评论称「换成 NVMe 后问题消失」，没有数据。</claim>
+    </section>
+
+    <section title="几个数字">
+      <metrics>
+        <metric label="抖动持续" value="30" unit="分钟"/>
+        <metric label="P99 峰值" value="210" unit="ms" delta="+172 ms" trend="up"/>
+        <metric label="P50" value="13" unit="ms" delta="+1 ms" trend="flat"/>
+      </metrics>
+    </section>
+
+    <quiz id="ff-quiz">
+      <question><![CDATA[body 里直接放一道测验（不需要 section 包着）：P50 没变、P99 涨了 5 倍，说明什么？]]></question>
+      <option>所有请求都变慢了</option>
+      <option correct="true">只有少数请求被拖慢，问题在尾部</option>
+      <option>监控坏了</option>
+      <explain><![CDATA[中位数不变说明大多数请求不受影响，尾部被某个偶发因素（这里是合并任务）拖慢。]]></explain>
+    </quiz>
+
+    <next-steps>
+      <option target="#s-conclusion">回到结论</option>
+      <option target="#eq-little">看 Little 定律</option>
+      <option target="#quiz-ff-quiz">回到上面的测验</option>
+    </next-steps>
+
+    <section title="杂记">
+      <md><![CDATA[
+- 下一次先抓 `iostat -x 1` 和合并任务的开始日志，再下结论。
+- 这篇没有「参考文献」「附录」：因为没有需要。
+      ]]></md>
+    </section>
+  </body>
+</document>

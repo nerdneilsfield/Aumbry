@@ -3,15 +3,19 @@ import { computed } from 'vue'
 import { ExternalLink } from 'lucide-vue-next'
 import { attr, children, safeId } from '@/lib/xml'
 import { httpUrl } from '@/lib/url'
+import { useAnchors } from '@/composables/useAnchors'
 
 const props = defineProps<{ node: Element }>()
+const { isDuplicate } = useAnchors()
 // doi is not a URL: it is validated against the PRD pattern and then turned into a doi.org link.
 const DOI = /^10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+$/
 const refs = computed(() =>
   children(props.node)
     .filter((c) => c.tagName === 'ref')
     .map((r) => ({
-      anchor: safeId(attr(r, 'id')) ? `ref-${attr(r, 'id')}` : undefined,
+      dup: isDuplicate(r),
+      anchor: safeId(attr(r, 'id')) && !isDuplicate(r) ? `ref-${attr(r, 'id')}` : undefined,
+      id: attr(r, 'id'),
       title: attr(r, 'title'),
       authors: attr(r, 'authors'),
       year: attr(r, 'year'),
@@ -33,6 +37,7 @@ const refs = computed(() =>
           <a v-if="r.url" :href="r.url" target="_blank" rel="noopener noreferrer" class="font-medium text-blue-300 hover:underline">{{ r.title }}</a>
           <span v-else class="font-medium text-gray-100">{{ r.title }}</span>
           <span v-if="r.venue || r.year" class="text-gray-400">. <i>{{ r.venue }}</i><template v-if="r.venue && r.year">, </template>{{ r.year }}</span>
+          <span v-if="r.dup" class="ml-2 text-xs font-semibold text-amber-300" data-dup-error>DUPLICATE_ID：id「{{ r.id }}」已被更早的元素占用</span>
           <a v-if="r.doi" :href="`https://doi.org/${r.doi}`" target="_blank" rel="noopener noreferrer" class="ml-2 inline-flex items-center gap-0.5 font-mono text-xs text-gray-400 hover:text-blue-300">
             doi:{{ r.doi }}<ExternalLink class="size-3" aria-hidden="true" />
           </a>

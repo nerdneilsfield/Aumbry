@@ -24,6 +24,8 @@
     --color-blue-300: #1d4ed8;
     --color-blue-400: #2563eb;
     --color-sky-300: #0369a1;
+    --color-amber-100: #78350f;
+    --color-amber-200: #92400e;
     --color-amber-300: #b45309;
     --color-amber-400: #b45309;
     --color-violet-300: #6d28d9;
@@ -138,11 +140,12 @@ html.dark .shiki span {
   background: rgb(239 68 68 / 0.16);
   border-left-color: var(--color-red-300);
 }
-.code-block .line.diff.add::before {
+/* notation diffs (// [!code ++]) have no +/- in the text, so the gutter carries it; a unified diff keeps its own +/- */
+.code-block pre:not(.has-diff) .line.diff.add::before {
   content: counter(ln) ' +';
   color: var(--color-emerald-400);
 }
-.code-block .line.diff.remove::before {
+.code-block pre:not(.has-diff) .line.diff.remove::before {
   content: counter(ln) ' −';
   color: var(--color-red-300);
 }

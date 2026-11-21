@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
 import { ChevronRight } from 'lucide-vue-next'
 import { attr, children } from '@/lib/xml'
@@ -8,6 +9,8 @@ import XmlNode from './XmlNode.vue'
 
 const props = defineProps<{ node: Element }>()
 const { openCollapses } = useAnchors()
+// Printing: Reka's forceMount keeps the content mounted (and shown) even while the collapse is closed.
+const printing = useMediaQuery('print')
 
 // Collapsed by default; anchors that point inside force it open (see useAnchors).
 const open = computed({
@@ -22,7 +25,7 @@ const open = computed({
       <ChevronRight :class="['size-4 shrink-0 text-gray-400 transition-transform', open && 'rotate-90']" />
       {{ attr(node, 'title') }}
     </CollapsibleTrigger>
-    <CollapsibleContent class="space-y-5 border-t border-gray-700 p-4">
+    <CollapsibleContent :force-mount="printing" class="space-y-5 border-t border-gray-700 p-4 print:block!">
       <XmlNode v-for="(n, i) in children(node)" :key="i" :node="n" />
     </CollapsibleContent>
   </CollapsibleRoot>

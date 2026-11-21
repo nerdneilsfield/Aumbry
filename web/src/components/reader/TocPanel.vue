@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle, DialogTrigger } from 'reka-ui'
-import { ListTree, X } from 'lucide-vue-next'
+import { ListTree, Lock, X } from 'lucide-vue-next'
 import type { TocEntry } from '@/lib/xml'
+import { readerBridge } from '@/composables/useReading'
 
 defineProps<{ toc: TocEntry[]; active: string }>()
 const emit = defineEmits<{ jump: [id: string] }>()
 
 const open = ref(false)
+// Entries of a stage the reader has not unlocked yet are marked; clicking one still jumps there (and unlocks it).
+const locked = (t: TocEntry) => !!t.stage && !!readerBridge.value && !readerBridge.value.isUnlocked(t.group, t.stage)
+const indent = (t: TocEntry) => ({ paddingLeft: `${(t.level - 1) * 0.75}rem` })
 // Close the drawer first (it locks body scroll), then scroll.
 async function jumpFromDrawer(id: string) {
   open.value = false
@@ -21,13 +25,22 @@ async function jumpFromDrawer(id: string) {
   <aside v-if="toc.length" class="hidden lg:block">
     <nav class="sticky top-6 text-sm" aria-label="目录">
       <h2 class="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">目录</h2>
-      <ul class="space-y-1 border-l border-gray-700">
-        <li v-for="t in toc" :key="t.id">
+      <ul class="space-y-0.5 border-l border-gray-700" data-toc="desktop">
+        <li v-for="t in toc" :key="t.id" :style="indent(t)">
           <a
             :href="`#${t.id}`"
-            :class="['-ml-px block border-l-2 py-1 pl-3 transition', active === t.id ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-gray-100']"
+            :data-toc-id="t.id"
+            :data-toc-kind="t.kind"
+            :class="[
+              '-ml-px block border-l-2 py-1 pl-3 transition',
+              t.kind === 'stage' ? 'mt-2 font-semibold' : '',
+              active === t.id ? 'border-blue-400 text-blue-300' : 'border-transparent hover:text-gray-100 ' + (t.kind === 'stage' ? 'text-gray-200' : 'text-gray-400'),
+            ]"
             @click.prevent="emit('jump', t.id)"
-          >{{ t.title }}</a>
+          >
+            <span class="flex items-baseline gap-1.5"><Lock v-if="locked(t)" class="size-3 shrink-0 self-center text-gray-500" aria-label="未解锁" /><span class="min-w-0">{{ t.title }}</span></span>
+            <span v-if="t.summary" class="mt-0.5 line-clamp-2 block text-xs font-normal leading-snug text-gray-500" data-toc-summary>{{ t.summary }}</span>
+          </a>
         </li>
       </ul>
     </nav>
@@ -52,14 +65,20 @@ async function jumpFromDrawer(id: string) {
         </div>
         <DialogDescription class="sr-only">选择章节跳转到对应位置</DialogDescription>
         <nav class="min-h-0 flex-1 overflow-y-auto p-3" aria-label="章节目录">
-          <ul class="space-y-1">
-            <li v-for="(t, i) in toc" :key="t.id">
+          <ul class="space-y-1" data-toc="drawer">
+            <li v-for="t in toc" :key="t.id" :style="indent(t)">
               <a
                 :href="`#${t.id}`"
-                :class="['flex items-baseline gap-2 rounded-lg px-3 py-2.5 text-sm transition', active === t.id ? 'bg-blue-500/15 font-medium text-blue-300' : 'text-gray-300 hover:bg-gray-700']"
+                :data-toc-id="t.id"
+                :class="[
+                  'block rounded-lg px-3 py-2.5 text-sm transition',
+                  t.kind === 'stage' ? 'mt-1 font-semibold' : '',
+                  active === t.id ? 'bg-blue-500/15 font-medium text-blue-300' : 'text-gray-300 hover:bg-gray-700',
+                ]"
                 @click.prevent="jumpFromDrawer(t.id)"
               >
-                <span class="w-5 shrink-0 text-right font-mono text-xs text-gray-500 tabular-nums">{{ i + 1 }}</span>{{ t.title }}
+                <span class="flex items-baseline gap-2"><Lock v-if="locked(t)" class="size-3 shrink-0 self-center text-gray-500" aria-label="未解锁" /><span class="min-w-0">{{ t.title }}</span></span>
+                <span v-if="t.summary" class="mt-0.5 line-clamp-2 block text-xs font-normal leading-snug text-gray-500" data-toc-summary>{{ t.summary }}</span>
               </a>
             </li>
           </ul>

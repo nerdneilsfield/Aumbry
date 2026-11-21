@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>DriveFlow 复现报告：30 FPS 能复现，FVD 86.4 还差一点</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>用官方代码在 8×H100 上复现 Table 2：帧率在容差内，FVD 比论文高 2.1（3 个种子，±1.4）。分两阶段：目标与实现对照，结果与归因。</summary>
+    <source-agent>paper-reproduce</source-agent>
+    <tags>
+      <tag>Reproduction</tag>
+      <tag>World Model</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <tldr>
+      <point>目标：复现 Table 2 的 **30 FPS** 与 **FVD 86.4**，容差事先定为 FPS ±10%、FVD ±3。</point>
+      <point>结果：FPS **29.4**（在容差内）；FVD 3 个种子均值 **88.5 ± 1.4**，落在容差边缘，不能说「复现失败」，也不能说「完全复现」。</point>
+      <point>差距更可能来自**评测设置**（论文没报告的预热帧数）而不是方法本身，证据见第二阶段。</point>
+      <verdict>数字大体可信；引用 FVD 时请带上「3 个种子、预热帧数为我们的假设」。</verdict>
+    </tldr>
+
+    <stages id="repro">
+      <stage id="p1" n="1" title="目标与实现对照" level="准备">
+        <tldr>
+          <point>事先固定了目标数字与容差，再跑官方代码，没有边看结果边调容差。</point>
+          <point>论文没给的超参有 4 个，复现里取了官方默认值并逐项标注。</point>
+        </tldr>
+
+        <md><![CDATA[
+复现的规则很简单：**先写下目标数字与容差，再跑，再对照**。先用作者的代码当基线；基线对得上，才有资格讨论「方法本身」。
+        ]]></md>
+
+        <equation id="loss" number="5" caption="流匹配目标（论文式 5）"><![CDATA[\mathcal{L}_{\mathrm{FM}}=\mathbb{E}_{t,\,x_0,\,x_1}\left\lVert v_\theta(x_t,t,c)-(x_1-x_0)\right\rVert^2,\qquad x_t=(1-t)\,x_0+t\,x_1]]></equation>
+
+        <code-block lang="python" file="driveflow/losses.py" lines="41-52" commit="9f3c2ab" eq="loss" caption="官方实现里与式 (5) 对应的部分"><![CDATA[def flow_matching_loss(model, x1, cond):
+    x0 = torch.randn_like(x1)                      # x_0 ~ N(0, I)
+    t = torch.rand(x1.shape[0], device=x1.device)  # t ~ U[0, 1]
+    t_ = t.view(-1, 1, 1, 1)
+    xt = (1 - t_) * x0 + t_ * x1                   # x_t = (1-t) x_0 + t x_1
+    target = x1 - x0                               # 回归目标
+    pred = model(xt, t, cond)                      # v_theta(x_t, t, c)
+    return ((pred - target) ** 2).mean()           # [!code highlight]]]></code-block>
+
+        <compare-table caption="论文设置 vs 官方默认值 vs 本次复现（单元格标签说明数字的来源）">
+          <columns><col>项目</col><col>论文</col><col>官方代码默认</col><col>本次</col></columns>
+          <row>
+            <cell>目标 FPS（Table 2）</cell>
+            <cell tag="evidence">30</cell>
+            <cell tag="na">—</cell>
+            <cell tag="evidence">29.4</cell>
+          </row>
+          <row>
+            <cell>学习率</cell>
+            <cell tag="unreported">未在正文给出</cell>
+            <cell>1e-4</cell>
+            <cell>1e-4（取默认）</cell>
+          </row>
+          <row>
+            <cell>训练步数</cell>
+            <cell tag="approx">≈ 320k（读自图 4 横轴）</cell>
+            <cell>300k</cell>
+            <cell>320k</cell>
+          </row>
+          <row>
+            <cell>评测预热帧数</cell>
+            <cell tag="unreported">未报告</cell>
+            <cell>4</cell>
+            <cell tag="inference">按 4 评测，是对差距的一个候选解释</cell>
+          </row>
+          <row>
+            <cell>随机种子数</cell>
+            <cell tag="unreported"></cell>
+            <cell>1</cell>
+            <cell tag="evidence">3</cell>
+          </row>
+        </compare-table>
+
+        <section title="相关复现的检索记录">
+          <search-log date="2026-11-20">
+            <criteria>
+              <include>公开了完整训练 / 评测脚本</include>
+              <include>报告了随机种子数或方差</include>
+              <exclude>只有推理权重、无训练代码</exclude>
+              <exclude>评测协议与 Table 2 不同（无法对比）</exclude>
+            </criteria>
+            <query source="arXiv" date="2026-11-20" hits="23" kept="4">DriveFlow reproduction OR replication flow matching world model</query>
+            <query source="GitHub" date="2026-11-20" hits="41" kept="3">driveflow nuscenes fvd reproduce</query>
+            <query source="OpenReview" date="2026-11-20" hits="9" kept="1">flow matching driving world model reproducibility</query>
+            <excluded title="DriveFlow-Mini (weights only)" reason="只有推理权重，没有训练代码"/>
+            <excluded title="Fast DrivingGen" reason="评测帧率用 batch=8，与 Table 2 的 batch=1 不可比"/>
+            <gap>没有找到在车端芯片上复现的公开报告。</gap>
+            <gap>OpenReview 上的评审意见只能看到摘要，没有逐条评论。</gap>
+            <stop>连续两轮检索没有新增满足纳入标准的条目</stop>
+          </search-log>
+        </section>
+
+        <quiz id="q-repro1">
+          <question><![CDATA[论文没有写学习率。复现时你取了官方代码里的默认值 1e-4。报告里应该怎么处理这个数？]]></question>
+          <option>直接写进「论文设置」一栏，读者会以为论文给了</option>
+          <option correct="true">在「论文」一栏标「未报告」，在「本次」一栏写明取自官方默认值</option>
+          <option>不写，因为不重要</option>
+          <option>把它调到让结果最接近论文的值</option>
+          <explain><![CDATA[「未报告」不是 0 也不是空白：它告诉读者这一项是我们补的。把补的值当成论文设置，或者拿它去凑结果，都会让后面的归因失真。]]></explain>
+        </quiz>
+
+        <next-steps>
+          <option target="#stage-p2">继续：结果与归因</option>
+          <option target="#eq-loss">回看式 (5)</option>
+        </next-steps>
+      </stage>
+
+      <stage id="p2" n="2" title="结果与归因" level="分析">
+        <tldr>
+          <point>FPS 29.4，在 ±10% 容差内。</point>
+          <point>FVD 均值 88.5 ± 1.4（3 个种子），比论文高 2.1，在 ±3 的容差内但偏高。</point>
+          <point>把评测预热帧数从 4 改到 8，FVD 降到 86.9，支持「评测设置」解释；这是一个候选，不是结论。</point>
+        </tldr>
+
+        <chart type="bar" caption="FVD（越低越好）：误差棒为 3 个种子的标准差">
+          <![CDATA[{
+  "categories": ["论文 Table 2", "本次复现（预热 4 帧）", "本次复现（预热 8 帧）"],
+  "series": [{ "name": "FVD", "data": [86.4, 88.5, 86.9], "err": [0, 1.4, 1.2] }],
+  "y_label": "FVD"
+}]]>
+        </chart>
+
+        <chart type="line" caption="FVD 随训练步数（均值，误差棒为 3 个种子的标准差）">
+          <![CDATA[{
+  "categories": ["40k", "80k", "160k", "320k"],
+  "series": [
+    { "name": "论文", "data": [121, 98, 90, 86.4] },
+    { "name": "本次复现", "data": [126, 101, 92, 88.5], "err": [3.1, 2.4, 1.9, 1.4] }
+  ],
+  "x_label": "训练步数",
+  "y_label": "FVD"
+}]]>
+        </chart>
+
+        <claim level="evidence" source="本次实验 · 3 个种子">FPS 29.4（H100 · FP16 · batch=1 · 480×832），在事先定的 ±10% 容差内。</claim>
+        <claim level="evidence" source="本次实验 · 3 个种子">FVD 均值 88.5，标准差 1.4；预热帧数改为 8 后均值 86.9。</claim>
+        <claim level="inference">论文的评测很可能用了更长的预热帧数：FVD 对序列起始的几帧很敏感，而论文没有报告这一项。这是候选解释，需要作者确认。</claim>
+        <claim level="unverified">论文报告的是单次运行还是多个种子的均值：没有说明。</claim>
+
+        <quiz id="q-repro2">
+          <question><![CDATA[复现得到 FVD 88.5（论文 86.4，容差 ±3）。你的结论应该是？]]></question>
+          <option>复现失败，论文的数字有水分</option>
+          <option>完全复现，没有任何差异</option>
+          <option correct="true">在容差内但偏高；差距更可能来自评测设置，需要把预热帧数等设置对齐后再下结论</option>
+          <option>应该把容差放宽到 ±5，这样就算成功</option>
+        </quiz>
+
+        <quiz id="q-repro3">
+          <question><![CDATA[把预热帧数从 4 改到 8，FVD 降到 86.9，这说明了什么？（多选）]]></question>
+          <option correct="true">评测设置会显著影响 FVD，跨论文比较要对齐设置</option>
+          <option correct="true">它支持「差距来自评测设置」这一候选解释，但还不是定论</option>
+          <option>论文一定用了 8 帧预热</option>
+          <option>方法本身没有任何问题</option>
+          <explain><![CDATA[一次改动只能说明「这个因素有影响」，不能反推论文用了什么设置，也不能证明方法没有问题。要确认就去问作者，或在更多设置上做对照。]]></explain>
+        </quiz>
+
+        <next-steps>
+          <option target="#stage-p1">回到第一阶段，看设置对照</option>
+          <option target="#eq-loss">跳到式 (5)</option>
+        </next-steps>
+      </stage>
+    </stages>
+  </body>
+</document>

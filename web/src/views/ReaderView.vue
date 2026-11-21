@@ -66,7 +66,7 @@ const { active, jump } = useScrollSpy(toc, rendered)
     <div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
       <article class="min-w-0">
         <p v-if="doc && 'error' in doc" class="card border-red-500/40 p-4 text-sm text-red-300">{{ doc.error }}</p>
-        <XmlRenderer v-else-if="doc" :key="id" :body="doc.body" />
+        <XmlRenderer v-else-if="doc" :key="id" :body="doc.body" :storage-key="id" />
       </article>
 
       <TocPanel :toc="toc" :active="active" @jump="jump" />

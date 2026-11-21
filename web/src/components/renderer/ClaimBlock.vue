@@ -2,12 +2,15 @@
 import { computed } from 'vue'
 import { MapPin } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
-import { LEVELS, asLevel } from '@/lib/levels'
+import { CLAIM_LEVELS, LEVELS, asLevel } from '@/lib/levels'
 import MarkdownBlock from './MarkdownBlock.vue'
 
 const props = defineProps<{ node: Element }>()
 // Unknown level (server rejects it, but be tolerant): fall back to the neutral "claim" look.
-const level = computed(() => asLevel(attr(props.node, 'level')) ?? 'claim')
+const level = computed(() => {
+  const l = asLevel(attr(props.node, 'level'))
+  return l && CLAIM_LEVELS.includes(l) ? l : 'claim'
+})
 const s = computed(() => LEVELS[level.value])
 const source = computed(() => attr(props.node, 'source'))
 </script>

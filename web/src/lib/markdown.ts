@@ -32,5 +32,15 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 })
 
-export const renderMarkdown = (src: string) =>
-  DOMPurify.sanitize(md.render(dedent(src)), { ADD_TAGS: ['eq', 'eqn', 'eqno'], ADD_ATTR: ['target'] })
+const clean = (html: string) => DOMPurify.sanitize(html, { ADD_TAGS: ['eq', 'eqn', 'eqno'], ADD_ATTR: ['target'] })
+
+export const renderMarkdown = (src: string) => clean(md.render(dedent(src)))
+
+/** One line of Markdown (<tldr> points, <news-item> summaries): inline rules only, no block elements. */
+export const renderInline = (src: string) => clean(md.renderInline(src.trim()))
+
+/** Inline Markdown reduced to plain text (TOC summaries, tooltips). */
+export const inlineText = (src: string) =>
+  (md.parseInline(src.trim(), {})[0]?.children ?? [])
+    .map((t) => (t.type === 'softbreak' || t.type === 'hardbreak' ? ' ' : ['text', 'code_inline', 'math_inline'].includes(t.type) ? t.content : ''))
+    .join('')

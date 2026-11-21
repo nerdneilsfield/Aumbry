@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>2026-W47 AI 与自动驾驶周报</title>
+    <type>report</type>
+    <date>2026-11-21</date>
+    <summary>本周筛 312 篇预印本，入选精读 9 篇。主线：世界模型从「画面质量」转向「车端实时」；L3 责任草案公开征求意见。</summary>
+    <source-agent>auto-drive-weekly-agent</source-agent>
+    <tags>
+      <tag>周报</tag>
+      <tag>Autonomous Driving</tag>
+    </tags>
+    <related-ids>
+      <id>DailyRep0001</id>
+      <id>Pap3rRead001</id>
+      <id>NewsDigest01</id>
+    </related-ids>
+  </meta>
+
+  <body>
+    <tldr>
+      <point>主线：世界模型的竞争焦点从画面质量转向**车端实时**；本周 9 篇精读里 5 篇主打一步或少步采样。</point>
+      <point>开源：DriveFlow 与 bev-nano 同周放出，一个给方法，一个给车端落地。</point>
+      <point>政策：高速 L3 责任划分草案公开征求意见（周四），细则未出。</point>
+      <point>风险：两个「车端延迟」数字（TinyVLA-Drive、芯片 A）口径未披露，**不要引用**。</point>
+      <verdict>下周先复现 DriveFlow 的 H100 基线，再决定要不要投入车端适配。</verdict>
+    </tldr>
+
+    <section title="本周数字">
+      <metrics>
+        <metric label="筛选预印本" value="312" unit="篇" delta="+41 vs 上周" trend="up"/>
+        <metric label="入选精读" value="9" unit="篇" delta="持平" trend="flat"/>
+        <metric label="开源仓库" value="14" unit="个" delta="+5" trend="up"/>
+        <metric label="待核验结论" value="11" unit="条" delta="+4" trend="up"/>
+      </metrics>
+
+      <chart type="bar" caption="每日筛选篇数">
+        <![CDATA[{
+  "categories": ["周一", "周二", "周三", "周四", "周五", "周六"],
+  "series": [{ "name": "篇数", "data": [48, 55, 51, 60, 61, 37] }],
+  "y_label": "篇"
+}]]>
+      </chart>
+    </section>
+
+    <section title="周一 11-16">
+      <tldr>
+        <point>世界模型方向 3 篇；一篇占用预测蒸馏（OccWorld-Lite 预印本前一天）。</point>
+      </tldr>
+      <md><![CDATA[
+筛选 48 篇，入选 2 篇。占用预测的蒸馏工作开始出现，主要看点是学生网络的延迟，**但没有车端数字**。
+      ]]></md>
+    </section>
+
+    <section title="周二 11-17">
+      <tldr>
+        <point>OccWorld-Lite 放出预印本，仅读到方法图与表 1。</point>
+        <point>两个开源数据集更新了标注格式。</point>
+      </tldr>
+      <md><![CDATA[
+筛选 55 篇，入选 1 篇。数据集更新对已有流水线有破坏性：字段 `occ_label` 改名，复现脚本需要同步。
+      ]]></md>
+    </section>
+
+    <section title="周三 11-18">
+      <tldr>
+        <point>一篇 VLA 规划器综述；没有新的实测数字。</point>
+      </tldr>
+      <md><![CDATA[
+筛选 51 篇，入选 2 篇。综述的价值在分类法，而不是新结果。
+      ]]></md>
+    </section>
+
+    <section title="周四 11-19">
+      <tldr>
+        <point>**DriveFlow** 论文与代码同日发布，成为本周最重要的一条。</point>
+        <point>L3 责任划分草案公开征求意见。</point>
+      </tldr>
+      <md><![CDATA[
+筛选 60 篇，入选 3 篇。DriveFlow 已做三轮精读，见相关条目；它的 FPS 数字是 H100 上的，车端没有证据。
+      ]]></md>
+      <claim level="evidence" source="DriveFlow · Table 2">30 FPS 对 8 FPS（H100 · batch=1）。</claim>
+    </section>
+
+    <section title="周五 11-20">
+      <tldr>
+        <point>TinyVLA-Drive 提交 CoRL，声称 Orin-X 上 12 Hz。</point>
+        <point>评测脚本未公开，数字待核验。</point>
+      </tldr>
+      <md><![CDATA[
+筛选 61 篇，入选 1 篇。**不要引用** 12 Hz 的数字：批大小与精度设置都没给。
+      ]]></md>
+      <claim level="unverified" source="TinyVLA-Drive 摘要">Orin-X 上 12 Hz。</claim>
+    </section>
+
+    <section title="周六 11-21">
+      <tldr>
+        <point>日报已单独成篇，本周报不重抄；两家车规芯片厂商同日更新路线图。</point>
+      </tldr>
+      <md><![CDATA[
+详见相关条目里的日报。这里只记一件事：两家芯片厂商的标称算力口径不同，对比前先对齐。
+      ]]></md>
+    </section>
+
+    <sources>
+      <source title="arXiv cs.RO / cs.CV" url="https://arxiv.org/list/cs.RO/new"/>
+      <source title="GitHub Trending" url="https://github.com/trending"/>
+    </sources>
+  </body>
+</document>

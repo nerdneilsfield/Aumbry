@@ -14,6 +14,11 @@
   </meta>
 
   <body>
+    <tldr>
+      <point>这份文档故意写错了很多地方：每处错误都应该只在原地显示一个可读的错误块，**其余内容照常渲染**。</point>
+      <point>页面里出现的 `javascript:`、`onerror`、`&lt;script&gt;` 都只能是文本。</point>
+    </tldr>
+
     <section title="1. 证据标签与对比表">
       <claim level="claim" source="§1 Abstract">作者主张：一步采样足以覆盖大多数场景。</claim>
       <claim level="evidence" source="Table 2 · Fig. 4 · Eq. (5) · 一个非常非常长的位置标签用来测试 source 芯片在窄屏下会不会撑破布局 · §A.3.2.1">论文证据：30 FPS，单卡 H100。</claim>
@@ -146,11 +151,19 @@ func main() {
 	fmt.Println("你好，Aumbry") // [!code ++]
 	total := 0 // [!code highlight]
 }]]></code-block>
-      <code-block lang="diff" diff="true" file="README.md" caption="统一 diff（diff=true）"><![CDATA[ # Aumbry
+      <code-block lang="diff" file="README.md" caption="统一 diff：shiki 自带的 diff 语言着色，行首 +/- 保留"><![CDATA[ # Aumbry
 -Research, gathered.
 +Research, gathered and searchable.
 
- ## Install]]></code-block>
+ ## Install
+-go install ./...
++make install]]></code-block>
+      <code-block lang="go" file="main.go" highlight="2,4-5" caption="highlight=&quot;2,4-5&quot;：按行号高亮"><![CDATA[func main() {
+	a := 1
+	b := 2
+	c := a + b
+	println(c)
+}]]></code-block>
       <code-block lang="notalang" file="&lt;b&gt;evil&lt;/b&gt;.txt" caption="未知语言回退为纯文本；file 里的 HTML 只是文本"><![CDATA[<script>window.__pwned = 1</script>
 <img src=x onerror="window.__pwned=1">]]></code-block>
 
@@ -197,5 +210,199 @@ func main() {
         <source title="恶意链接" url="javascript:window.__pwned=1"/>
       </sources>
     </section>
+
+    <section title="7. 互动：quiz、next-steps、交互式 steps、stages">
+      <tldr><point>有效与无效的 quiz；带恶意 target 的 next-steps；交互式 steps；各种无效的 stages。</point></tldr>
+
+      <quiz id="ks-single">
+        <question><![CDATA[单选：一步欧拉采样的网络调用次数是？]]></question>
+        <option>0</option>
+        <option correct="true">1</option>
+        <option>50</option>
+        <explain><![CDATA[NFE = 1。]]></explain>
+      </quiz>
+      <quiz id="ks-multi">
+        <question><![CDATA[多选：哪些是**证据**而不是主张？]]></question>
+        <option correct="true">Table 2 的 FPS</option>
+        <option>「质量相当」</option>
+        <option correct="true">消融里的 FVD</option>
+      </quiz>
+      <quiz id="ks-xss">
+        <question><![CDATA[题干含 <img src=x onerror="window.__pwned=1"> 与 [恶意链接](javascript:window.__pwned=1)：只显示为文本。]]></question>
+        <option correct="true"><![CDATA[选项也是纯文本 <script>window.__pwned=1</script>]]></option>
+        <option>另一个选项</option>
+      </quiz>
+      <quiz id="ks-bad-one">
+        <question><![CDATA[无效：只有 1 个选项（INVALID_QUIZ）]]></question>
+        <option correct="true">唯一的选项</option>
+      </quiz>
+      <quiz id="ks-bad-none">
+        <question><![CDATA[无效：没有正确选项（INVALID_QUIZ）]]></question>
+        <option>A</option>
+        <option>B</option>
+      </quiz>
+      <quiz>
+        <question><![CDATA[无效：缺 id（INVALID_QUIZ）]]></question>
+        <option correct="true">A</option>
+        <option>B</option>
+      </quiz>
+
+      <next-steps>
+        <option target="#eq-ok">有效：跳到公式 (1)</option>
+        <option target="#quiz-ks-single">有效：跳到上面的测验</option>
+        <option target="#eq-不存在">无效：目标含非法字符（INVALID_TARGET）</option>
+        <option target="#nope">无效：#nope 不存在</option>
+        <option target="#sec-3">无效：#sec-3（位置锚点不能作为 next-steps 目标）</option>
+        <option target="/admin">无效：/admin</option>
+        <option target="https://evil.example/">无效：外链</option>
+        <option target="javascript:window.__pwned=1">无效：javascript:</option>
+        <option target="//evil.example/x">无效：协议相对地址</option>
+      </next-steps>
+
+      <steps interactive="true">
+        <step title="交互式第一步"><md><![CDATA[用「下一步」与方向键切换；点步骤圆点直接跳转。]]></md></step>
+        <step title="第二步（含公式）">
+          <equation id="ks-eq" number="10"><![CDATA[y=ax+b]]></equation>
+        </step>
+        <step title="第三步"><md><![CDATA[最后一步。链接 [跳到第二步的公式](#eq-ks-eq) 会先切到第二步。]]></md></step>
+      </steps>
+
+      <stages id="ks">
+        <stage id="ks-1" title="有效分组的第一阶段">
+          <md><![CDATA[这一组只有 2 个阶段，用来确认它不会把后面的章节藏起来。]]></md>
+          <next-steps><option target="#stage-ks-2">继续</option></next-steps>
+        </stage>
+        <stage id="ks-2" title="有效分组的第二阶段">
+          <md><![CDATA[第二阶段。]]></md>
+        </stage>
+      </stages>
+
+      <stages id="ks-one">
+        <stage id="ks-one-1" title="只有 1 个阶段：合法，没有步进条也没有「继续」"><md><![CDATA[单阶段的 stages 直接展开。]]></md></stage>
+      </stages>
+
+      <stages id="ks-zero"></stages>
+
+      <stages id="ks-nine">
+        <stage id="ks9-1" title="1"><md><![CDATA[x]]></md></stage><stage id="ks9-2" title="2"><md><![CDATA[x]]></md></stage>
+        <stage id="ks9-3" title="3"><md><![CDATA[x]]></md></stage><stage id="ks9-4" title="4"><md><![CDATA[x]]></md></stage>
+        <stage id="ks9-5" title="5"><md><![CDATA[x]]></md></stage><stage id="ks9-6" title="6"><md><![CDATA[x]]></md></stage>
+        <stage id="ks9-7" title="7"><md><![CDATA[x]]></md></stage><stage id="ks9-8" title="8"><md><![CDATA[x]]></md></stage>
+        <stage id="ks9-9" title="9：超过 8 个（INVALID_STAGES）"><md><![CDATA[x]]></md></stage>
+      </stages>
+
+      <stages id="ks-dup">
+        <stage id="ks-1" title="stage id 与前面有效分组的 ks-1 重名（DUPLICATE_ID）"><md><![CDATA[不会显示。]]></md></stage>
+      </stages>
+
+      <stages>
+        <stage id="ks-noid-1" title="缺少 stages id（INVALID_STAGES）"><md><![CDATA[不会显示。]]></md></stage>
+        <stage id="ks-noid-2" title="第二个"><md><![CDATA[不会显示。]]></md></stage>
+      </stages>
+
+      <stages id="ks-outer">
+        <stage id="ks-o-1" title="外层第一阶段：里面嵌了一组 stages">
+          <md><![CDATA[下面这组嵌套在 stage 里，应只显示错误块；外层阶段本身正常。]]></md>
+          <stages id="ks-nested">
+            <stage id="ks-n-1" title="嵌套的 1"><md><![CDATA[不会显示。]]></md></stage>
+            <stage id="ks-n-2" title="嵌套的 2"><md><![CDATA[不会显示。]]></md></stage>
+          </stages>
+        </stage>
+        <stage id="ks-o-2" title="外层第二阶段"><md><![CDATA[正常。]]></md></stage>
+      </stages>
+    </section>
+
+    <section title="8. 误差棒、单元格标签与代码↔公式">
+      <chart type="bar" caption="带误差棒（err）：3 个种子的标准差">
+        <![CDATA[{
+  "categories": ["A", "B", "C"],
+  "series": [{ "name": "指标", "data": [10, 12, 9], "err": [1, 2, 0.5] }, { "name": "对照", "data": [8, 9, 8], "err": [0.5, 1, 1] }],
+  "y_label": "值"
+}]]>
+      </chart>
+      <chart type="line" caption="折线带误差棒">
+        <![CDATA[{ "categories": ["1", "2", "3", "4"], "series": [{ "name": "s", "data": [3, 5, 4, 6], "err": [0.4, 0.6, 0.3, 0.8] }] }]]>
+      </chart>
+      <chart type="pie" caption="无效：pie 不能带 err（应指出 series[0].err）">
+        <![CDATA[{ "categories": ["a", "b"], "series": [{ "name": "s", "data": [1, 2], "err": [0.1, 0.1] }] }]]>
+      </chart>
+      <chart type="bar" caption="无效：err 为负数">
+        <![CDATA[{ "categories": ["a", "b"], "series": [{ "name": "s", "data": [1, 2], "err": [0.1, -0.2] }] }]]>
+      </chart>
+      <chart type="bar" caption="无效：err 长度与 data 不同">
+        <![CDATA[{ "categories": ["a", "b"], "series": [{ "name": "s", "data": [1, 2], "err": [0.1] }] }]]>
+      </chart>
+
+      <compare-table caption="unreported 与 approx 单元格">
+        <columns><col>项目</col><col>论文</col><col>本次</col></columns>
+        <row><cell>学习率</cell><cell tag="unreported">未在正文给出</cell><cell>1e-4</cell></row>
+        <row><cell>训练步数</cell><cell tag="approx">≈ 320k（读自图）</cell><cell tag="evidence">320k</cell></row>
+        <row><cell>种子数</cell><cell tag="unreported"></cell><cell tag="evidence">3</cell></row>
+      </compare-table>
+
+      <code-block lang="python" file="loss.py" eq="ok" caption="有效：eq 指向公式 (1)，芯片可跳转"><![CDATA[import math
+print(math.e ** (1j * math.pi) + 1)]]></code-block>
+      <code-block lang="python" file="loss.py" eq="nope" caption="无效：eq 指向不存在的公式（INVALID_TARGET，芯片禁用）"><![CDATA[x = 1]]></code-block>
+    </section>
+
+    <section title="9. search-log、tldr、news-item">
+      <search-log date="2026-11-20">
+        <criteria><include>公开了训练脚本</include><exclude>只有权重</exclude></criteria>
+        <query source="arXiv" date="2026-11-20" hits="23" kept="4">flow matching world model</query>
+        <query source="GitHub" date="2026-11-20" hits="41" kept="3">driveflow reproduce</query>
+        <excluded title="只有权重的仓库" reason="无训练代码"/>
+        <gap>没有车端复现。</gap>
+        <stop>连续两轮无新增</stop>
+      </search-log>
+      <search-log>
+        <criteria><include>缺 query：INVALID_SEARCH_LOG</include></criteria>
+      </search-log>
+
+      <tldr title="有效的小结（自定义标题，放在末尾）" placement="bottom">
+        <point>要点支持 **加粗**、`代码`、[链接](https://example.com)，但不支持 [恶意](javascript:window.__pwned=1)。</point>
+        <point>最多 7 条、每条 ≤ 300 字符。</point>
+        <verdict>结论：照这样写就行。</verdict>
+      </tldr>
+      <tldr><point>无效：同一个 section 里的第二个 tldr（INVALID_TLDR）</point></tldr>
+
+      <section title="9.1 无效 tldr">
+        <tldr title="零个 point"><verdict>只有结论没有要点</verdict></tldr>
+      </section>
+
+      <news-item title="有效：重要新闻" source="示例来源" url="https://example.com/news" published="2026-11-21" importance="high" detail-id="NewsDetail01">
+        摘要是**行内** Markdown，带 `code`；`detail-id` 渲染为「阅读详情」。
+        <detail><![CDATA[内联详情：支持 **Markdown**，也支持列表：
+
+- 第一条
+- 第二条]]></detail>
+      </news-item>
+      <news-item source="示例来源" published="2026-11-21">无效：缺少 title（INVALID_NEWS）</news-item>
+      <news-item title="无效：javascript: 链接" source="x" url="javascript:window.__pwned=1" published="2026-11-21">INVALID_URL</news-item>
+      <news-item title="无效：detail-id 不是 12 位" source="x" published="2026-11-21" detail-id="short">INVALID_ID</news-item>
+      <news-item title="无效：published 格式" source="x" published="昨天">INVALID_NEWS</news-item>
+    </section>
+
+    <section title="10. 章节嵌套：3 层可以，4 层显示错误">
+      <tldr title="字符数按 Unicode 码位计：这条 point 是 200 个「𠮷」（400 个 UTF-16 单位），合法">
+        <point>𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷</point>
+      </tldr>
+      <news-item title="摘要 400 个「𠮷」（800 个 UTF-16 单位）：按码位计 ≤ 600，合法" source="示例" published="2026-11-21">𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷</news-item>
+      <md><![CDATA[第 1 层。]]></md>
+      <section title="10.1 第 2 层">
+        <md><![CDATA[第 2 层。]]></md>
+        <section title="10.1.1 第 3 层（上限）">
+          <md><![CDATA[第 3 层，允许。]]></md>
+          <section title="10.1.1.1 第 4 层（SECTION_TOO_DEEP）">
+            <md><![CDATA[这一层与其内容都不会渲染。]]></md>
+          </section>
+        </section>
+      </section>
+      <md><![CDATA[上面的 4 层错误不会影响这一段。]]></md>
+    </section>
+
+    <news-item title="body 里直接放 news-item" source="示例" published="2026-11-21">合法：news-item、quiz、next-steps、tldr 都可以直接放在 body 里。</news-item>
+    <equation id="ks-eq" number="11" caption="id 与第 7 节步骤里的公式重名（DUPLICATE_ID，不渲染）"><![CDATA[z=x+y]]></equation>
+
+    <tldr><point>无效：body 里的第二个 tldr（INVALID_TLDR），第一个在文档开头</point></tldr>
   </body>
 </document>

@@ -1,7 +1,9 @@
-import { BadgeCheck, CircleHelp, Lightbulb, Megaphone, Ban } from 'lucide-vue-next'
+import { BadgeCheck, CircleDashed, CircleHelp, Eye, Lightbulb, Megaphone, Ban } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
-export type Level = 'claim' | 'evidence' | 'inference' | 'unverified' | 'na'
+export type Level = 'claim' | 'evidence' | 'inference' | 'unverified' | 'na' | 'unreported' | 'approx'
+/** levels a <claim> may use; the other keys are compare-table cell tags only */
+export const CLAIM_LEVELS: Level[] = ['claim', 'evidence', 'inference', 'unverified']
 
 interface LevelStyle {
   label: string
@@ -56,6 +58,22 @@ export const LEVELS: Record<Level, LevelStyle> = {
     bar: 'border-l-gray-500',
     badge: 'bg-gray-500/20 text-gray-300 ring-gray-500/40',
     surface: 'bg-gray-500/10',
+  },
+  unreported: {
+    label: '未报告',
+    hint: '论文没有报告这个数；不是 0，也不是缺失的排版',
+    icon: CircleDashed,
+    bar: 'border-l-gray-500 border-dashed',
+    badge: 'bg-gray-500/20 text-gray-300 ring-gray-500/40',
+    surface: 'bg-gray-500/5',
+  },
+  approx: {
+    label: '≈ 图读',
+    hint: '数值是从图中读出来的近似值，不是论文给出的精确数字',
+    icon: Eye,
+    bar: 'border-l-sky-400',
+    badge: 'bg-sky-500/15 text-sky-300 ring-sky-400/40',
+    surface: 'bg-sky-500/5',
   },
 }
 

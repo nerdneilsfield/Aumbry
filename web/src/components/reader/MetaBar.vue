@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Bot, CalendarDays, ExternalLink } from 'lucide-vue-next'
 import { httpUrl } from '@/lib/url'
+import ReadingControls from './ReadingControls.vue'
 
 defineProps<{
   title: string
@@ -25,5 +26,6 @@ defineProps<{
         <ExternalLink class="size-4" />原文链接
       </a>
     </div>
+    <ReadingControls class="mt-4 border-t border-gray-700 pt-4" />
   </header>
 </template>

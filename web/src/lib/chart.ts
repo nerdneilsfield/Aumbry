@@ -4,12 +4,14 @@ import type { EChartsCoreOption } from 'echarts/core'
 
 /**
  * <chart> payload, PRD 6.3. We never pass the document's JSON to ECharts as-is: it is validated against this
- * schema and an option object is built from the checked fields only (no formatter functions, no raw option).
+ * schema and an option object is built from the checked fields only: the document never supplies a raw option or any
+ * function. (The error-bar renderItem below is our own code, following ECharts' official custom-error-bar example.)
  */
 const Num = v.pipe(v.number(), v.finite())
+const NonNeg = v.pipe(Num, v.minValue(0, 'err 必须是非负数'))
 const Series = (data: v.GenericSchema) =>
   v.pipe(
-    v.array(v.object({ name: v.pipe(v.string(), v.nonEmpty('series[].name 不能为空')), data: v.array(data) })),
+    v.array(v.object({ name: v.pipe(v.string(), v.nonEmpty('series[].name 不能为空')), data: v.array(data), err: v.optional(v.array(NonNeg)) })),
     v.minLength(1, 'series 至少 1 个'),
     v.maxLength(20, 'series 最多 20 个'),
   )
@@ -17,7 +19,6 @@ const labels = { x_label: v.optional(v.string()), y_label: v.optional(v.string()
 
 const Categorical = v.pipe(
   v.object({ categories: v.pipe(v.array(v.string()), v.nonEmpty('categories 不能为空')), series: Series(Num), ...labels }),
-  v.check((d) => d.series.every((s) => s.data.length === d.categories.length), 'series[].data 的长度必须等于 categories 的长度'),
   v.check((d) => d.series.reduce((n, s) => n + s.data.length, 0) <= 2000, '数据点总数不能超过 2000'),
 )
 const Scatter = v.pipe(
@@ -51,7 +52,18 @@ export function buildChart(type: string, json: string, dark: boolean): ChartSpec
     const i = r.issues[0]
     return { error: `数据不符合格式：${v.getDotPath(i) ?? '$'} — ${i.message}` }
   }
+  const bad = crossCheck(type, r.output as CategoricalData)
+  if (bad) return { error: `数据不符合格式：${bad.path} — ${bad.message}` }
   return type === 'scatter' ? scatterOption(r.output as ScatterData, dark) : categoricalOption(type, r.output as CategoricalData, dark)
+}
+
+/** Cross-field rules JSON Schema cannot express (PRD 6.3), reported with the JSON path of the offending field. */
+function crossCheck(type: ChartType, d: { categories?: string[]; series: { data: unknown[]; err?: number[] }[] }) {
+  for (const [i, s] of d.series.entries()) {
+    if (s.err && type !== 'bar' && type !== 'line') return { path: `series[${i}].err`, message: 'err（误差棒）只适用于 bar / line' }
+    if (d.categories && s.data.length !== d.categories.length) return { path: `series[${i}].data`, message: `长度 ${s.data.length} 必须等于 categories 的长度 ${d.categories.length}` }
+    if (s.err && s.err.length !== s.data.length) return { path: `series[${i}].err`, message: `长度 ${s.err.length} 必须等于 data 的长度 ${s.data.length}` }
+  }
 }
 
 const PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#ec4899', '#84cc16']
@@ -114,7 +126,9 @@ function categoricalOption(type: 'bar' | 'line' | 'pie', d: CategoricalData, dar
   }
 
   // Horizontal bars keep long category names readable; the full name is in the tooltip.
-  const horizontal = type === 'bar' && (longest > 10 || n > 8)
+  const hasErr = d.series.some((s) => s.err)
+  // (error bars are drawn for vertical layouts only)
+  const horizontal = type === 'bar' && !hasErr && (longest > 10 || n > 8)
   const catAxis = {
     type: 'category' as const,
     data: d.categories,
@@ -137,7 +151,7 @@ function categoricalOption(type: 'bar' | 'line' | 'pie', d: CategoricalData, dar
     nameLocation: 'end' as const,
     nameTextStyle: { color: t.muted, align: horizontal ? ('right' as const) : ('left' as const) },
   }
-  const labelled = d.series.length === 1 && n <= 12
+  const labelled = d.series.length === 1 && n <= 12 && !hasErr
   const series = d.series.map((s) => ({
     type,
     name: s.name,
@@ -146,16 +160,62 @@ function categoricalOption(type: 'bar' | 'line' | 'pie', d: CategoricalData, dar
     label: labelled ? { show: true, position: horizontal ? ('right' as const) : ('top' as const), color: t.text, fontSize: 11 } : { show: false },
   }))
 
+  // Error bars: a custom series per series with `err`, reading [category, mean - err, mean + err] (official errorbar pattern).
+  const errSeries = d.series.flatMap((s, k) =>
+    s.err
+      ? [{
+          type: 'custom' as const,
+          name: `${s.name} ±误差`,
+          silent: true,
+          tooltip: { show: false },
+          z: 10,
+          itemStyle: { color: PALETTE[k % PALETTE.length] },
+          encode: { x: 0, y: [1, 2] },
+          data: (s.data as number[]).map((m, i) => [i, m - s.err![i], m + s.err![i]]),
+          renderItem: (_p: unknown, api: CustomApi) => {
+            const i = api.value(0)
+            const hi = api.coord([i, api.value(2)])
+            const lo = api.coord([i, api.value(1)])
+            const band = api.size([1, 0])[0]
+            // offset of this series' bar inside its category group (default barGap 30%, barCategoryGap 20%, barMaxWidth 36)
+            const N = d.series.length
+            const w = Math.min((band * 0.8) / (N + 0.3 * (N - 1)), 36)
+            const x = hi[0] + (type === 'bar' ? (k - (N - 1) / 2) * w * 1.3 : 0)
+            const cap = Math.max(Math.min(w * 0.3, 8), 3)
+            const style = api.style({ stroke: t.text, fill: undefined, lineWidth: 1.6 })
+            return {
+              type: 'group',
+              children: [
+                { type: 'line', shape: { x1: x, y1: hi[1], x2: x, y2: lo[1] }, style },
+                { type: 'line', shape: { x1: x - cap, y1: hi[1], x2: x + cap, y2: hi[1] }, style },
+                { type: 'line', shape: { x1: x - cap, y1: lo[1], x2: x + cap, y2: lo[1] }, style },
+              ],
+            }
+          },
+        }]
+      : [],
+  )
+
   return {
     height: horizontal ? Math.max(260, 90 + n * 34 * d.series.length) : n > 6 ? 410 : 350,
     option: {
       ...base(dark, 'axis', d.series.length > 1),
+      // the error-bar custom series stay out of the legend
+      legend: d.series.length > 1 ? { type: 'scroll', top: 0, data: d.series.map((x) => x.name), textStyle: { color: t.text }, pageTextStyle: { color: t.text }, pageIconColor: t.text } : undefined,
       grid: { top: d.series.length > 1 ? 52 : 36, left: 12, right: horizontal ? 36 : 20, bottom: !horizontal && d.x_label ? (n > 6 ? 40 : 28) : 12, containLabel: true },
       xAxis: horizontal ? valAxis : catAxis,
       yAxis: horizontal ? catAxis : valAxis,
-      series,
+      series: [...series, ...errSeries],
     },
   }
+}
+
+/** the slice of ECharts' custom-series `api` that renderItem uses */
+interface CustomApi {
+  value: (dim: number) => number
+  coord: (v: number[]) => number[]
+  size: (v: number[]) => number[]
+  style: (o: Record<string, unknown>) => Record<string, unknown>
 }
 
 function scatterOption(d: ScatterData, dark: boolean): ChartSpec {

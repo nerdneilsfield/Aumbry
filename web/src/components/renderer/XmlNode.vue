@@ -23,8 +23,17 @@ import ChecklistBlock from './ChecklistBlock.vue'
 import TimelineBlock from './TimelineBlock.vue'
 import GlossaryBlock from './GlossaryBlock.vue'
 import ReferencesBlock from './ReferencesBlock.vue'
+import StagesBlock from './StagesBlock.vue'
+import QuizBlock from './QuizBlock.vue'
+import NextSteps from './NextSteps.vue'
+import SearchLog from './SearchLog.vue'
+import TldrBlock from './TldrBlock.vue'
+import NewsItem from './NewsItem.vue'
+import DuplicateId from './DuplicateId.vue'
+import { useAnchors } from '@/composables/useAnchors'
 
 defineProps<{ node: Element }>()
+const anchors = useAnchors()
 
 // Resolved at render time: section/collapse/step/tab import this component back.
 // MermaidBlock / ChartBlock are thin wrappers: mermaid and echarts themselves are dynamic imports behind them.
@@ -51,11 +60,19 @@ const block = (tag: string): Component | undefined => ({
   timeline: TimelineBlock,
   glossary: GlossaryBlock,
   references: ReferencesBlock,
+  stages: StagesBlock,
+  quiz: QuizBlock,
+  'next-steps': NextSteps,
+  'search-log': SearchLog,
+  tldr: TldrBlock,
+  'news-item': NewsItem,
 })[tag]
 </script>
 
 <template>
   <MarkdownBlock v-if="node.tagName === 'md'" :text="node.textContent ?? ''" />
   <!-- unknown tags are ignored on purpose -->
+  <!-- a stage / stages group reports its own duplicate ids (StagesBlock) -->
+  <DuplicateId v-else-if="anchors.isDuplicate(node) && node.tagName !== 'stages'" :node="node" />
   <component :is="block(node.tagName)" v-else-if="block(node.tagName)" :node="node" />
 </template>
