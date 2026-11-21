@@ -80,6 +80,13 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		r.Group(func(r chi.Router) {
 			r.Use(writeLimit)
 			r.With(middleware.Throttle(ingestConcurrencyLimit)).Post("/ingest", s.ingest)
+			r.Route("/agent", func(r chi.Router) {
+				r.Use(s.requireAgentToken)
+				r.Get("/dirs", s.agentDirs)
+				r.Get("/items", s.agentListItems)
+				r.Delete("/items/{id}/mounts", s.agentUnpublishItem)
+				r.Delete("/items/{id}", s.agentDeleteItem)
+			})
 		})
 
 		r.Get("/dirs/{id}", s.getDir)
