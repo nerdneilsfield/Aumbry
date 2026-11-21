@@ -8,31 +8,23 @@ import (
 )
 
 func TestHealthEndpoint(t *testing.T) {
-	response := httptest.NewRecorder()
-	router, err := NewRouter()
-	if err != nil {
-		t.Fatal(err)
+	e := newEnv(t)
+	resp := e.anon().do("GET", "/healthz", nil)
+	if resp.status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.status, http.StatusOK)
 	}
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
-	}
-	if got := response.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+	if got := resp.header.Get("Content-Type"); got != "application/json; charset=utf-8" {
 		t.Fatalf("content type = %q", got)
 	}
 }
 
-func TestUnimplementedAPIIsExplicit(t *testing.T) {
-	response := httptest.NewRecorder()
-	router, err := NewRouter()
-	if err != nil {
-		t.Fatal(err)
-	}
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/dirs/example", nil))
-
-	if response.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotImplemented)
+func TestUnknownAPIPathIsJSON404NotSPA(t *testing.T) {
+	e := newEnv(t)
+	for _, path := range []string{"/api/v1/nope", "/api/v1/dirs/x/y/z", "/api/other"} {
+		resp := e.anon().do("GET", path, nil)
+		if resp.status != http.StatusNotFound || resp.json()["error"] != "not_found" {
+			t.Errorf("%s: status %d body %s, want 404 not_found JSON", path, resp.status, resp.body)
+		}
 	}
 }
 

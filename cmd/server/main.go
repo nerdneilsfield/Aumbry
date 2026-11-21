@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,12 +12,15 @@ import (
 	"time"
 
 	"github.com/nerdneilsfield/aumbry/internal/api"
+	"github.com/nerdneilsfield/aumbry/internal/auth"
 	"github.com/nerdneilsfield/aumbry/internal/config"
 	"github.com/nerdneilsfield/aumbry/internal/db"
+	"github.com/nerdneilsfield/aumbry/internal/storage"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	if err := run(logger); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
@@ -28,6 +32,19 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	sessions, err := auth.New(auth.Settings{
+		AdminUser:         cfg.AdminUser,
+		AdminPasswordHash: cfg.AdminPasswordHash,
+		APITokens:         cfg.APITokens,
+		CookieSecret:      cfg.CookieSecret,
+	})
+	if err != nil {
+		return err
+	}
+	store, err := storage.NewWebDAV(cfg.WebDAVURL, cfg.WebDAVUser, cfg.WebDAVPassword)
+	if err != nil {
+		return fmt.Errorf("configure WebDAV storage: %w", err)
+	}
 	database, err := db.Open(cfg.DataDir)
 	if err != nil {
 		return err
@@ -38,7 +55,7 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
-	router, err := api.NewRouter()
+	router, err := api.NewRouter(database, store, sessions, logger)
 	if err != nil {
 		return err
 	}

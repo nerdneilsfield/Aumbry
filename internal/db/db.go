@@ -3,22 +3,26 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	_ "modernc.org/sqlite"
+	"github.com/jmoiron/sqlx"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Open initializes the database in dataDir and applies schema migrations.
-func Open(dataDir string) (*sql.DB, error) {
+//
+// The pool holds a single connection so the PRAGMAs apply to every statement and
+// writers are serialized; never run a query on the pool while holding a transaction.
+func Open(dataDir string) (*sqlx.DB, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
 	path := filepath.Join(dataDir, "aumbry.db")
-	database, err := sql.Open("sqlite", path)
+	database, err := sqlx.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
@@ -30,7 +34,7 @@ func Open(dataDir string) (*sql.DB, error) {
 	return database, nil
 }
 
-func migrate(ctx context.Context, database *sql.DB) error {
+func migrate(ctx context.Context, database *sqlx.DB) error {
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA foreign_keys=ON",
@@ -103,4 +107,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 		return fmt.Errorf("apply initial SQLite migration: %w", err)
 	}
 	return nil
+}
+
+// IsUniqueViolation reports whether err is a UNIQUE or PRIMARY KEY constraint failure.
+func IsUniqueViolation(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code == sqlite3.SQLITE_CONSTRAINT_UNIQUE || code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
 }

@@ -1,6 +1,8 @@
 services:
   aumbry:
     build: .
+    # Values containing "$" (the admin bcrypt hash) must be single-quoted in .env.
+    # If you write them in an `environment:` block here instead, double every "$" as "$$".
     env_file:
       - .env
     environment:
