@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
@@ -137,6 +138,7 @@ type env struct {
 	t      *testing.T
 	srv    *httptest.Server
 	router http.Handler
+	db     *sqlx.DB
 	store  *memStore
 	secret string
 	dir    string // scratch slot for tests
@@ -174,7 +176,7 @@ func newEnvWithOptions(t *testing.T, opts RouterOptions, logger *slog.Logger) *e
 	}
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, router: router, store: store, secret: cookieSecret}
+	return &env{t: t, srv: srv, router: router, db: database, store: store, secret: cookieSecret}
 }
 
 // client is an HTTP client with its own cookie jar, i.e. one browser.
@@ -275,14 +277,17 @@ type figure struct {
 }
 
 type ingestReq struct {
-	token    string // empty means the valid token; "-" sends none
-	xml      string
-	assets   []figure
-	dirs     []string
-	itemID   string
-	key      string
-	rawSrcs  []string // overrides asset_srcs when non-nil
-	commaDir bool
+	token      string // empty means the valid token; "-" sends none
+	xml        string
+	assets     []figure
+	dirs       []string
+	itemID     string
+	key        string
+	rawKey     *string
+	draft      bool
+	createOnly bool
+	rawSrcs    []string // overrides asset_srcs when non-nil
+	commaDir   bool
 }
 
 func (c *client) ingest(in ingestReq) response {
@@ -316,8 +321,16 @@ func (c *client) ingest(in ingestReq) response {
 	if in.itemID != "" {
 		_ = mw.WriteField("item_id", in.itemID)
 	}
-	if in.key != "" {
+	if in.rawKey != nil {
+		_ = mw.WriteField("external_key", *in.rawKey)
+	} else if in.key != "" {
 		_ = mw.WriteField("external_key", in.key)
+	}
+	if in.draft {
+		_ = mw.WriteField("draft", "1")
+	}
+	if in.createOnly {
+		_ = mw.WriteField("create_only", "1")
 	}
 	_ = mw.Close()
 	req, _ := http.NewRequest("POST", c.e.srv.URL+"/api/v1/ingest", &buf)

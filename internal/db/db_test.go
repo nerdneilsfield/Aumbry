@@ -2,13 +2,16 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/pressly/goose/v3"
 )
 
 func TestOpenInitializesDatabase(t *testing.T) {
@@ -65,6 +68,9 @@ func TestOpenAdoptsDatabaseCreatedBeforeGoose(t *testing.T) {
 	if _, err := database.Exec(`INSERT INTO directories (id, name) VALUES ('d1', 'kept')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.Exec(`ALTER TABLE items DROP COLUMN created_by`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.Exec(`DROP TABLE goose_db_version`); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +86,48 @@ func TestOpenAdoptsDatabaseCreatedBeforeGoose(t *testing.T) {
 	var name string
 	if err := database.QueryRow(`SELECT name FROM directories WHERE id = 'd1'`).Scan(&name); err != nil || name != "kept" {
 		t.Fatalf("directory = %q, %v; want the pre-existing row", name, err)
+	}
+}
+
+func TestMigrationLeavesLegacyCreatedByNull(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "data")
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, database.DB, fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 1); err != nil {
+		t.Fatalf("DownTo(1): %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO items
+		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
+		VALUES ('legacy000001', 'legacy:k', 'report', 'Legacy', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/legacy.xml', 'legacy')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("reopen v1.0 DB: %v", err)
+	}
+	defer reopened.Close()
+
+	var createdBy sql.NullString
+	if err := reopened.QueryRowContext(ctx, `SELECT created_by FROM items WHERE id = 'legacy000001'`).Scan(&createdBy); err != nil {
+		t.Fatal(err)
+	}
+	if createdBy.Valid {
+		t.Fatalf("expected legacy created_by NULL, got %q", createdBy.String)
 	}
 }
 

@@ -46,12 +46,17 @@ type Settings struct {
 	CookieSecret      string
 }
 
+type apiTokenEntry struct {
+	sum [sha256.Size]byte
+	hex string
+}
+
 // Sessions verifies credentials and issues the encrypted, signed session cookies.
 type Sessions struct {
 	user      string
 	hash      []byte
 	adminFP   string
-	tokens    []string
+	tokens    []apiTokenEntry
 	adminSC   *securecookie.SecureCookie
 	visitorSC *securecookie.SecureCookie
 }
@@ -75,14 +80,32 @@ func New(s Settings) (*Sessions, error) {
 			SetSerializer(securecookie.JSONEncoder{}).
 			MaxAge(int(maxAge.Seconds()))
 	}
+	tokenEntries := make([]apiTokenEntry, 0, len(s.APITokens))
+	for _, t := range s.APITokens {
+		trimmed := strings.TrimSpace(t)
+		if trimmed == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(trimmed))
+		tokenEntries = append(tokenEntries, apiTokenEntry{
+			sum: sum,
+			hex: hex.EncodeToString(sum[:]),
+		})
+	}
 	return &Sessions{
 		user:      s.AdminUser,
 		hash:      []byte(s.AdminPasswordHash),
 		adminFP:   Fingerprint(s.AdminPasswordHash),
-		tokens:    s.APITokens,
+		tokens:    tokenEntries,
 		adminSC:   newCodec(adminMaxAge),
 		visitorSC: newCodec(visitorMaxAge),
 	}, nil
+}
+
+// TokenDigest returns the normalized full SHA-256 hex digest of an API token.
+func TokenDigest(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
 }
 
 // Fingerprint identifies one password hash. Cookies carry it so that changing or
@@ -92,18 +115,34 @@ func Fingerprint(passwordHash string) string {
 	return hex.EncodeToString(sum[:6])
 }
 
+// AuthenticateToken validates the Bearer Authorization header in constant time and
+// returns the matched configured token's full SHA-256 hex digest.
+func (s *Sessions) AuthenticateToken(header string) (string, bool) {
+	scheme, raw, ok := strings.Cut(header, " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	cand := sha256.Sum256([]byte(trimmed))
+	var digest string
+	matched := 0
+	for _, entry := range s.tokens {
+		eq := subtle.ConstantTimeCompare(cand[:], entry.sum[:])
+		matched |= eq
+		if eq == 1 {
+			digest = entry.hex
+		}
+	}
+	return digest, matched == 1
+}
+
 // CheckToken reports whether the Authorization header carries a configured API token.
 func (s *Sessions) CheckToken(header string) bool {
-	scheme, token, ok := strings.Cut(header, " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return false
-	}
-	token = strings.TrimSpace(token)
-	matched := 0
-	for _, t := range s.tokens {
-		matched |= digestEqual(token, t)
-	}
-	return matched == 1
+	_, ok := s.AuthenticateToken(header)
+	return ok
 }
 
 // CheckAdmin verifies the admin credentials. The bcrypt comparison always runs so that

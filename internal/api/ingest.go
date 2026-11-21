@@ -12,6 +12,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/jmoiron/sqlx"
@@ -100,8 +102,50 @@ func invalidResult(file string, errs ...schema.ValidationError) schema.Validatio
 	return schema.ValidationResult{Valid: false, File: file, Errors: errs}
 }
 
+var errAlreadyPublished = errors.New("item is already published")
+
+func parseOptionalBoolField(form *multipart.Form, name string) (bool, error) {
+	vals, ok := form.Value[name]
+	if !ok {
+		return false, nil
+	}
+	if len(vals) > 1 {
+		return false, fmt.Errorf("duplicate %s field", name)
+	}
+	switch strings.ToLower(strings.TrimSpace(vals[0])) {
+	case "", "0", "false":
+		return false, nil
+	case "1", "true":
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid %s value %q", name, vals[0])
+	}
+}
+
+func parseExternalKeyField(form *multipart.Form) (string, error) {
+	vals, present := form.Value["external_key"]
+	if !present {
+		return "", nil
+	}
+	if len(vals) > 1 {
+		return "", errors.New("duplicate external_key field")
+	}
+	trimmed := strings.TrimSpace(vals[0])
+	n := utf8.RuneCountInString(trimmed)
+	if n < 1 || n > 200 {
+		return "", errors.New("external_key must be 1 to 200 characters after trimming")
+	}
+	for _, r := range trimmed {
+		if unicode.IsControl(r) {
+			return "", errors.New("external_key must not contain control characters")
+		}
+	}
+	return trimmed, nil
+}
+
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
-	if !s.auth.CheckToken(r.Header.Get("Authorization")) {
+	tokenDigest, ok := s.auth.AuthenticateToken(r.Header.Get("Authorization"))
+	if !ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="aumbry"`)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "a valid API token is required")
 		return
@@ -122,6 +166,31 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = form.RemoveAll() }()
 
 	// Request fields.
+	draft, err := parseOptionalBoolField(form, "draft")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	createOnly, err := parseOptionalBoolField(form, "create_only")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	externalKey, err := parseExternalKeyField(form)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	itemID := strings.TrimSpace(r.FormValue("item_id"))
+	if createOnly && itemID != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "create_only cannot be used together with item_id")
+		return
+	}
+	if createOnly && externalKey == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "create_only requires external_key")
+		return
+	}
+
 	xmlFiles := form.File["xml"]
 	if len(xmlFiles) != 1 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "exactly one xml file field is required")
@@ -157,6 +226,10 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		uploads[src] = fh
 	}
 	dirs := splitDirs(form.Value["dirs"])
+	if draft && len(dirs) > 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "draft cannot be combined with dirs")
+		return
+	}
 	if missing, err := s.missingDirs(ctx, dirs); err != nil {
 		internalError(w, r, err)
 		return
@@ -166,10 +239,10 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Which item is written.
-	itemID := strings.TrimSpace(r.FormValue("item_id"))
-	externalKey := strings.TrimSpace(r.FormValue("external_key"))
 	created := false
 	switch {
+	case createOnly:
+		// Skip pre-check; uniqueness is adjudicated atomically by SQLite's UNIQUE constraint.
 	case itemID != "":
 		exists, err := s.itemExists(ctx, itemID)
 		if err != nil {
@@ -194,6 +267,17 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		itemID, created = id, true
+	} else if draft {
+		mounts, err := itemMounts(ctx, s.db, itemID)
+		if err != nil {
+			internalError(w, r, err)
+			return
+		}
+		if len(mounts) > 0 {
+			writeError(w, http.StatusConflict, "already_published",
+				"item is already published; run `aumbry unpublish` first or push without --draft")
+			return
+		}
 	}
 
 	// Schema validation; a figure exists when its file was uploaded.
@@ -264,7 +348,15 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mounted, oldPath, err := s.saveItem(ctx, saveItem{
-		id: itemID, created: created, externalKey: externalKey, doc: doc, xmlPath: xmlPath, assets: stored, dirs: dirs,
+		id:          itemID,
+		created:     created,
+		draft:       draft,
+		externalKey: externalKey,
+		createdBy:   tokenDigest,
+		doc:         doc,
+		xmlPath:     xmlPath,
+		assets:      stored,
+		dirs:        dirs,
 	})
 	if err != nil {
 		// Drop the object this request wrote, but never one that already existed (it may be live).
@@ -272,10 +364,17 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.Delete(ctx, xmlPath)
 		}
 		switch {
+		case errors.Is(err, errAlreadyPublished):
+			writeError(w, http.StatusConflict, "already_published",
+				"item is already published; run `aumbry unpublish` first or push without --draft")
 		case errors.Is(err, sql.ErrNoRows):
 			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
 		case db.IsUniqueViolation(err):
-			writeError(w, http.StatusConflict, "conflict", "external_key is already used by another item")
+			if createOnly {
+				writeError(w, http.StatusConflict, "key_exists", "external_key already exists")
+			} else {
+				writeError(w, http.StatusConflict, "conflict", "external_key is already used by another item")
+			}
 		default:
 			internalError(w, r, err)
 		}
@@ -297,6 +396,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, map[string]any{
 		"id": itemID, "type": doc.Meta.Type, "url": prefix + itemID, "dirs": mounted,
 		"assets": len(distinctHashes(stored)), "created": created,
+		"draft": draft, "published": len(mounted) > 0,
 	})
 }
 
@@ -316,7 +416,9 @@ func (s *Server) storageError(w http.ResponseWriter, r *http.Request, err error)
 type saveItem struct {
 	id          string
 	created     bool
+	draft       bool
 	externalKey string
+	createdBy   string
 	doc         *schema.Document
 	xmlPath     string
 	assets      []storedAsset
@@ -350,14 +452,23 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, o
 
 	if in.created {
 		_, err = tx.ExecContext(ctx, `INSERT INTO items (id, external_key, type, title, report_date, summary, tags_json,
-			source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
 			in.id, key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
-			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain)
+			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy)
 	} else {
 		// Reading the replaced path first also proves the item still exists (sql.ErrNoRows otherwise).
 		if err = tx.GetContext(ctx, &oldPath, `SELECT xml_storage_path FROM items WHERE id = ?`, in.id); err != nil {
 			return nil, "", err
+		}
+		if in.draft {
+			var mountCount int
+			if err = tx.GetContext(ctx, &mountCount, `SELECT count(*) FROM directory_items WHERE item_id = ?`, in.id); err != nil {
+				return nil, "", err
+			}
+			if mountCount > 0 {
+				return nil, "", errAlreadyPublished
+			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE items SET external_key = COALESCE(?, external_key), type = ?, title = ?,
 			report_date = ?, summary = ?, tags_json = ?, source_agent = ?, canonical_url = ?, related_ids_json = ?,
