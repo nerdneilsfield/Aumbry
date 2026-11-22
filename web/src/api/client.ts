@@ -54,7 +54,13 @@ export const api = {
   admin: {
     login: (username: string, password: string) => http('/admin/login', { method: 'POST', body: { username, password } }),
     logout: () => http('/admin/logout', { method: 'POST' }),
-    me: () => http<{ admin: boolean }>('/admin/me'),
+    // 401 means "not logged in", an answer rather than a failure: an errored query is refetched whenever an observer mounts,
+    // and the login form mounting on every failure made /admin loop between loading and the form.
+    me: () =>
+      http<{ admin: boolean }>('/admin/me').catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 401) return { admin: false }
+        throw e
+      }),
     tree: () => http<AdminTree>('/admin/tree'),
     createDir: (body: { parent_id: string | null; name: string; description?: string; password?: string }) =>
       http<{ id: string }>('/admin/dirs', { method: 'POST', body }),
