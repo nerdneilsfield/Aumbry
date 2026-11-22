@@ -14,6 +14,7 @@ import LoginForm from '@/components/admin/LoginForm.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ItemList from '@/components/ItemList.vue'
 import SelectBox from '@/components/SelectBox.vue'
+import { useSearchShortcut } from '@/composables/useSearchShortcut'
 
 const { session, tree, unmountedCount, logout, invalidate } = useAdmin()
 
@@ -26,6 +27,8 @@ const type = ref('all')
 const from = ref('')
 const to = ref('')
 const dq = refDebounced(q, 300)
+const searchInput = ref<HTMLInputElement>()
+useSearchShortcut(searchInput)
 
 const dialog = ref<{ mode: 'create' | 'edit' | 'password' | 'move'; dirId?: string; parentId?: string | null }>()
 const itemId = ref<string>()
@@ -104,7 +107,7 @@ const doRemoveDir = () => dirToRemove.value && removeDir.mutate(dirToRemove.valu
         <div class="card grid gap-3 p-4 sm:grid-cols-[1fr_auto_auto_auto]">
           <div class="relative sm:col-span-4">
             <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-500" />
-            <input v-model="q" type="search" class="input pl-9" placeholder="全站搜索（留空则列出最新条目）" />
+            <input ref="searchInput" v-model="q" type="search" class="input pl-9" placeholder="全站搜索（留空则列出最新条目，按 / 聚焦）" aria-label="全站搜索" aria-keyshortcuts="/" />
           </div>
           <SelectBox v-model="type" :options="typeOptions" label="类型" />
           <input v-model="from" type="date" class="input" aria-label="起始日期" />

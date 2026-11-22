@@ -2,12 +2,15 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/vue-query'
-import { refDebounced, useTitle } from '@vueuse/core'
-import { ChevronRight, FileQuestion, Folder, Lock, Search } from 'lucide-vue-next'
+import { useTitle } from '@vueuse/core'
+import { ChevronRight, FileQuestion, Folder, Lock, Search, X } from 'lucide-vue-next'
 import { ApiError, api, errorMessage } from '@/api/client'
 import ItemList from '@/components/ItemList.vue'
 import PasswordGate from '@/components/PasswordGate.vue'
+import SelectBox from '@/components/SelectBox.vue'
 import StatePage from '@/components/StatePage.vue'
+import { useDirFilters } from '@/composables/useDirFilters'
+import { useSearchShortcut } from '@/composables/useSearchShortcut'
 
 const route = useRoute()
 const id = computed(() => route.params.id as string)
@@ -17,22 +20,33 @@ const dir = dirQuery.data
 const err = computed(() => (dirQuery.error.value instanceof ApiError ? dirQuery.error.value : undefined))
 useTitle(computed(() => (dir.value ? `${dir.value.name} · Aumbry` : 'Aumbry')))
 
-const q = ref('')
-const dq = refDebounced(q, 300)
-watch(id, () => (q.value = ''))
-const searching = computed(() => !!q.value.trim())
+const { q, tag, type, active: filtering, settled, params, setType, clearTag } = useDirFilters()
+const searchInput = ref<HTMLInputElement>()
+useSearchShortcut(searchInput)
+
+const typeOptions = [
+  { value: 'all', label: '全部类型' },
+  { value: 'report', label: '报告' },
+  { value: 'post', label: '精读' },
+]
+const typeModel = computed({
+  get: () => type.value || 'all',
+  set: (v: string) => setType(v === 'report' || v === 'post' ? v : ''),
+})
 
 const searchQuery = useInfiniteQuery({
-  queryKey: ['dir-search', id, dq],
-  queryFn: ({ pageParam }) => api.searchDir(id.value, dq.value.trim(), 20, pageParam),
+  queryKey: ['dir-search', id, params],
+  queryFn: ({ pageParam }) => api.searchDir(id.value, params.value, 20, pageParam),
   initialPageParam: 0,
   getNextPageParam: (last) => (last.results.length >= last.limit ? last.offset + last.limit : undefined),
-  // dq lags q by the debounce: only search once it has caught up, so a stale term never hits another directory.
-  enabled: () => !!dq.value.trim() && dq.value.trim() === q.value.trim(),
+  // Text, tag and type all narrow the same listing, so any of them (even with an empty text) runs a search. The debounced
+  // text lags the box: only search once it has caught up, so a stale term never hits another directory. Wait for the
+  // directory itself first, so a locked one shows its password gate instead of a failing search.
+  enabled: () => !!dir.value && filtering.value && settled.value,
   placeholderData: keepPreviousData,
 })
 const results = computed(() => searchQuery.data.value?.pages.flatMap((p) => p.results) ?? [])
-const searchBusy = computed(() => dq.value !== q.value || searchQuery.isFetching.value)
+const searchBusy = computed(() => !settled.value || searchQuery.isFetching.value)
 
 // A search 401 means the unlock session lapsed: re-check the directory, which shows the gate.
 watch(searchQuery.error, (e) => e instanceof ApiError && e.status === 401 && dirQuery.refetch())
@@ -60,14 +74,21 @@ watch(searchQuery.error, (e) => e instanceof ApiError && e.status === 401 && dir
 
     <div class="relative mt-6">
       <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-500" />
-      <input v-model="q" type="search" class="input pl-9" placeholder="在此目录中搜索…" />
+      <input ref="searchInput" v-model="q" type="search" class="input pl-9" placeholder="在此目录中搜索…（按 / 聚焦）" aria-label="在此目录中搜索" aria-keyshortcuts="/" />
     </div>
 
-    <template v-if="searching">
+    <div class="mt-3 flex flex-wrap items-center gap-3">
+      <div class="w-36"><SelectBox v-model="typeModel" :options="typeOptions" label="按类型筛选" /></div>
+      <button v-if="tag" type="button" class="chip inline-flex cursor-pointer items-center gap-1 bg-blue-500/20 py-1 text-sm text-blue-200 outline-none hover:bg-blue-500/30 focus-visible:ring-2 focus-visible:ring-blue-400" :aria-label="`清除标签筛选：${tag}`" @click="clearTag()">
+        标签：{{ tag }}<X class="size-3.5" />
+      </button>
+    </div>
+
+    <template v-if="filtering">
       <p v-if="searchQuery.error.value" class="mt-4 text-sm text-red-400">{{ errorMessage(searchQuery.error.value) }}</p>
       <p v-else-if="!results.length && searchBusy" class="py-10 text-center text-gray-500">搜索中…</p>
       <p v-else-if="!results.length" class="py-10 text-center text-gray-500">没有找到匹配的内容</p>
-      <ItemList v-else class="mt-6" :items="results" />
+      <ItemList v-else class="mt-6" :items="results" :dir-id="id" :active-tag="tag" />
       <button v-if="searchQuery.hasNextPage.value" class="btn mx-auto mt-4" :disabled="searchQuery.isFetchingNextPage.value" @click="searchQuery.fetchNextPage()">加载更多</button>
     </template>
 
@@ -84,7 +105,7 @@ watch(searchQuery.error, (e) => e instanceof ApiError && e.status === 401 && dir
         </li>
       </ul>
 
-      <ItemList v-if="dir.items.length" class="mt-6" :items="dir.items" />
+      <ItemList v-if="dir.items.length" class="mt-6" :items="dir.items" :dir-id="id" />
       <p v-else-if="!dir.children.length" class="py-10 text-center text-gray-500">这个目录还是空的</p>
     </template>
   </div>

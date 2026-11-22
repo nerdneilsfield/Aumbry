@@ -39,12 +39,21 @@ export interface Directory extends DirRef {
   items: ItemSummary[]
 }
 
+/** Previous (earlier) and next (later) item in one directory the caller may open; either is null at the ends. */
+export interface Neighbors {
+  dir: DirRef
+  prev: ItemSummary | null
+  next: ItemSummary | null
+}
+
 export interface ItemDetail extends ItemSummary {
   canonical_url: string
   created_at: string
   updated_at: string
   dirs: DirRef[]
   related: ItemSummary[]
+  /** null when the item has no mount the caller can open (e.g. an unmounted item seen by the admin). */
+  neighbors: Neighbors | null
 }
 
 export interface DirNode extends DirRef {
@@ -58,6 +67,13 @@ export interface DirNode extends DirRef {
 export interface AdminTree {
   tree: DirNode[]
   unmounted_count: number
+}
+
+/** Filters of a directory-scoped search; empty strings mean "no filter". */
+export interface DirSearchParams {
+  q: string
+  type: ItemType | ''
+  tag: string
 }
 
 export interface AdminSearchParams {

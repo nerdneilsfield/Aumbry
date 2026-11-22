@@ -10,6 +10,7 @@ import ItemList from '@/components/ItemList.vue'
 import StatePage from '@/components/StatePage.vue'
 import XmlRenderer from '@/components/renderer/XmlRenderer.vue'
 import MetaBar from '@/components/reader/MetaBar.vue'
+import NeighborNav from '@/components/reader/NeighborNav.vue'
 import TocPanel from '@/components/reader/TocPanel.vue'
 import { useScrollSpy } from '@/composables/useScrollSpy'
 
@@ -17,7 +18,12 @@ const route = useRoute()
 const id = computed(() => route.params.id as string)
 
 // Metadata and XML are fetched in parallel; both share the same 403/404 semantics.
-const metaQuery = useQuery({ queryKey: ['item', id], queryFn: () => api.item(id.value) })
+// ?dir= is the directory the reader came from: the server takes previous/next from it when the item is mounted there.
+const fromDir = computed(() => {
+  const d = route.query.dir
+  return typeof d === 'string' ? d : undefined
+})
+const metaQuery = useQuery({ queryKey: ['item', id, fromDir], queryFn: () => api.item(id.value, fromDir.value) })
 const contentQuery = useQuery({ queryKey: ['item-content', id], queryFn: () => api.itemContent(id.value) })
 const item = metaQuery.data
 const err = computed(() => metaQuery.error.value ?? contentQuery.error.value)
@@ -52,7 +58,7 @@ const { active, jump } = useScrollSpy(toc, rendered)
   <p v-else-if="!item" class="py-20 text-center text-gray-500">加载中…</p>
 
   <div v-else>
-    <MetaBar :title="item.title" :summary="item.summary" :date="item.date" :source-agent="item.source_agent" :tags="item.tags" :canonical-url="item.canonical_url">
+    <MetaBar :title="item.title" :summary="item.summary" :date="item.date" :source-agent="item.source_agent" :tags="item.tags" :canonical-url="item.canonical_url" :tag-dir-id="item.neighbors?.dir.id">
       <template v-if="item.dirs.length" #crumbs>
         <nav class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-400">
           <FolderOpen class="size-4" />
@@ -71,6 +77,8 @@ const { active, jump } = useScrollSpy(toc, rendered)
 
       <TocPanel :toc="toc" :active="active" @jump="jump" />
     </div>
+
+    <NeighborNav v-if="item.neighbors" :neighbors="item.neighbors" />
 
     <section v-if="item.related.length" class="mt-14 border-t border-gray-700 pt-8">
       <h2 class="mb-4 text-lg font-semibold text-gray-50">相关条目</h2>

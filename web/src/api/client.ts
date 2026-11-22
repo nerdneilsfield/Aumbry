@@ -3,6 +3,7 @@ import type {
   AdminSearchParams,
   AdminTree,
   DirPatch,
+  DirSearchParams,
   Directory,
   ItemDetail,
   SearchPage,
@@ -44,9 +45,10 @@ const enc = encodeURIComponent
 export const api = {
   dir: (id: string) => http<Directory>(`/dirs/${enc(id)}`),
   unlock: (id: string, password: string) => http(`/dirs/${enc(id)}/unlock`, { method: 'POST', body: { password } }),
-  searchDir: (id: string, q: string, limit: number, offset: number) =>
-    http<SearchPage>(`/dirs/${enc(id)}/search`, { query: { q, limit, offset } }),
-  item: (id: string) => http<ItemDetail>(`/items/${enc(id)}`),
+  searchDir: (id: string, p: DirSearchParams, limit: number, offset: number) =>
+    http<SearchPage>(`/dirs/${enc(id)}/search`, { query: { q: p.q, type: p.type || undefined, tag: p.tag || undefined, limit, offset } }),
+  /** `fromDir` is the directory the reader came from; the server uses it to pick which mount the neighbors come from. */
+  item: (id: string, fromDir?: string) => http<ItemDetail>(`/items/${enc(id)}`, { query: { dir: fromDir || undefined } }),
   itemContent: (id: string) => http<string, 'text'>(`/items/${enc(id)}/content`),
 
   admin: {
