@@ -321,6 +321,17 @@ password = "..."
 * **安全**：所有新标签的文本经 Vue 模板转义渲染；Chart 只吃 6.3 的结构化数据；`url`/`code-url` 链接只允许 `http/https`；所有新增 `<md>` 型正文沿用现有的 markdown-it + DOMPurify 流水线；资源大小沿用 v1.0 的上限。
 * **渲染层专项防护（新标签引入的新攻击面）**：Mermaid 使用 `securityLevel:"strict"`，且生成的 SVG 再经 DOMPurify（SVG profile）后才挂载；ECharts 的 tooltip 一律使用纯文本渲染（`renderMode:"richText"`），不走 HTML 字符串拼接，防止恶意 `series[].name`/`categories` 触发 XSS；每篇文档最多 10 个 `<mermaid>`、10 个 `<chart>`（超出 → `TOO_MANY_BLOCKS`），防止渲染卡死主线程。
 
+### 6.5.1 中文检索（v1.1，P1）
+
+现状的缺口：`items_fts` 用 `trigram` 分词，只能匹配 3 个及以上字符；中文里最常见的 2 字词（“模型”“检索”）退化为对 `plain_text` 等列的 `LIKE` 全表扫描，没有索引，也没有按相关度排序。本节补上这一块，不引入分词库，不引入 CGO，不依赖词典。
+
+* **新增一张 FTS5 表 `items_fts_cjk`**（goose 迁移）：列与 `items_fts` 相同（`item_id UNINDEXED, title, summary, tags, plain_text`），`tokenize = 'unicode61'`。写入的不是原文，而是**二字组展开**后的文本：把文本中每一段连续的 CJK 字符（汉字、平假名、片假名、谚文）展开成相邻两字的重叠组合，用空格连接（“大模型训练” → `大模 模型 型训 训练`）；标点、空白、拉丁字母与数字会截断这一段，二字组不跨越它们；拉丁字母与数字部分原样交给 `unicode61`。长度为 1 的 CJK 段不产生二字组。
+* **展开函数只有一份**，放在服务端的一个共享位置，入库、`reindex`、查询三处共用，避免写入与查询的拆法不一致。
+* **查询**：每个空白分隔的查询词再按“CJK 段 / 其他段”切开。长度 ≥ 2 的 CJK 段展开成二字组并作为 FTS5 短语查询（所有用户输入仍整体加引号，不能被解析成 FTS 语法）打在 `items_fts_cjk` 上；其他段沿用现有规则（≥ 3 字符走 `items_fts` 的 `trigram`，否则 `LIKE`）；长度为 1 的 CJK 段走 `LIKE`。各段之间是 AND。
+* **排序与片段**：两张表的 `bm25()` 都带列权重，标题 > 标签 > 摘要 > 正文（具体数值由实现定，写进代码注释）。命中片段与高亮必须取自**原文**，不得显示二字组展开后的文本：命中走 `items_fts_cjk` 时，由 Go 在 `plain_text` 里定位查询词并截取上下文，用现有的 `markStart`/`markEnd` 标记。
+* **维护**：新增、更新、删除条目时，在**同一个事务**里同步写 `items_fts_cjk`；`aumbry-server reindex` 同时重建两张表。
+* **不做**：分词与词典、同义词、简繁转换、拼音；这些都不在本版范围。
+
 ### 6.6 示例（精读场景节选）
 
 ```xml
@@ -573,7 +584,7 @@ SQLite 单连接与内存限流决定了**只能单实例运行**；在 README �
 | **M2** | GHCR 镜像（`dockers_v2`、`Dockerfile.release`、workflow）可构建并通过验收 11–14；`backup`/`verify-storage`/`gc`（10.5、10.6）。**正式 `v1.1.0` Release 的压缩包需包含 M4 才完成的 Skill，因此正式发布等 M4 完成**；M2 阶段只发 RC | M1 的子命令骨架 |
 | **M3** | 协议 v1.1 P0 标签（校验 + 渲染 + 索引规则 + 渲染层防护）；`aumbry push --draft/--create-only/--dry-run`；`aumbry dirs`、`list`、`unpublish`、`delete`（含 `items.created_by` 所有权迁移）与对应 `/api/v1/agent/*`；`aumbry schema`；`validate` 的 `hint` | – |
 | **M4** | P1 标签（含 `stages`、`quiz`、`next-steps`、交互式 `steps`、`search-log`、`tldr`、`news-item`）；`skills/aumbry/` 全部内容与五个示例；`make skill-refs`/`skill-check` 与 CI；读者侧 9.1、9.2、9.3（打印）、9.6、9.7 | M3 |
-| **M5（可选）** | P2：`series[].err`、9.3 导出 Markdown、9.4 主题、9.5 邻近条目、10.5 `reindex` | M4 |
+| **M5（可选）** | P1：6.5.1 中文检索；P2：`series[].err`、9.3 导出 Markdown、9.4 主题、9.5 邻近条目、10.5 `reindex` | M4 |
 
 M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M3 的协议与 `aumbry schema`。
 
@@ -691,6 +702,13 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 79. 兼容（单测加集成）：v1.0 构建产生的已入库文档，读取与搜索不变且无需重建索引；v1.1 CLI 向 v1.0 服务端推 `version="1.1"` 文档 → 422 `UNSUPPORTED_VERSION`，不写对象与数据库；v1.1 服务端对重新上传的 `version="1.0"` 文档（带 `<figure alt>`）→ `TAG_REQUIRES_1_1` 且带 `hint`（有意取舍，见 6.1）。
 80. 锚点：`#stage-r3`、`#fig-x`、`#s-method`、`#quiz-q1` 都能被 `next-steps` 命中；位置锚点 `#sec-3` 不能。目标位于未解锁阶段的第 2 个 `tab` 内的收起 `collapse` 中时，按 6.4 的“定位顺序”完成后再滚动并可见（浏览器检查，含跨组用例）。
 81. 搜索：只出现在 `<quiz>` 选项或 `next-steps` 按钮里的词搜不到；只出现在另一组第三阶段正文里的词命中文章（但点击只打开文章）；`search-log excluded@reason`、`quote@author`、`check@detail` 里的词可命中；长词（FTS）与 2 字短词（`LIKE`）各有一条。
+82. 中文检索：入库正文含“大模型训练与评测”的文档，搜“模型”命中且该查询打在 `items_fts_cjk` 上（单元测试断言生成的 SQL 用了该表，而不是 `LIKE`）；搜“训练”“练与”“大模型”均命中；搜“型训”“与评”也命中；不含这些字的文档不命中。
+83. 二字组不跨标点：正文为“模型，训练”时，搜“型训”不命中；搜“模型”“训练”各自命中。
+84. 单个汉字（如“型”）仍可通过 `LIKE` 找到；中英混排的查询“GPT 模型”要求两段同时命中。
+85. 命中片段取自原文：搜“模型”得到的 `snippet` 含原文上下文与高亮标记，不含二字组展开后的重复文本（如不出现“大模 模型 型训”）。
+86. 排序：标题含“模型”的文档排在只在正文出现“模型”的文档之前。
+87. `aumbry-server reindex` 能在手工清空 `items_fts_cjk` 后恢复它，恢复后 82 的查询重新命中；新增、更新、删除条目后该表同步变化。
+88. 阅读体验：用真实的中文报告，在搜索页输入“模型”，列表显示命中、高亮且无乱码（浏览器检查）。
 
 ---
 
