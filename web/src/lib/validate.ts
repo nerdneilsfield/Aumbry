@@ -1,5 +1,5 @@
-import { anchorMap } from '@/lib/anchor'
-import { quizOptions, quizValid } from '@/lib/quiz'
+import { MAX_STAGES_PER_GROUP, anchorMap, stagesStructuralIssues } from '@/lib/anchor'
+import { quizCorrect, quizOptions, quizQuestion } from '@/lib/quiz'
 import { httpUrl } from '@/lib/url'
 import { MAX_SECTION_DEPTH, attr, children, safeId, sectionDepth } from '@/lib/xml'
 
@@ -53,7 +53,11 @@ export function tldrIssues(node: Element): Issue[] {
   })
   const verdicts = kids(node, 'verdict')
   if (verdicts.length > 1) bad('verdict 至多 1 个')
-  if (verdicts[0] && [...text(verdicts[0])].length > 300) bad(`verdict 有 ${[...text(verdicts[0])].length} 个字符，上限 300`)
+  if (verdicts[0]) {
+    const vt = text(verdicts[0])
+    if (!vt) bad('verdict 不能为空')
+    else if ([...vt].length > 300) bad(`verdict 有 ${[...vt].length} 个字符，上限 300`)
+  }
   return out
 }
 
@@ -83,8 +87,8 @@ export function quizIssues(node: Element): Issue[] {
   const add = (message: string) => out.push({ code: 'INVALID_QUIZ', message })
   if (!['body', 'section', 'stage'].includes(node.parentElement?.tagName ?? '')) add('quiz 只能直接放在 body、section 或 stage 里')
   if (!safeId(attr(node, 'id'))) add('缺少 id（[a-z0-9-]{1,32}）')
-  if (!kids(node, 'question').length) add('缺少 question')
-  if (!quizValid(node)) add(`至少 2 个 option 且至少 1 个 correct="true"（现在 ${quizOptions(node).length} 个选项）`)
+  if (!quizQuestion(node)) add('缺少非空 question')
+  if (quizOptions(node).length < 2 || quizCorrect(node).length < 1) add(`至少 2 个 option 且至少 1 个 correct="true"（现在 ${quizOptions(node).length} 个选项）`)
   return out
 }
 
@@ -96,7 +100,7 @@ export function searchLogIssues(node: Element): Issue[] {
   queries.forEach((q, i) => {
     for (const k of ['hits', 'kept']) {
       const v = q.getAttribute(k)
-      if (v === null || !/^\d+$/.test(v)) add(`第 ${i + 1} 个 query 的 ${k} 必须是非负整数`)
+      if (v !== null && !/^\d+$/.test(v)) add(`第 ${i + 1} 个 query 的 ${k} 必须是非负整数`)
     }
     if (!text(q)) add(`第 ${i + 1} 个 query 没有检索式`)
   })
@@ -104,27 +108,18 @@ export function searchLogIssues(node: Element): Issue[] {
   return out
 }
 
-/** One <stages> group (PRD 6.2/6.7): needs an id, 1–8 stages, and sits in <body> or a <section>, never inside a <stage>. */
+/** One <stages> group (PRD 6.2/6.7): needs an id, 1–8 well-formed stages, and sits in <body> or a <section>, never inside a <stage>. */
 export function stagesIssues(node: Element): Issue[] {
-  const out: Issue[] = []
-  const add = (message: string) => out.push({ code: 'INVALID_STAGES', message })
-  if (!safeId(attr(node, 'id'))) add('缺少 id（[a-z0-9-]{1,32}），阅读进度按它保存')
-  const parent = node.parentElement
-  if (parent?.closest('stage')) add('stages 不能放在 stage 里面（不能嵌套）')
-  else if (!['body', 'section'].includes(parent?.tagName ?? '')) add('stages 只能放在 body 或 section 里')
-  const n = kids(node, 'stage').length
-  if (n < 1 || n > MAX_STAGES_PER_GROUP) add(`一组 stages 需要 1–${MAX_STAGES_PER_GROUP} 个 stage，现在 ${n} 个`)
+  const out: Issue[] = stagesStructuralIssues(node)
   // ids share one namespace with sections, quizzes, figures, equations and refs
   const dups = anchorMap(bodyOf(node)).dups
   for (const el of [node, ...kids(node, 'stage')]) {
     if (dups.has(el)) out.push({ code: 'DUPLICATE_ID', message: `${el.tagName} 的 id "${clip(attr(el, 'id'))}" 已被文档里更早的元素占用` })
   }
-  const gated = node.getAttribute('gated')
-  if (gated !== null && gated !== 'true' && gated !== 'false') add(`gated 必须是 true 或 false，收到 "${clip(gated)}"`)
   return out
 }
 
-export const MAX_STAGES_PER_GROUP = 8
+export { MAX_STAGES_PER_GROUP }
 export const MAX_STAGES_GROUPS = 8
 export const MAX_STAGES = 40
 

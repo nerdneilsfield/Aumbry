@@ -9,18 +9,19 @@ import ContainerBody from './ContainerBody.vue'
 const props = withDefaults(defineProps<{ body: Element; storageKey?: string }>(), { storageKey: 'doc' })
 const route = useRoute()
 const reading = provideReading(() => props.body, props.storageKey)
-const { reveal, navigate } = provideAnchors(() => props.body, reading)
+const { reveal, navigate, canReveal } = provideAnchors(() => props.body, reading)
 
 // Direct loads / back-forward with #fig-x, #eq-x, #ref-x, #stage-x: open whatever hides the target, then scroll.
 // (location.hash too: the offline demo runs the router on memory history.)
 watch(() => route.hash || location.hash, (h) => h && void reveal(h), { immediate: true, flush: 'post' })
 
-// Same-page links inside the document (markdown [Fig. 4](#fig-arch) etc.) go through navigate() as well.
+// Same-page Aumbry anchor links inside the document (markdown [Fig. 4](#fig-arch) etc.) go through navigate();
+// local markdown footnote anchors (#fn-md1-1 / #fnref-md1-1) keep native browser scrolling.
 function onClick(e: MouseEvent) {
   if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
   const a = (e.target as Element | null)?.closest('a[href^="#"]')
   const href = a?.getAttribute('href')
-  if (!a || !href || href === '#') return
+  if (!a || !href || href === '#' || !canReveal(href)) return
   e.preventDefault()
   void navigate(href)
 }

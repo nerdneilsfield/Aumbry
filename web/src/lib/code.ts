@@ -28,7 +28,11 @@ export function highlightCode(source: string, lang: string, diff: boolean, highl
       },
     })
   }
-  // `highlight="3,5-7"` (digits, commas and ranges only) becomes shiki's meta string `{3,5-7}`
-  const meta = /^\d+(-\d+)?(,\d+(-\d+)?)*$/.test(highlight.trim()) ? { __raw: `{${highlight.trim()}}` } : undefined
+  // `highlight="3, 5-7"` (digits, commas, optional spaces, and ranges) becomes shiki's meta string `{3,5-7}`
+  const normalized = highlight
+    .split(',')
+    .map((p) => p.trim())
+    .join(',')
+  const meta = /^\d+(-\d+)?(,\d+(-\d+)?)*$/.test(normalized) ? { __raw: `{${normalized}}` } : undefined
   return highlighter.codeToHtml(source, { lang: l, ...dualTheme, transformers, meta })
 }

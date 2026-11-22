@@ -1,9 +1,10 @@
 import { computed, inject, nextTick, onMounted, provide, reactive, shallowRef, watch, type ComputedRef, type InjectionKey, type WritableComputedRef } from 'vue'
 import { useEventListener, useMediaQuery, useStorage } from '@vueuse/core'
 import { attr, children, stageDomId } from '@/lib/xml'
+import { anchorMap } from '@/lib/anchor'
 import { quizCorrect, quizFingerprint, quizKey, quizValid, sameSet } from '@/lib/quiz'
 import { stagesIssues } from '@/lib/validate'
-import { urlParams } from '@/composables/useUrlParams'
+import { syncUrlParams, urlParams } from '@/composables/useUrlParams'
 
 /**
  * Reading state of one document. A document can hold several independent <stages> groups (PRD 6.7). What is saved
@@ -111,15 +112,19 @@ const rafs = () => new Promise<void>((r) => requestAnimationFrame(() => requestA
 const stageKey = (stage: Element) => stageDomId(stage).slice('stage-'.length)
 
 export function provideReading(getBody: () => Element | undefined, storageKey: string): Reading {
+  syncUrlParams()
   const state = useStorage<Persisted>(`aumbry:read:${storageKey}`, emptyState(), undefined, { serializer: progressSerializer, onError: () => {} })
   const printing = useMediaQuery('print')
 
-  // Only well-formed groups take part (a group without id, with 0 or > 8 stages, nested in a stage or with a duplicate id shows an error block instead).
-  const groups = computed<StageGroup[]>(() =>
-    Array.from(getBody()?.querySelectorAll('stages') ?? [])
-      .filter((el) => stagesIssues(el).length === 0)
-      .map((el) => ({ el, id: attr(el, 'id'), stages: children(el).filter((c) => c.tagName === 'stage'), gated: attr(el, 'gated') !== 'false' })),
-  )
+  // Only well-formed rendered groups take part (unrendered groups, duplicates, or depth > 3 ancestors are excluded).
+  const groups = computed<StageGroup[]>(() => {
+    const body = getBody()
+    if (!body) return []
+    const am = anchorMap(body)
+    return Array.from(body.querySelectorAll('stages'))
+      .filter((el) => !am.isSkipped(el) && stagesIssues(el).length === 0)
+      .map((el) => ({ el, id: attr(el, 'id'), stages: children(el).filter((c) => c.tagName === 'stage'), gated: attr(el, 'gated') !== 'false' }))
+  })
   const groupOf = (el: Element) => groups.value.find((g) => g.el === el)
   const stageRef = (stage: Element) => {
     const group = groups.value.find((g) => g.el === stage.parentElement)
@@ -181,8 +186,14 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   onMounted(fromHash)
   useEventListener(window, 'hashchange', fromHash)
 
-  // ---- quizzes: stored answer = { fp, picked: option indexes }; valid only while the fingerprint still matches ----
-  const quizzes = computed(() => new Map(Array.from(getBody()?.querySelectorAll('quiz') ?? []).filter(quizValid).map((q) => [quizKey(q), q])))
+  // ---- quizzes: stored answer = { fp, picked: option indexes }; valid & rendered only (excludes dup id / unrendered ancestors) ----
+  const isActiveQuiz = (q: Element) => {
+    const body = getBody()
+    if (!body || !quizValid(q)) return false
+    const am = anchorMap(body)
+    return !am.dups.has(q) && !am.isSkipped(q)
+  }
+  const quizzes = computed(() => new Map(Array.from(getBody()?.querySelectorAll('quiz') ?? []).filter(isActiveQuiz).map((q) => [quizKey(q), q])))
   const fps = reactive(new Map<string, string>())
   const fpReady = shallowRef(false)
   onMounted(async () => {
@@ -201,7 +212,7 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
     return v ? { picked: v.picked.map(String), checked: true } : { picked: pending[id] ?? [], checked: false }
   }
   const score = (scope?: Element): Score => {
-    const qs = Array.from((scope ?? getBody())?.querySelectorAll('quiz') ?? []).filter(quizValid)
+    const qs = Array.from((scope ?? getBody())?.querySelectorAll('quiz') ?? []).filter(isActiveQuiz)
     const done = qs.filter((q) => quiz(quizKey(q)).checked)
     return { total: qs.length, answered: done.length, correct: done.filter((q) => sameSet(quiz(quizKey(q)).picked, quizCorrect(q))).length }
   }

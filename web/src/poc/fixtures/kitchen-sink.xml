@@ -20,6 +20,19 @@
     </tldr>
 
     <section title="1. 证据标签与对比表">
+      <md><![CDATA[
+Markdown 增强插件验证（PRD 6.4）：化学式 H~2~O、平方 x^2^、第一块脚注[^1]、原始 `<input type="text">` 必须按文本转义。
+
+- [x] 已完成任务（只读 checkbox）
+- [ ] 待办任务
+
+[^1]: 第一块里的脚注定义（docId 隔离）。
+      ]]></md>
+      <md><![CDATA[
+第二个 `<md>` 块中的同名脚注[^1]，与上一块的 `fn` 锚点互不冲突。
+
+[^1]: 第二块里的同名脚注定义。
+      ]]></md>
       <claim level="claim" source="§1 Abstract">作者主张：一步采样足以覆盖大多数场景。</claim>
       <claim level="evidence" source="Table 2 · Fig. 4 · Eq. (5) · 一个非常非常长的位置标签用来测试 source 芯片在窄屏下会不会撑破布局 · §A.3.2.1">论文证据：30 FPS，单卡 H100。</claim>
       <claim level="inference">分析推断：条件越强，路径越直。</claim>
