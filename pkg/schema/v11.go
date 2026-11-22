@@ -697,6 +697,9 @@ func (s *v11State) checkTLDR(el *helium.Element) {
 			if trimmed == "" || utf8.RuneCountInString(trimmed) > maxTLDRRunes {
 				s.addIssue(child.Line(), "INVALID_TLDR", "tldr.point", fmt.Sprintf("<point> must be 1-%d Unicode runes", maxTLDRRunes), "")
 			}
+			if strings.ContainsAny(trimmed, "\r\n") {
+				s.addIssue(child.Line(), "INVALID_TLDR", "tldr.point", "<point> must be a single line of inline Markdown (no line breaks)", "put one short sentence on one line, or split it into several <point> elements")
+			}
 		case "verdict":
 			verdicts++
 			if hasChildElements(child) {

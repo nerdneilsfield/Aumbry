@@ -211,6 +211,46 @@ func TestV11ValidationRules(t *testing.T) {
 			wantCodes: []string{"INVALID_METRIC"},
 		},
 		{
+			name:      "metrics invalid trend fails INVALID_METRIC",
+			xml:       doc11(`<metrics><metric label="k" value="1" trend="sideways"/></metrics>`),
+			wantCodes: []string{"INVALID_METRIC"},
+		},
+		{
+			name:      "metrics with 0 metric fails INVALID_METRIC",
+			xml:       doc11(`<metrics/>`),
+			wantCodes: []string{"INVALID_METRIC"},
+		},
+		{
+			name:      "glossary duplicate term name fails INVALID_ATTR",
+			xml:       doc11(`<glossary><term name="LLM">a</term><term name="LLM">b</term></glossary>`),
+			wantCodes: []string{"INVALID_ATTR"},
+		},
+		{
+			name:      "ref missing id fails INVALID_ID",
+			xml:       doc11(`<references><ref title="T"/></references>`),
+			wantCodes: []string{"INVALID_ID"},
+		},
+		{
+			name:      "ref duplicate id fails DUPLICATE_ID",
+			xml:       doc11(`<references><ref id="r1" title="A"/><ref id="r1" title="B"/></references>`),
+			wantCodes: []string{"DUPLICATE_ID"},
+		},
+		{
+			name:      "ref javascript url fails INVALID_URL",
+			xml:       doc11(`<references><ref id="r1" title="T" url="javascript:alert(1)"/></references>`),
+			wantCodes: []string{"INVALID_URL"},
+		},
+		{
+			name:      "stage id duplicated across stages groups fails DUPLICATE_ID",
+			xml:       doc11(`<stages id="g1"><stage id="x" title="A"/></stages><stages id="g2"><stage id="x" title="B"/></stages>`),
+			wantCodes: []string{"DUPLICATE_ID"},
+		},
+		{
+			name:      "search-log with 2 stop fails INVALID_SEARCH_LOG",
+			xml:       doc11(`<search-log><query source="arXiv">q</query><stop>first</stop><stop>second</stop></search-log>`),
+			wantCodes: []string{"INVALID_SEARCH_LOG"},
+		},
+		{
 			name:      "tabs with 1 tab fails (#17)",
 			xml:       doc11(`<tabs><tab title="Only"><md>x</md></tab></tabs>`),
 			wantCodes: []string{"INVALID_ATTR"},
@@ -266,6 +306,42 @@ func TestV11ValidationRules(t *testing.T) {
 		{
 			name: "search-log inside collapse passes",
 			xml:  doc11(`<collapse title="Audit"><search-log date="2026-11-20"><query source="arXiv" date="2026-11-20" hits="12" kept="3">world model</query><excluded title="X" reason="off topic"/></search-log></collapse>`),
+		},
+		// PRD 6.2: collapse/tab/step hold leaf blocks only (no section/collapse nesting).
+		{
+			name:      "collapse inside collapse fails UNKNOWN_TAG",
+			xml:       doc11(`<collapse title="a"><collapse title="b"><md>x</md></collapse></collapse>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "section inside collapse fails UNKNOWN_TAG",
+			xml:       doc11(`<collapse title="a"><section title="b"><md>x</md></section></collapse>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "section inside tab fails UNKNOWN_TAG",
+			xml:       doc11(`<tabs><tab title="a"><section title="b"><md>x</md></section></tab><tab title="c"><md>y</md></tab></tabs>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "section inside step fails UNKNOWN_TAG",
+			xml:       doc11(`<steps><step title="a"><section title="b"><md>x</md></section></step></steps>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "collapse inside tab fails UNKNOWN_TAG",
+			xml:       doc11(`<tabs><tab title="a"><collapse title="b"><md>x</md></collapse></tab><tab title="c"><md>y</md></tab></tabs>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "collapse inside step fails UNKNOWN_TAG",
+			xml:       doc11(`<steps><step title="a"><collapse title="b"><md>x</md></collapse></step></steps>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "stages hidden under collapse section fails UNKNOWN_TAG",
+			xml:       doc11(`<collapse title="a"><section title="b"><stages id="g"><stage id="g1" title="t"><md>x</md></stage></stages></section></collapse>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
 		},
 		{
 			name:      "timeline bad date fails INVALID_DATE",
@@ -345,6 +421,20 @@ func TestV11ValidationRules(t *testing.T) {
 			name:      "tldr 301 Chinese runes fails INVALID_TLDR (#70)",
 			xml:       doc11(`<tldr><point>` + strings.Repeat("中", 301) + `</point></tldr>`),
 			wantCodes: []string{"INVALID_TLDR"},
+		},
+		{
+			name:      "tldr multi-line point fails INVALID_TLDR",
+			xml:       doc11("<tldr><point>line one\nline two</point></tldr>"),
+			wantCodes: []string{"INVALID_TLDR"},
+		},
+		{
+			name:      "tldr multi-line point in CDATA fails INVALID_TLDR",
+			xml:       doc11("<tldr><point><![CDATA[line one\r\nline two]]></point></tldr>"),
+			wantCodes: []string{"INVALID_TLDR"},
+		},
+		{
+			name: "tldr point with surrounding whitespace newlines passes",
+			xml:  doc11("<tldr><point>\n  one line\n</point></tldr>"),
 		},
 		{
 			name:      "two body-level tldr fails INVALID_TLDR (#70)",
@@ -592,6 +682,43 @@ func TestChartValidation(t *testing.T) {
 			}
 			if !strings.Contains(issues[0].Message, tt.wantPath) && !strings.Contains(issues[0].Field, tt.wantPath) {
 				t.Fatalf("expected JSON path %q in Field/Message, got %+v", tt.wantPath, issues[0])
+			}
+		})
+	}
+}
+
+// PRD 7.4: INVALID_CHART carries a hint, including the semantic (non JSON syntax) failures.
+func TestChartSemanticErrorsCarryHint(t *testing.T) {
+	manySeries := strings.TrimSuffix(strings.Repeat(`{"name":"s","data":[1]},`, maxChartSeries+1), ",")
+	tests := []struct {
+		name    string
+		typ     string
+		payload string
+	}{
+		{"data length differs from categories", "bar", `{"categories":["A","B"],"series":[{"name":"s","data":[1]}]}`},
+		{"empty series name", "bar", `{"categories":["A"],"series":[{"name":" ","data":[1]}]}`},
+		{"pie with two series", "pie", `{"categories":["A"],"series":[{"name":"a","data":[1]},{"name":"b","data":[2]}]}`},
+		{"too many series", "line", `{"categories":["A"],"series":[` + manySeries + `]}`},
+		{"err length differs from data", "line", `{"categories":["A","B"],"series":[{"name":"s","data":[1,2],"err":[1]}]}`},
+		{"negative err", "bar", `{"categories":["A"],"series":[{"name":"s","data":[1],"err":[-1]}]}`},
+		{"err on pie", "pie", `{"categories":["A"],"series":[{"name":"s","data":[1],"err":[1]}]}`},
+		{"err on scatter", "scatter", `{"series":[{"name":"s","data":[[1,2]],"err":[1]}]}`},
+		{"too many points", "scatter", `{"series":[{"name":"s","data":[` + strings.Repeat("[1,2],", maxChartPoints) + `[3,4]]}]}`},
+		{"non-finite number", "bar", `{"categories":["A"],"series":[{"name":"s","data":[1e999]}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, issues := Parse([]byte(doc11(`<chart type="`+tt.typ+`"><![CDATA[`+tt.payload+`]]></chart>`)), Options{})
+			if len(issues) == 0 {
+				t.Fatal("expected INVALID_CHART, got valid")
+			}
+			for _, is := range issues {
+				if is.Code != "INVALID_CHART" {
+					t.Fatalf("code = %q, want INVALID_CHART\n%+v", is.Code, issues)
+				}
+				if strings.TrimSpace(is.Hint) == "" {
+					t.Errorf("INVALID_CHART issue without hint: %+v", is)
+				}
 			}
 		})
 	}
