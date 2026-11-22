@@ -365,7 +365,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mounted, oldPath, err := s.saveItem(ctx, saveItem{
+	mounted, err := s.saveItem(ctx, saveItem{
 		id:          itemID,
 		created:     created,
 		draft:       draft,
@@ -397,11 +397,8 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if oldPath != "" && oldPath != xmlPath {
-		if err := s.store.Delete(ctx, oldPath); err != nil {
-			s.logger.WarnContext(ctx, "delete superseded item content", "item", itemID, "path", oldPath, "error", err)
-		}
-	}
+	// The superseded xml object is left in storage: deleting it here could race a concurrent ingest that
+	// re-uses the same content-hashed path. Offline `aumbry-server gc` removes it.
 
 	prefix, status := "/r/", http.StatusOK
 	if doc.Meta.Type == "post" {
@@ -443,17 +440,16 @@ type saveItem struct {
 }
 
 // saveItem writes the item, its assets, its search index row and its new mounts in one transaction
-// and returns the resulting mount set and, for an update, the xml path it replaced. Existing mounts
-// are kept.
-func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, oldPath string, err error) {
+// and returns the resulting mount set. Existing mounts are kept.
+func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, err error) {
 	meta := in.doc.Meta
 	tags, err := marshalJSON(orEmpty(meta.Tags))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	related, err := marshalJSON(orEmpty(meta.RelatedIDs))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	plain := in.doc.PlainText()
 	var key any
@@ -463,7 +459,7 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, o
 
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -474,17 +470,18 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, o
 			in.id, key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
 			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy)
 	} else {
-		// Reading the replaced path first also proves the item still exists (sql.ErrNoRows otherwise).
-		if err = tx.GetContext(ctx, &oldPath, `SELECT xml_storage_path FROM items WHERE id = ?`, in.id); err != nil {
-			return nil, "", err
+		// Reading the current row first proves the item still exists (sql.ErrNoRows otherwise).
+		var current string
+		if err = tx.GetContext(ctx, &current, `SELECT xml_storage_path FROM items WHERE id = ?`, in.id); err != nil {
+			return nil, err
 		}
 		if in.draft {
 			var mountCount int
 			if err = tx.GetContext(ctx, &mountCount, `SELECT count(*) FROM directory_items WHERE item_id = ?`, in.id); err != nil {
-				return nil, "", err
+				return nil, err
 			}
 			if mountCount > 0 {
-				return nil, "", errAlreadyPublished
+				return nil, errAlreadyPublished
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE items SET external_key = COALESCE(?, external_key), type = ?, title = ?,
@@ -494,42 +491,42 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, o
 			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.id)
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM item_assets WHERE item_id = ?`, in.id); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	for _, a := range in.assets {
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?)`,
 			a.hash, a.mime, a.size, a.path); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_assets (item_id, asset_hash) VALUES (?, ?)`, in.id, a.hash); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
 
 	if err = db.ReplaceItemFTS(ctx, tx, in.id, meta.Title, meta.Summary, strings.Join(meta.Tags, " "), plain); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	for _, dir := range in.dirs {
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO directory_items (directory_id, item_id) VALUES (?, ?)`, dir, in.id); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
 	mounted, err = itemMounts(ctx, tx, in.id)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if mounted == nil {
 		mounted = []string{}
 	}
-	return mounted, oldPath, nil
+	return mounted, nil
 }
 
 func orEmpty(values []string) []string {

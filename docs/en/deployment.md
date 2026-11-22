@@ -232,7 +232,7 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
    backup written to /var/backups/aumbry-20261122.db
    ```
 
-2. `backup` captures SQLite metadata and full-text search only; do **not** take a SQLite snapshot first and copy the object directory later while writes continue, because later item updates delete superseded XML objects. For a complete backup, stop `aumbry-server` (or stop writes and pause `gc`), capture the SQLite snapshot together with the matching object store state (copy the object directory for `local`, or use storage-side replication or `rclone` for `s3`/`r2`/`webdav`).
+2. `backup` captures SQLite metadata and full-text search only; do **not** take a SQLite snapshot first and copy the object directory later while writes continue, because `gc` later deletes objects the snapshot still references. For a complete backup, stop `aumbry-server` (or stop writes and pause `gc`), capture the SQLite snapshot together with the matching object store state (copy the object directory for `local`, or use storage-side replication or `rclone` for `s3`/`r2`/`webdav`).
 
 3. After restoring a database snapshot and its paired object store snapshot, verify the restore before serving traffic:
 
@@ -260,7 +260,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### Garbage collect orphan objects (`gc`)
 
-When an `ingest` request fails after uploading XML to object storage (or when an update leaves old assets unreferenced), unreferenced objects remain in storage so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched. For `local`, the configured root directory must already exist (`gc` and `gc --dry-run` fail instead of creating an empty directory).
+When an `ingest` request fails after uploading XML to object storage (or when an update leaves the previous XML object or old assets unreferenced), unreferenced objects remain in storage so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched. For `local`, the configured root directory must already exist (`gc` and `gc --dry-run` fail instead of creating an empty directory).
 
 1. List orphan objects safely while `aumbry-server` is running:
 

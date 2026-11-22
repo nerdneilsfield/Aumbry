@@ -232,7 +232,7 @@ Traefik 把证书保存在 `traefik-letsencrypt` 卷中。它每 10 s 探测一�
    backup written to /var/backups/aumbry-20261122.db
    ```
 
-2. `backup` 仅备份 SQLite 数据库；不能在写入持续期间「先快照 SQLite、再事后复制对象目录」，因为快照之后更新条目会删除被替换的旧 XML。完整备份的做法是：停止服务（或停止写入并暂停 `gc`），同时保存 SQLite 快照以及对象存储的对应内容（`local` 复制对象目录，`s3`、`r2` 或 `webdav` 使用存储服务自带的复制功能或 `rclone`）。
+2. `backup` 仅备份 SQLite 数据库；不能在写入持续期间「先快照 SQLite、再事后复制对象目录」，因为之后运行的 `gc` 会删除快照仍然引用的对象。完整备份的做法是：停止服务（或停止写入并暂停 `gc`），同时保存 SQLite 快照以及对象存储的对应内容（`local` 复制对象目录，`s3`、`r2` 或 `webdav` 使用存储服务自带的复制功能或 `rclone`）。
 
 3. 恢复数据库快照及与之配对的对象存储后，先验证恢复结果，再对外提供访问：
 
@@ -260,7 +260,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 清理无引用对象（`gc`）
 
-当 `ingest` 写完对象后事务失败（如并发争用），或旧图片不再被任何条目引用时，孤儿对象会留在对象存储等待离线回收。`gc` 仅匹配 Aumbry 生成的路径格式（`/xml/<12位ID>-<64位小写十六进制>.xml` 与 `/assets/<64位小写十六进制>.(png|jpg|webp|svg)`），运维手工放置在 `/xml/README.txt` 或 `/assets/manual.png` 等非托管路径不会被列出或删除。使用 `local` 时，配置的对象根目录必须已存在（`gc` 与 `gc --dry-run` 均不会创建缺失目录，遇到不存在时直接报错）。
+当 `ingest` 写完对象后事务失败（如并发争用），或更新条目后旧 XML 与旧图片不再被任何条目引用时，孤儿对象会留在对象存储等待离线回收。`gc` 仅匹配 Aumbry 生成的路径格式（`/xml/<12位ID>-<64位小写十六进制>.xml` 与 `/assets/<64位小写十六进制>.(png|jpg|webp|svg)`），运维手工放置在 `/xml/README.txt` 或 `/assets/manual.png` 等非托管路径不会被列出或删除。使用 `local` 时，配置的对象根目录必须已存在（`gc` 与 `gc --dry-run` 均不会创建缺失目录，遇到不存在时直接报错）。
 
 1. 在服务运行期间先用 `--dry-run` 查看待清理清单（只读、安全）：
 

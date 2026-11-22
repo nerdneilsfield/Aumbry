@@ -615,7 +615,7 @@ secret_access_key = "test-sk"
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	// 1. Push with asset, read back, update, and verify old XML was deleted.
+	// 1. Push with asset, read back, update, and verify the old XML stays until gc.
 	v1 := pushTestItem(t, srv.URL, "amb_s3_tok", testXMLDoc("S3 v1", "./imgs/a.svg"), "a.svg", "./imgs/a.svg", []byte(sampleTestSVG), "")
 	itemID := v1["id"].(string)
 
@@ -633,8 +633,8 @@ secret_access_key = "test-sk"
 
 	_ = pushTestItem(t, srv.URL, "amb_s3_tok", testXMLDoc("S3 v2", "./imgs/a.svg"), "a.svg", "./imgs/a.svg", []byte(sampleTestSVG), itemID)
 	xmlObjs, err := store.List(context.Background(), "/xml")
-	if err != nil || len(xmlObjs) != 1 {
-		t.Fatalf("expected 1 live xml object after update, got %v, %v", xmlObjs, err)
+	if err != nil || len(xmlObjs) != 2 {
+		t.Fatalf("expected old and new xml objects after update, got %v, %v", xmlObjs, err)
 	}
 
 	// Push and delete another item.
@@ -669,7 +669,7 @@ secret_access_key = "test-sk"
 		t.Fatalf("s3 reindex = %q, %v", reOut, reErr)
 	}
 
-	// 3. gc --dry-run lists orphan and offline gc removes it.
+	// 3. gc --dry-run lists the orphan and offline gc removes it together with the superseded v1 xml.
 	orphanXML := "/xml/" + strings.Repeat("Z", 12) + "-" + strings.Repeat("f", 64) + ".xml"
 	if err := store.Put(context.Background(), orphanXML, strings.NewReader("<orphan/>")); err != nil {
 		t.Fatal(err)
@@ -677,11 +677,14 @@ secret_access_key = "test-sk"
 	if dryOut, dryErr := runCLI("gc", "--dry-run"); dryErr != nil || !strings.Contains(dryOut, orphanXML) {
 		t.Fatalf("s3 gc --dry-run = %q, %v; want %s", dryOut, dryErr, orphanXML)
 	}
-	if gcOut, gcErr := runCLI("gc"); gcErr != nil || !strings.Contains(gcOut, "deleted 1 xml") {
+	if gcOut, gcErr := runCLI("gc"); gcErr != nil || !strings.Contains(gcOut, "deleted 2 xml") {
 		t.Fatalf("s3 gc = %q, %v", gcOut, gcErr)
 	}
 	if ok, _ := store.Exists(context.Background(), orphanXML); ok {
 		t.Fatalf("orphan %s still exists after gc", orphanXML)
+	}
+	if left, listErr := store.List(context.Background(), "/xml"); listErr != nil || len(left) != 1 {
+		t.Fatalf("xml objects after gc = %v, %v; want only the live v2", left, listErr)
 	}
 
 	// 4. verify-storage passes, then fails listing deleted asset.

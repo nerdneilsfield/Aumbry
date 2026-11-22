@@ -277,12 +277,12 @@ func TestFailedUpdateKeepsOldContent(t *testing.T) {
 		t.Errorf("title after a failed update = %v", got)
 	}
 
-	// A successful update serves the new content and removes the superseded object.
+	// A successful update serves the new content; the superseded object stays until offline gc.
 	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Replacement", md: "newtext"}), itemID: id}); resp.status != http.StatusOK {
 		t.Fatalf("update = %d %s", resp.status, resp.body)
 	}
 	after := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body)
-	if !strings.Contains(after, "newtext") || e.store.count("/xml/"+id) != 1 || !e.store.has("/xml/"+id, after) {
+	if !strings.Contains(after, "newtext") || e.store.count("/xml/"+id) != 2 || !e.store.has("/xml/"+id, after) || !e.store.has("/xml/"+id, before) {
 		t.Errorf("after a successful update: %d objects, content %s", e.store.count("/xml/"+id), after)
 	}
 	// Re-sending identical content keeps the object that is live.
