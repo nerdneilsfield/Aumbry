@@ -8,7 +8,7 @@ The `aumbry` CLI validates XML documents offline and pushes reports, lists direc
 
 Choose environment variables for stateless runs or named YAML profiles for persistent local workstations.
 
-> **Warning — Plaintext token storage:** `aumbry config set` writes your API token in plaintext inside `$XDG_CONFIG_HOME/aumbry/config.yaml` (or `~/.config/aumbry/config.yaml` on every OS when `XDG_CONFIG_HOME` is unset). Aumbry creates the parent directory with mode `0700` and the file with mode `0600` (`chmod 0600` enforced on every save). Avoid committing or backing up this file unencrypted; prefer environment variables on CI runners.
+> **Warning — Plaintext token storage:** `aumbry config set` writes your API token in plaintext inside `$XDG_CONFIG_HOME/aumbry/config.yaml` (or `~/.config/aumbry/config.yaml` on every OS when `XDG_CONFIG_HOME` is unset). Aumbry creates the parent directory with mode `0700` and enforces mode `0600` on the config file on every save. Avoid committing or backing up this file unencrypted; prefer environment variables on CI runners.
 
 ### Method A: Environment variables
 
@@ -79,7 +79,7 @@ CLI flags (--dir, --profile)  >  Environment variables (AUMBRY_SERVER, AUMBRY_TO
 
 ### `aumbry validate`
 
-Validate an Aumbry XML file (`version="1.0"` or `"1.1"`) offline. Relative `<figure src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks escaping that directory are rejected via `os.OpenRoot`.
+Validate an Aumbry XML file (`version="1.0"` or `"1.1"`) offline. Relative `<figure src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected.
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -271,7 +271,7 @@ aumbry dirs --format tree
 
 ### `aumbry list`
 
-List items with optional filtering (`GET /api/v1/agent/items`). `--key` performs an exact match on `external_key`, `--q` matches substrings across `title` and `external_key` only (not body text), `--dir` filters by mounted directory ID, and `--limit`/`--offset` paginate (`defaultLimit = 20`, server max `100`). `"owned": true` indicates the item was created by your current API token.
+List items with optional filtering (`GET /api/v1/agent/items`). `--key` performs an exact match on `external_key`, `--q` matches substrings across `title` and `external_key` only (not body text), `--dir` filters by mounted directory ID, and `--limit`/`--offset` paginate (default `20`, server max `100`). `"owned": true` indicates the item was created by your current API token.
 
 ```sh
 aumbry list [--key <key>] [--q <query>] [--dir <dir-id>] [--limit <n>] [--offset <n>] [--profile <name>]
@@ -306,7 +306,7 @@ aumbry list --key demo:report --limit 20
 
 ### `aumbry unpublish`
 
-Clear all directory mounts for an item (`DELETE /api/v1/agent/items/{id}/mounts`), returning it to unmounted draft status (`403` to visitors) while preserving its ID, metadata, and XML content. Only the token that originally created the item can unpublish it (other tokens and legacy `NULL`-owner items return HTTP `403 not_owner`).
+Clear all directory mounts for an item (`DELETE /api/v1/agent/items/{id}/mounts`), returning it to unmounted draft status (`403` to visitors) while preserving its ID, metadata, and XML content. Only the token that originally created the item can unpublish it (other tokens and legacy v1.0 items without a recorded owner return HTTP `403 not_owner`).
 
 ```sh
 aumbry unpublish MDUnpJpiAjMo
@@ -321,7 +321,7 @@ aumbry unpublish MDUnpJpiAjMo
 
 ### `aumbry delete`
 
-> **Caution — Permanent deletion:** `aumbry delete <id> --yes` deletes the database `items` row, `items_fts` search entry, directory mount rows, and the XML content object on WebDAV (`DELETE /api/v1/agent/items/{id}`). This cannot be undone. Without `--yes`, the CLI refuses to execute locally. Only the creating API token is authorized (`403 not_owner` otherwise).
+> **Caution — Permanent deletion:** `aumbry delete <id> --yes` permanently deletes the item's metadata, search index entry, directory mounts, and XML content object on WebDAV (`DELETE /api/v1/agent/items/{id}`). This cannot be undone. Without `--yes`, the CLI refuses to execute locally. Only the creating API token is authorized (`403 not_owner` otherwise).
 
 ```sh
 aumbry delete MDUnpJpiAjMo --yes

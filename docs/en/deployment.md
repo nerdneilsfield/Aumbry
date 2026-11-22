@@ -4,7 +4,7 @@ English | [简体中文](../zh-CN/deployment.md)
 
 This guide covers deploying `aumbry-server` with Docker Compose or a host binary, configuring reverse proxies, checking service readiness, and running backup, storage verification, and garbage collection commands.
 
-> **Caution — Single instance only:** Aumbry opens one SQLite connection (`SetMaxOpenConns(1)`), holds an advisory file lock (`aumbry.lock`) on `data_dir`, and stores rate-limit counters in process memory. Do not run two `aumbry-server` processes against the same `data_dir` or private WebDAV root; concurrent writers cause lock contention and broken rate limiting.
+> **Caution — Single instance only:** Aumbry serializes SQLite writes on a single connection, holds an advisory file lock (`aumbry.lock`) in `data_dir`, and stores rate-limit counters in process memory. Do not run two `aumbry-server` processes against the same `data_dir` or private WebDAV root; concurrent processes cause lock conflicts and broken rate limiting.
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 
 ## Deploy as a host binary
 
-1. Build both binaries (`make frontend` compiles `web/` into `internal/webembed/dist/`):
+1. Build the frontend assets and both binaries:
 
    ```sh
    make setup
@@ -118,7 +118,7 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 
 ## Storage layout, limits, and security headers
 
-- **`data_dir` contents:** `aumbry-server` creates `data_dir` with mode `0700`, acquires `aumbry.lock` via `flock`, and initializes `aumbry.db` with `WAL` journal mode, `foreign_keys=1`, and `busy_timeout=5000` (goose migrations apply automatically on startup).
+- **`data_dir` contents:** `aumbry-server` creates `data_dir` with mode `0700`, locks `aumbry.lock` to prevent concurrent instances, and initializes `aumbry.db` in SQLite WAL mode (applying schema migrations automatically on startup).
 - **WebDAV object layout and timeouts:** Item XML files live at `/xml/<12-char-id>-<64-hex>.xml`; uploaded images live at `/assets/<64-hex>.<ext>` (`.png`, `.jpg`, `.webp`, `.svg` detected by content MIME sniffing). WebDAV connections time out after `5 s` on TCP dial and `30 s` waiting for response headers.
 - **Upload and rate bounds:** `POST /api/v1/ingest` enforces `100 MiB` total request body, `10 MiB` XML payload, `20 MiB` per figure, max `4` concurrent ingest requests, and `120 requests/min` per client IP across `/api/v1/ingest` and `/api/v1/agent/*`. Admin login and directory password unlock endpoints allow `10 requests/min` per client IP.
 - **Response headers:** Every HTTP response includes `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`. Raw XML and asset downloads also send `Cache-Control: private` and `Content-Security-Policy: default-src 'none'; sandbox`.
@@ -126,7 +126,7 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 ## Health and readiness endpoints
 
 - `GET /healthz`: lightweight liveness endpoint; returns HTTP `200` and `{"status":"ok"}`.
-- `GET /readyz`: concurrently probes SQLite (`PingContext`) and WebDAV (`PROPFIND /`) with a `2 s` timeout and caches WebDAV probe results for `5 s` via `singleflight`. Returns HTTP `200` when both report `"ok"`, or HTTP `503` (`"status":"unavailable"`) when either reports `"auth"`, `"timeout"`, or `"unreachable"`:
+- `GET /readyz`: concurrently probes SQLite and WebDAV (`PROPFIND /`) with a `2 s` timeout, deduplicating concurrent checks and caching WebDAV probe results for `5 s`. Returns HTTP `200` when both report `"ok"`, or HTTP `503` (`"status":"unavailable"`) when either reports `"auth"`, `"timeout"`, or `"unreachable"`:
 
   ```sh
   curl -s http://127.0.0.1:8080/readyz
@@ -175,7 +175,7 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
 
 ### Verify WebDAV objects (`verify-storage`)
 
-`verify-storage` checks that every `items.xml_storage_path` and `assets.storage_path` recorded in `aumbry.db` exists on WebDAV:
+`verify-storage` checks that every item XML file and referenced image asset recorded in `aumbry.db` exists on WebDAV:
 
 ```sh
 aumbry-server verify-storage --config ./aumbry.toml
@@ -209,7 +209,7 @@ When an `ingest` request fails after uploading XML to WebDAV (or when legacy ass
    refusing to run destructive gc while aumbry-server is running; stop the server first or pass --dry-run
    ```
 
-3. Once `aumbry-server` has stopped cleanly, delete unreferenced remote objects and orphan `assets` rows:
+3. Once `aumbry-server` has stopped cleanly, delete unreferenced remote objects and orphan database asset records:
 
    ```sh
    aumbry-server gc --config ./aumbry.toml
@@ -225,4 +225,4 @@ When an `ingest` request fails after uploading XML to WebDAV (or when legacy ass
 
 ### Search index and reindexing
 
-Full-text search queries the `items_fts` SQLite FTS5 virtual table (`trigram` tokenizer) for tokens of 3 or more characters and falls back to escaped `LIKE` predicates for shorter tokens. `aumbry-server` updates `items_fts` transactionally on every `POST /api/v1/ingest` and item deletion. **There is no `reindex` subcommand** in `aumbry-server`; to rebuild the search entry for an item, re-push the XML document with its existing `--key` or `--id`.
+Full-text search uses SQLite full-text indexing for search terms of 3 or more characters and automatically falls back to substring matching for shorter terms. `aumbry-server` updates the search index atomically on every `POST /api/v1/ingest` and item deletion. **There is no `reindex` subcommand** in `aumbry-server`; to rebuild the search entry for an item, re-push the XML document with its existing `--key` or `--id`.

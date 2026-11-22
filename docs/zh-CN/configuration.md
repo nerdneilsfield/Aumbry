@@ -2,7 +2,7 @@
 
 # 服务端配置参考
 
-`aumbry-server` 与维护子命令（`check-config`、`backup`、`verify-storage`、`gc`）共用 `internal/config/config.go` 中的严格配置加载器，支持 TOML 文件、环境变量以及两者混合配置。
+`aumbry-server` 与维护子命令（`check-config`、`backup`、`verify-storage`、`gc`）共用同一套严格配置加载规则，支持 TOML 文件、环境变量以及两者混合配置。
 
 ## 查找顺序与覆盖规则
 
@@ -25,22 +25,22 @@
 - **严格 TOML 字段检查**：出现未定义 TOML 键名时启动直接报错（`unknown configuration key(s) ...`）。
 - **一次性报告错误**：所有缺失必填项或格式错误合并收集后一次性输出。
 - **首尾空白裁剪**：除 `AUMBRY_COOKIE_SECRET` 与 `AUMBRY_WEBDAV_PASS` 保持原样外，其余所有配置值及逗号分隔项均先裁剪首尾空白再校验。
-- **文件权限告警**：当已读取的 TOML 文件对同组或其他用户可读（`mode & 0o044 != 0`）时，加载器输出提示告警（建议 `chmod 600`）。
+- **文件权限告警**：当已读取的 TOML 文件对同组或其他用户可读时，服务端输出提示告警（建议 `chmod 600`）。
 
 ## 配置项清单
 
 | TOML 键 | 环境变量 | 类型 | 必填 | 默认值 | 说明与约束 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `listen_addr` | `AUMBRY_LISTEN_ADDR` | string | 是（有默认值） | `":8080"` | HTTP 监听地址（`host:port` 或 `:port`）。裁剪空白后为空时回退至 `":8080"`。 |
-| `data_dir` | `AUMBRY_DATA_DIR` | string | 是 | 无 | 存放 `aumbry.db` 与 `aumbry.lock` 的目录。首次启动以 `0700` 创建；必须可写。 |
-| `admin.user` | `AUMBRY_ADMIN_USER` | string | 是 | 无 | 登录 `POST /api/v1/admin/login` 使用的管理员用户名，裁剪空白后非空。 |
-| `admin.password_hash` | `AUMBRY_ADMIN_PASSWORD_HASH` | string | 是 | 无 | 合法 bcrypt 哈希（支持 `$2$`、`$2a$`、`$2b$`、`$2x$`、`$2y$`），校验开销、分隔符与 53 字符盐+摘要 base64 编码。 |
-| `api_tokens` | `AUMBRY_API_TOKENS` | list of string（TOML 数组或逗号分隔环境变量） | 是 | 无 | 允许调用 `/api/v1/ingest` 与 `/api/v1/agent/*` 的 Bearer token 列表，至少 1 个非空项；空项自动过滤。 |
-| `cookie_secret` | `AUMBRY_COOKIE_SECRET` | string | 是 | 无 | 经 HKDF-SHA256 派生会话加签/加密密钥的根秘钥。最少 `32` 字节；更换后所有既有访客与管理员会话失效。 |
-| `webdav.url` | `AUMBRY_WEBDAV_URL` | string | 是 | 无 | 私有 WebDAV 根目录绝对 URL，必须包含协议头（scheme）与主机名（host）。 |
-| `webdav.user` | `AUMBRY_WEBDAV_USER` | string | 是 | 无 | WebDAV HTTP Basic 认证用户名，裁剪空白后非空。 |
-| `webdav.password` | `AUMBRY_WEBDAV_PASS` | string | 是 | 无 | WebDAV HTTP Basic 认证密码；环境变量 `AUMBRY_WEBDAV_PASS` 原样读取，不裁剪空白。 |
-| `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | list of string（TOML 数组或逗号分隔环境变量） | 否 | `[]` | 允许解析 `X-Forwarded-For` 与 `X-Forwarded-Proto` 的反向代理 IP 或 CIDR 列表（如 `10.0.0.0/8`）。非法地址会导致启动报错。 |
+| `listen_addr` | `AUMBRY_LISTEN_ADDR` | 字符串 | 是（有默认值） | `":8080"` | HTTP 监听地址（`host:port` 或 `:port`）。裁剪空白后为空时回退至 `":8080"`。 |
+| `data_dir` | `AUMBRY_DATA_DIR` | 字符串 | 是 | 无 | 存放 `aumbry.db` 与 `aumbry.lock` 的目录。首次启动以 `0700` 创建；必须可写。 |
+| `admin.user` | `AUMBRY_ADMIN_USER` | 字符串 | 是 | 无 | 登录 `POST /api/v1/admin/login` 使用的管理员用户名，裁剪空白后非空。 |
+| `admin.password_hash` | `AUMBRY_ADMIN_PASSWORD_HASH` | 字符串 | 是 | 无 | 合法 bcrypt 哈希（支持 `$2$`、`$2a$`、`$2b$`、`$2x$`、`$2y$`），校验开销、分隔符与 53 字符盐+摘要 base64 编码。 |
+| `api_tokens` | `AUMBRY_API_TOKENS` | 字符串列表（TOML 数组或逗号分隔环境变量） | 是 | 无 | 允许调用 `/api/v1/ingest` 与 `/api/v1/agent/*` 的 Bearer token 列表，至少 1 个非空项；空项自动过滤。 |
+| `cookie_secret` | `AUMBRY_COOKIE_SECRET` | 字符串 | 是 | 无 | 用于签名和加密会话 Cookie 的根密钥。最少 `32` 字节；更换后所有既有访客与管理员会话立即失效。 |
+| `webdav.url` | `AUMBRY_WEBDAV_URL` | 字符串 | 是 | 无 | 私有 WebDAV 根目录绝对 URL，必须包含协议（如 `https://`）与主机名。 |
+| `webdav.user` | `AUMBRY_WEBDAV_USER` | 字符串 | 是 | 无 | WebDAV HTTP Basic 认证用户名，裁剪空白后非空。 |
+| `webdav.password` | `AUMBRY_WEBDAV_PASS` | 字符串 | 是 | 无 | WebDAV HTTP Basic 认证密码；环境变量 `AUMBRY_WEBDAV_PASS` 原样读取，不裁剪空白。 |
+| `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | 字符串列表（TOML 数组或逗号分隔环境变量） | 否 | `[]` | 允许解析 `X-Forwarded-For` 与 `X-Forwarded-Proto` 的反向代理 IP 或 CIDR 列表（如 `10.0.0.0/8`）。非法地址会导致启动报错。 |
 
 ## 生成密钥与 bcrypt 哈希的 `$` 转义规则
 

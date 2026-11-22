@@ -4,7 +4,7 @@
 
 本文说明如何使用 Docker Compose 或宿主机二进制部署 `aumbry-server`，配置反向代理，检查服务探针，以及执行 WAL 安全备份、存储核验与垃圾回收。
 
-> **Caution — 严格单实例运行：** Aumbry 将 SQLite 连接池上限设为 1（`SetMaxOpenConns(1)`），对 `data_dir` 持有非阻塞文件锁（`aumbry.lock`），并在进程内存中保存限流计数器。同一 `data_dir` 与私有 WebDAV 根目录禁止同时运行多个 `aumbry-server` 实例，否则会发生锁冲突且限流失效。
+> **注意：严格单实例运行。** Aumbry 串行处理数据库写入，在 `data_dir` 中持有文件锁（`aumbry.lock`），并在进程内存中保存限流计数器。部署时请确保同一 `data_dir` 与私有 WebDAV 根目录仅运行一个 `aumbry-server` 实例；同时启动多个实例会引发锁冲突并使限流失效。
 
 ## 前置条件
 
@@ -39,7 +39,7 @@
 
 ### 方式 B：TOML 配置文件部署（`docker-compose.toml.yml`）
 
-> **Warning — 容器 UID `65532` 读取权限说明：** 容器内 `aumbry-server` 以 `nonroot`（UID/GID `65532`）身份运行。宿主机普通用户属主的 `0600` 文件无法被 UID `65532` 读取。请赋予 GID `65532` 组读权限（`640`），不要直接设为 `644`，以免同机其他本地用户读取 `cookie_secret` 与 WebDAV 密码。
+> **警告：容器 UID `65532` 读取权限。** 容器内 `aumbry-server` 以 `nonroot`（UID/GID `65532`）身份运行。宿主机普通用户属主的 `0600` 文件无法被 UID `65532` 读取。请赋予 GID `65532` 组读权限（`640`），不要直接设为 `644`，以免同机其他本地用户读取 `cookie_secret` 与 WebDAV 密码。
 
 1. 复制模板（`config.example.toml` 默认 `data_dir = "/data"`，与容器卷挂载路径一致）并填写全部必填项：
 
@@ -67,7 +67,7 @@
 
 ## 使用二进制部署在宿主机
 
-1. 编译前后端及 CLI/服务端可执行文件（`make frontend` 会把 `web/` 产物嵌入 `internal/webembed/dist/`）：
+1. 编译前端资源以及 CLI 与服务端可执行文件：
 
    ```sh
    make setup
@@ -118,15 +118,15 @@
 
 ## 数据目录、容量上限与安全响应头
 
-- **`data_dir` 结构**：服务端以 `0700` 权限创建 `data_dir`，对 `aumbry.lock` 加非阻塞 `flock` 文件锁，并初始化启用了 `WAL`、`foreign_keys(1)` 与 `busy_timeout(5000)` 的 `aumbry.db`（内嵌 `goose` 迁移自动执行）。
-- **WebDAV 对象布局与超时**：条目正文放在 `/xml/<12位ID>-<64位小写hex>.xml`；图片放在 `/assets/<64位小写hex>.<ext>`（按文件内容 MIME 识别，仅允许 `.png`、`.jpg`、`.webp`、`.svg`）。WebDAV 连接建立超时为 `5 s`，等待响应头超时为 `30 s`。
+- **`data_dir` 结构**：服务端以 `0700` 权限创建 `data_dir`，锁定 `aumbry.lock` 防止多实例同时启动，并初始化处于 SQLite WAL 模式的 `aumbry.db`（启动时自动完成数据库结构迁移）。
+- **WebDAV 对象布局与超时**：条目正文放在 `/xml/<12位ID>-<64位小写十六进制>.xml`；图片放在 `/assets/<64位小写十六进制>.<ext>`（按文件内容 MIME 识别，仅允许 `.png`、`.jpg`、`.webp`、`.svg`）。WebDAV 连接建立超时为 `5 s`，等待响应头超时为 `30 s`。
 - **上传与限流上限**：`POST /api/v1/ingest` 单次请求上限 `100 MiB`，XML 正文上限 `10 MiB`，单张图片上限 `20 MiB`，并发上传上限为 `4`；`/api/v1/ingest` 与 `/api/v1/agent/*` 共享同 IP 每分钟 `120` 次限流。管理员登录与目录密码解锁接口限流为同 IP 每分钟 `10` 次。
 - **默认安全响应头**：所有 HTTP 响应均带 `Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff` 与 `X-Frame-Options: DENY`；XML 与图片代理响应额外带 `Cache-Control: private` 与 `Content-Security-Policy: default-src 'none'; sandbox`。
 
 ## 健康检查与就绪探针
 
 - `GET /healthz`：进程存活探针，返回 HTTP `200` 与 `{"status":"ok"}`。
-- `GET /readyz`：以 `2 s` 超时并发检测 SQLite（`PingContext`）与 WebDAV（`PROPFIND /`），其中 WebDAV 探针通过 `singleflight` 合并并在内存中缓存 `5 s`。两者均为 `"ok"` 时返回 HTTP `200`，任一返回 `"auth"`、`"timeout"` 或 `"unreachable"` 时返回 HTTP `503`：
+- `GET /readyz`：以 `2 s` 超时并发检测 SQLite 与 WebDAV（`PROPFIND /`），对并发探针去重并将 WebDAV 检测结果在内存中缓存 `5 s`。两者均为 `"ok"` 时返回 HTTP `200`，任一返回 `"auth"`、`"timeout"` 或 `"unreachable"` 时返回 HTTP `503`（`"status":"unavailable"`）：
 
   ```sh
   curl -s http://127.0.0.1:8080/readyz
@@ -138,7 +138,7 @@
 
 ## 反向代理与 `trusted_proxies`
 
-`trusted_proxies` 默认为空切片 `[]`。空列表状态下，服务端忽略 `X-Forwarded-For` 与 `X-Forwarded-Proto`，始终取直接 TCP 对端 IP；会话 Cookie（`aumbry_admin` 有效期 7 天、`aumbry_unlocked` 有效期 30 天）仅在直接 TLS 连接或来自可信代理且携带 `X-Forwarded-Proto: https` 时附带 `Secure` 属性。
+`trusted_proxies` 默认为空列表 `[]`。空列表状态下，服务端忽略 `X-Forwarded-For` 与 `X-Forwarded-Proto`，始终取直接 TCP 对端 IP；会话 Cookie（`aumbry_admin` 有效期 7 天、`aumbry_unlocked` 有效期 30 天）仅在直接 TLS 连接或来自可信代理且携带 `X-Forwarded-Proto: https` 时附带 `Secure` 属性。
 
 在 Nginx、Caddy 或 Traefik 后运行时按下面步骤配置：
 
@@ -151,7 +151,7 @@
 
 ### 在线安全备份（`backup`）
 
-> **Caution — 禁止直接复制 `aumbry.db`：** 在 WAL 模式下，未刷回主库文件的提交仍位于 `aumbry.db-wal` 中，直接文件拷贝会造成快照缺页。请始终使用 `aumbry-server backup --out <path>`：该命令先以 `0600` 创建空目标文件，再执行 SQLite `VACUUM INTO`（支持在线运行，失败时自动清理半成品文件）。
+> **注意：不要直接复制 `aumbry.db`。** 在 WAL 模式下，未刷回主库文件的提交仍位于 `aumbry.db-wal` 中，直接文件拷贝会造成快照缺页。请始终使用 `aumbry-server backup --out <path>`：该命令先以 `0600` 创建空目标文件，再通过 SQLite `VACUUM INTO` 在线生成完整快照，失败时自动清理半成品文件。
 
 1. 将快照写入尚不存在的目标路径：
 
@@ -171,7 +171,7 @@
 
 ### 核验对象引用完整性（`verify-storage`）
 
-`verify-storage` 逐条检查数据库中 `items.xml_storage_path` 与 `assets.storage_path` 指向的对象是否仍存在于 WebDAV；发现缺失时以非零退出码返回并列出缺失清单：
+`verify-storage` 逐条检查 `aumbry.db` 中记录的所有条目 XML 文件与引用图片是否仍存在于 WebDAV；发现缺失时以非零退出码返回并列出缺失清单：
 
 ```sh
 aumbry-server verify-storage --config ./aumbry.toml
@@ -185,7 +185,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 清理无引用对象（`gc`）
 
-当 `ingest` 写完对象后事务失败（如并发争用），或旧图片不再被任何条目引用时，孤儿对象会留在 WebDAV 上等待离线回收。`gc` 仅匹配 Aumbry 生成的路径格式（`/xml/<12位ID>-<64位小写hex>.xml` 与 `/assets/<64位小写hex>.(png|jpg|webp|svg)`），运维手工放置在 `/xml/README.txt` 或 `/assets/manual.png` 等非托管路径不会被列出或删除。
+当 `ingest` 写完对象后事务失败（如并发争用），或旧图片不再被任何条目引用时，孤儿对象会留在 WebDAV 上等待离线回收。`gc` 仅匹配 Aumbry 生成的路径格式（`/xml/<12位ID>-<64位小写十六进制>.xml` 与 `/assets/<64位小写十六进制>.(png|jpg|webp|svg)`），运维手工放置在 `/xml/README.txt` 或 `/assets/manual.png` 等非托管路径不会被列出或删除。
 
 1. 在服务运行期间先用 `--dry-run` 查看待清理清单（只读、安全）：
 
@@ -221,4 +221,4 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 搜索索引与重索引（`reindex`）
 
-全站检索使用 SQLite FTS5 `items_fts` 虚表（`trigram` 分词器）；当检索词不足 3 个字符时自动退化为转义 `LIKE` 扫描。`items_fts` 在每次 `POST /api/v1/ingest` 和条目删除时于同一事务内同步更新。**当前版本未实现独立 `reindex` 子命令**；如需重建某条目的索引文本，使用原 `--key` 或 `--id` 重新推送该 XML 文档即可。
+全站检索对 3 个字符及以上的检索词使用 SQLite 全文索引，检索词不足 3 个字符时自动退化为子串匹配。服务端在每次 `POST /api/v1/ingest` 和条目删除时于同一事务内同步更新搜索索引。**当前版本未实现独立 `reindex` 子命令**；如需重建某条目的索引文本，使用原 `--key` 或 `--id` 重新推送该 XML 文档即可。

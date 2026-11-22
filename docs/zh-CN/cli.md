@@ -8,7 +8,7 @@
 
 根据运行环境选择纯环境变量或本地 YAML profile 文件：
 
-> **Warning — Token 明文存储提醒：** 执行 `aumbry config set` 时，CLI 会把 Bearer `token` 以明文写入 `$XDG_CONFIG_HOME/aumbry/config.yaml`（未设置 `XDG_CONFIG_HOME` 时各平台均为 `~/.config/aumbry/config.yaml`）。程序在保存时以 `0700` 创建父目录并以 `0600` 写入及 `chmod` 配置文件。请妥善保管该文件，避免纳入版本库；临时 CI 或容器环境改用环境变量传入。
+> **警告：Token 明文存储。** 执行 `aumbry config set` 时，CLI 会把 Bearer `token` 以明文写入 `$XDG_CONFIG_HOME/aumbry/config.yaml`（未设置 `XDG_CONFIG_HOME` 时各平台均为 `~/.config/aumbry/config.yaml`）。程序在保存时以 `0700` 创建父目录，并在每次保存时将配置文件权限设为 `0600`。请妥善保管该文件，避免纳入版本库；临时 CI 或容器环境改用环境变量传入。
 
 ### 方式 A：环境变量
 
@@ -79,7 +79,7 @@ CLI 命令行参数（--dir、--profile） > 环境变量（AUMBRY_SERVER、AUMB
 
 ### `aumbry validate`
 
-完全离线校验 Aumbry XML（`version="1.0"` 或 `"1.1"`）。`<figure src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并通过 `os.OpenRoot` 拒绝越级逃出目录的符号链接。
+完全离线校验 Aumbry XML（`version="1.0"` 或 `"1.1"`）。`<figure src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -123,10 +123,10 @@ aumbry push <file.xml> [--dir <dir-id>]... [--key <external_key>] [--id <item-id
 - `--draft`：作为未挂载草稿上传（`dirs: []`），**自动忽略** `default_dirs` 与 `AUMBRY_DIRS`。该参数与 `--dir` 互斥；若目标条目已挂载在任意目录，服务端返回 `409 already_published`，须先执行 `aumbry unpublish <id>` 再保存草稿。
 - `--create-only`：仅在 `external_key` 尚不存在时创建，已存在返回 `409 key_exists`。必须搭配 `--key`，不可与 `--id` 同用。
 - `--dry-run`：执行完整的本地 XML 与图片检查，并请求 `GET /api/v1/agent/dirs` 核对服务端可达性、token 合法性与目标目录是否存在，但不上传任何对象。
-- `--key <external_key>`：幂等键（新键须为 trim 后 `1..200` 个 Unicode 字符且不含控制字符）。同一篇报告多轮修订复用同一个 `--key`。
+- `--key <external_key>`：幂等键（新键去除首尾空白后须为 `1` 到 `200` 个 Unicode 字符且不含控制字符）。同一篇报告多轮修订复用同一个 `--key`。
 - `--id <item-id>`：按服务端 12 位条目 ID 定向更新已有条目。
 
-> **Caution — 无默认目录且不传 `--dir` 推送的后果：** 若未设置 `default_dirs` / `AUMBRY_DIRS`，也未显式传 `--dir`（且未带 `--draft`），推送会把条目保存为挂载列表为空的状态，访客无法读取（HTTP `403`）。推送发布前务必确认目标目录 ID。
+> **注意：无默认目录且不传 `--dir` 推送的后果。** 若未设置 `default_dirs` / `AUMBRY_DIRS`，也未显式传 `--dir`（且未带 `--draft`），推送会把条目保存为挂载列表为空的状态，访客无法读取（HTTP `403`）。推送发布前务必确认目标目录 ID。
 
 预检示例（`--dry-run`）：
 
@@ -271,7 +271,7 @@ aumbry dirs --format tree
 
 ### `aumbry list`
 
-查询条目列表（`GET /api/v1/agent/items`）。`--key` 精确匹配 `external_key`，`--q` 仅对 `title` 与 `external_key` 做子串匹配（不检索正文与 `items_fts`），`--dir` 按挂载目录 ID 过滤，`--limit` / `--offset` 分页（服务端默认 `20`、上限 `100`）。返回中的 `"owned": true` 表示该条目由当前 token 创建。
+查询条目列表（`GET /api/v1/agent/items`）。`--key` 精确匹配 `external_key`，`--q` 仅对 `title` 与 `external_key` 做子串匹配（不检索正文内容），`--dir` 按挂载目录 ID 过滤，`--limit` / `--offset` 分页（服务端默认 `20`、上限 `100`）。返回中的 `"owned": true` 表示该条目由当前 token 创建。
 
 ```sh
 aumbry list [--key <key>] [--q <query>] [--dir <dir-id>] [--limit <n>] [--offset <n>] [--profile <name>]
@@ -306,7 +306,7 @@ aumbry list --key demo:report --limit 20
 
 ### `aumbry unpublish`
 
-清空指定条目的全部目录挂载（`DELETE /api/v1/agent/items/{id}/mounts`），使其退回草稿状态（访客读取返回 `403`），条目 ID、元数据与 WebDAV XML 正文保留。仅允许创建该条目的 token 执行（其他 token 及 v1.0 遗留 `created_by IS NULL` 条目返回 HTTP `403 not_owner`）。
+清空指定条目的全部目录挂载（`DELETE /api/v1/agent/items/{id}/mounts`），使其退回草稿状态（访客读取返回 `403`），条目 ID、元数据与 WebDAV XML 正文保留。仅允许创建该条目的 token 执行（其他 token 及 v1.0 遗留的无归属记录条目返回 HTTP `403 not_owner`）。
 
 ```sh
 aumbry unpublish MDUnpJpiAjMo
@@ -321,7 +321,7 @@ aumbry unpublish MDUnpJpiAjMo
 
 ### `aumbry delete`
 
-> **Caution — 不可恢复删除：** `aumbry delete <id> --yes` 永久删除数据库中的 `items` 记录、`items_fts` 索引记录、挂载记录以及 WebDAV 中的 XML 正文对象（`DELETE /api/v1/agent/items/{id}`），操作无法撤销。未传入 `--yes` 时 CLI 在本地直接拒绝执行；同样仅创建者 token 有权删除（非创建者返回 `403 not_owner`）。
+> **注意：不可恢复删除。** `aumbry delete <id> --yes` 永久删除该条目的元数据、全文搜索索引、目录挂载记录以及 WebDAV 中的 XML 正文对象（`DELETE /api/v1/agent/items/{id}`），操作无法撤销。未传入 `--yes` 时 CLI 在本地直接拒绝执行；同样仅创建者 token 有权删除（非创建者返回 `403 not_owner`）。
 
 ```sh
 aumbry delete MDUnpJpiAjMo --yes

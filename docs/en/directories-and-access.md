@@ -20,10 +20,10 @@ Aumbry organizes access around a directory tree instead of a public homepage or 
 3. To create a child directory, select the parent directory in the left tree, select **子目录**, complete the form, and select **保存**.
 4. To set, replace, or remove a password on an existing directory:
 
-   > **Caution — Session invalidation:** Setting, changing, or clearing a directory password computes a new password hash fingerprint (`Fingerprint`). Every visitor `aumbry_unlocked` cookie previously issued for that directory stops matching immediately, requiring visitors to unlock with the new password (or reloading freely if cleared).
+   > **Caution — Session invalidation:** Setting, changing, or clearing a directory password immediately invalidates every visitor `aumbry_unlocked` cookie previously issued for that directory. Visitors must unlock again with the new password, or reload freely if the password was cleared.
 
    1. Select the target directory in the left tree.
-   2. Select **密码** (`DirDialog` password mode).
+   2. Select **密码** in the toolbar.
    3. To set or rotate the password, enter **新密码** and select **保存**. To remove protection, select **清除密码** (shown when `has_password` is true).
 
    Expected result: The directory lock badge updates in the admin tree and unlocked subtrees become immediately accessible or locked according to the new password state.
@@ -56,7 +56,7 @@ Authenticate first (`POST /api/v1/admin/login`), then manage directory passwords
 
    Expected response: HTTP `204 No Content`.
 
-3. Clear the password by passing an empty string `""` (`password_hash = NULL` in SQLite):
+3. Clear the password by passing an empty string `""`:
 
    ```sh
    curl -i -b admin.jar -X PATCH -H "Content-Type: application/json" \
@@ -68,13 +68,13 @@ Authenticate first (`POST /api/v1/admin/login`), then manage directory passwords
 
 ## Inheritance and `protected` vs `has_password`
 
-Permission evaluation walks upward from the requested directory to the tree root (`internal/api/perm.go`):
+Access checks walk upward from the requested directory to the tree root:
 
-1. A directory is **accessible** to a visitor only if no ancestor (including itself) has a password, **or** the visitor holds a valid unlock entry whose hash fingerprint matches any ancestor (including itself).
-2. Opening `GET /api/v1/dirs/{id}` or unlocking via `POST /api/v1/dirs/{id}/unlock` checks the **nearest protected ancestor (or the directory itself)**. Unlocking an ancestor unlocks its entire subtree (`accessible` stops walking upward at the first unlocked ancestor). When a child directory defines its own password while the parent remains locked (or unlocked separately), calling `/unlock` on the child verifies that child's own password and unlocks only the child subtree without unlocking the parent.
+1. A directory is accessible to a visitor only if no ancestor (including itself) has a password, **or** the visitor holds a valid `aumbry_unlocked` cookie matching the current password of any ancestor (including itself).
+2. Opening `GET /api/v1/dirs/{id}` or unlocking via `POST /api/v1/dirs/{id}/unlock` checks the **nearest protected ancestor (or the directory itself)**. Unlocking an ancestor unlocks its entire subtree. When a child directory defines its own password while the parent remains locked (or unlocked separately), calling `/unlock` on the child verifies that child's own password and unlocks only the child subtree without unlocking the parent.
 3. When viewing a public parent directory that contains a locked child directory:
    - The child appears in `children` with `"locked": true` and an empty `"description": ""`.
-   - Directory search (`GET /api/v1/dirs/{id}/search`) searches only the unlocked subset (`t.visibleDirs(v, t.subtree(d.ID))`), hiding items inside locked child directories until unlocked.
+   - Directory search (`GET /api/v1/dirs/{id}/search`) searches only the unlocked portion of the subtree, hiding items inside locked child directories until unlocked.
 4. Visitor unlock example against a child directory `Weekly Briefs` (`50h0cpGGYRkM`) under password-protected `Team Private` (`4ho9VKNPRj2h`):
 
    ```sh
@@ -120,14 +120,14 @@ Example output from `aumbry dirs --format tree`:
 
 ## Multi-directory mounting and item visibility
 
-An item can be mounted in multiple directories at the same time (via `aumbry push --dir A --dir B` or **保存挂载** in `/admin` `ItemDialog`).
+An item can be mounted in multiple directories at the same time (via `aumbry push --dir A --dir B` or **保存挂载** in the `/admin` item details dialog).
 
-> **Caution — Mounting to any public directory exposes the item:** Visitor access (`canViewItem` in `internal/api/items.go`) uses **OR** semantics: a visitor can read an item and its assets if **at least one** of its mounted directories is accessible (`len(t.visibleDirs(v, mounts)) > 0`). Mounting a protected item into an additional public directory makes the item readable to anyone who holds the item link.
+> **Caution — Mounting to any public directory exposes the item:** Visitor access follows **any-visible (OR)** semantics: a visitor can read an item and its assets if **at least one** of its mounted directories is accessible. Mounting a protected item into an additional public directory makes the item readable to anyone who holds the item link.
 
 Behavior when viewing a multi-mounted item:
 
 - **Visible mounts only:** `GET /api/v1/items/{id}` lists only the subset of mounted directories the current visitor is allowed to open (`dirs`). Locked directories stay omitted so visitors cannot discover private directory names or IDs.
-- **Related items filtering:** Each `<related-ids>/<id>` returned in `related` is filtered through `canViewItem`; items mounted exclusively in locked directories or unmounted drafts are omitted.
+- **Related items filtering:** Each `<related-ids>/<id>` entry returned in `related` is filtered by the visitor's read access; items mounted exclusively in locked directories or unmounted drafts are omitted.
 - **Assets follow items:** `GET /api/v1/assets/{hash}` allows access whenever any item referencing that asset hash is readable by the caller.
 - **Unmounted items (drafts) return `403`:** Deleting a directory removes mounts on that directory (cascading to child directories) without deleting items; any item left with zero mounts immediately returns HTTP `403 forbidden` to visitors:
 

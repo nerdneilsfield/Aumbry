@@ -2,7 +2,7 @@ English | [简体中文](../zh-CN/configuration.md)
 
 # Server configuration reference
 
-`aumbry-server` and its maintenance subcommands (`check-config`, `backup`, `verify-storage`, `gc`) share one strict configuration loader defined in `internal/config/config.go`. Settings can come from a TOML file, environment variables, or a mix of both.
+`aumbry-server` and its maintenance subcommands (`check-config`, `backup`, `verify-storage`, `gc`) share one strict configuration loader. Settings can come from a TOML file, environment variables, or a mix of both.
 
 ## Discovery order and precedence
 
@@ -25,7 +25,7 @@ Loader guarantees:
 - **Strict TOML schema:** Unknown keys inside TOML fail startup (`unknown configuration key(s) ...`).
 - **Complete error reporting:** All missing or invalid required keys are validated and reported together in one error output.
 - **Whitespace trimming:** Surrounding whitespace is trimmed on every string value and comma-separated list item **except** `AUMBRY_COOKIE_SECRET` and `AUMBRY_WEBDAV_PASS`, which are preserved verbatim.
-- **Permission warning:** If the loaded TOML file is readable by group or others (`mode & 0o044 != 0`), the loader emits a warning (`consider chmod 600`).
+- **Permission warning:** If the loaded TOML file is readable by group or other users, the server logs a warning (`consider chmod 600`).
 
 ## Configuration parameters
 
@@ -36,7 +36,7 @@ Loader guarantees:
 | `admin.user` | `AUMBRY_ADMIN_USER` | string | Yes | None | Username required by `POST /api/v1/admin/login`. Non-empty after trimming. |
 | `admin.password_hash` | `AUMBRY_ADMIN_PASSWORD_HASH` | string | Yes | None | Valid bcrypt hash (`$2$`, `$2a$`, `$2b$`, `$2x$`, or `$2y$`) with valid cost and 53-char bcrypt-base64 salt+digest body. |
 | `api_tokens` | `AUMBRY_API_TOKENS` | list of string (TOML array or CSV env) | Yes | None | Non-empty list of Bearer tokens accepted on `/api/v1/ingest` and `/api/v1/agent/*`. Blank entries are discarded. |
-| `cookie_secret` | `AUMBRY_COOKIE_SECRET` | string | Yes | None | Secret used to derive HMAC/AES cookie keys via HKDF-SHA256. Minimum length: `32` bytes; rotating invalidates all cookies. |
+| `cookie_secret` | `AUMBRY_COOKIE_SECRET` | string | Yes | None | Root secret used to sign and encrypt session cookies. Minimum length: `32` bytes; rotating invalidates all existing admin and visitor sessions. |
 | `webdav.url` | `AUMBRY_WEBDAV_URL` | string | Yes | None | Absolute URL with scheme and host pointing to the private WebDAV root. |
 | `webdav.user` | `AUMBRY_WEBDAV_USER` | string | Yes | None | Username for HTTP Basic authentication against WebDAV. Non-empty after trimming. |
 | `webdav.password` | `AUMBRY_WEBDAV_PASS` | string | Yes | None | Password for HTTP Basic authentication against WebDAV. Used verbatim in env (`AUMBRY_WEBDAV_PASS`). |

@@ -9,9 +9,9 @@ Aumbry is a self-hosted hub for publishing, organizing, and searching structured
 
 ## Highlights
 
-- **Single server binary with embedded web reader**: `aumbry-server` bundles the compiled Vue 3 application and serves `/d/<id>`, `/r/<id>`, `/p/<id>`, and `/admin` directly.
-- **Shared XML protocol and offline validator**: The `aumbry` CLI and `aumbry-server` use the same `pkg/schema` validator (`version="1.0"` and `"1.1"`), rejecting unknown tags, invalid charts, oversized blocks, and symlink asset escapes before upload.
-- **SQLite metadata and full-text search**: Metadata, directory mounts, and an FTS5 trigram index live in `<data_dir>/aumbry.db` (WAL mode), falling back to `LIKE` matching for terms shorter than 3 characters.
+- **Single server binary with embedded web reader**: `aumbry-server` bundles the web reader and admin console in one binary, serving `/d/<id>`, `/r/<id>`, `/p/<id>`, and `/admin` directly.
+- **Shared XML protocol and offline validator**: The `aumbry` CLI and `aumbry-server` enforce the same XML schema rules (`version="1.0"` and `"1.1"`), rejecting unknown tags, invalid charts, oversized blocks, and symlink asset escapes before upload.
+- **SQLite metadata and full-text search**: Metadata, directory mounts, and the full-text search index live in `<data_dir>/aumbry.db` (SQLite WAL mode), supporting full-text queries (3+ characters) and substring matching for shorter terms.
 - **Directory-level access control and private object storage**: Unmounted items return HTTP `403` to visitors, directories inherit ancestor passwords across the tree, and XML/image objects stored on WebDAV are served only through authenticated server handlers with `Content-Security-Policy: default-src 'none'; sandbox`.
 - **Bundled Agent Skill**: [skills/aumbry/](skills/aumbry/SKILL.md) ships inside the repository and release archives so coding and research agents can discover directories, validate reports offline, save drafts, and publish updates idempotently.
 
@@ -19,7 +19,7 @@ Aumbry is a self-hosted hub for publishing, organizing, and searching structured
 
 Aumbry separates authoring from hosting so research agents do not write directly to your database or expose files on a public bucket. An agent writes a structured XML report alongside local images, runs `aumbry validate` locally, and uploads the bundle to `POST /api/v1/ingest` using a Bearer token from `api_tokens`. Visitors receive links to individual directories (`/d/<dir-id>`) or items (`/r/<id>`, `/p/<id>`); the root page (`/`) displays no public index.
 
-Aumbry is designed and maintained by DengQi as a single-instance service (`github.com/nerdneilsfield/aumbry`) under the MIT license, with both protocol `1.0` and `1.1` active on `master`. It is not a public multi-user wiki or a distributed cluster: one `aumbry-server` process owns a given `data_dir` and private WebDAV store.
+Aumbry is open-source under the MIT license (`github.com/nerdneilsfield/aumbry`), with both protocol `1.0` and `1.1` active on `master`. It runs as a single-instance private research hub rather than a public multi-user wiki or a distributed cluster: one `aumbry-server` process owns a given `data_dir` and private WebDAV store.
 
 ## Installation
 
@@ -104,7 +104,7 @@ For TOML container configuration (`docker-compose.toml.yml`), host binary runs, 
 
 **Configure the CLI and push a report:**
 
-> **Caution:** `aumbry config set` stores the Bearer `token` in plaintext inside `$XDG_CONFIG_HOME/aumbry/config.yaml` (or `~/.config/aumbry/config.yaml`) with mode `0600`. Use environment variables (`AUMBRY_SERVER`, `AUMBRY_TOKEN`) in ephemeral CI runners.
+> **Warning:** `aumbry config set` stores the Bearer `token` in plaintext inside `$XDG_CONFIG_HOME/aumbry/config.yaml` (or `~/.config/aumbry/config.yaml`) with mode `0600`. Use environment variables (`AUMBRY_SERVER`, `AUMBRY_TOKEN`) in ephemeral CI runners.
 
 ```sh
 aumbry config set --server http://127.0.0.1:8080 --token <your-api-token>
@@ -186,25 +186,6 @@ make fmt-check
 CGO_ENABLED=0 go vet ./...
 CGO_ENABLED=0 go test ./...
 make skill-check
-```
-
-Repository layout:
-
-```text
-main.go              CLI entry point
-cmd/                 Cobra CLI subcommands
-cmd/server/          HTTP server and maintenance subcommands (check-config, backup, verify-storage, gc)
-internal/api/        HTTP router, proxy trust, readiness, ingest, agent, directory, search, and admin handlers
-internal/auth/       API tokens, admin credentials, encrypted/signed cookies
-internal/cliconfig/  CLI YAML profile store and env overrides
-internal/client/     HTTP upload and agent API client
-internal/config/     Strict TOML + env config loader
-internal/db/         SQLite WAL setup, goose migrations, VACUUM INTO backup, data_dir lock
-internal/storage/    Storage interface and WebDAV adapter
-internal/webembed/   Embedded compiled Vue frontend
-pkg/schema/          Shared v1.0/v1.1 XML parser, Schematron/Go validators, and protocol spec
-skills/aumbry/       Agent Skill, generated tag reference, and 5 example reports
-web/                 Vue 3 + TypeScript + Vite reader and Admin console
 ```
 
 ## License

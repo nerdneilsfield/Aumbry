@@ -9,9 +9,9 @@ Aumbry 是一个面向 AI agent 与人工研究产出的自托管私有报告库
 
 ## 核心特性
 
-- **单二进制部署与内嵌阅读器**：`aumbry-server` 内嵌编译后的 Vue 3 前端，直接提供 `/d/<id>`、`/r/<id>`、`/p/<id>` 与 `/admin` 页面。
-- **前后端共享的 XML 校验器**：`aumbry` CLI 与 `aumbry-server` 共用 `pkg/schema` 校验代码（支持 `version="1.0"` 与 `"1.1"`），在上传前拦截未知标签、图表错误、超限代码块及越界符号链接图片。
-- **SQLite 元数据与全文检索**：目录关系、条目索引与 FTS5 trigram 索引保存在 `<data_dir>/aumbry.db`（WAL 模式）；少于 3 个字符的短查询自动回退为 `LIKE` 匹配。
+- **单二进制部署与内嵌阅读器**：`aumbry-server` 内嵌 Web 阅读器与管理控制台，单个二进制直接提供 `/d/<id>`、`/r/<id>`、`/p/<id>` 与 `/admin` 页面。
+- **前后端共享的 XML 校验器**：`aumbry` CLI 与 `aumbry-server` 执行同一套 XML 校验规则（支持 `version="1.0"` 与 `"1.1"`），在上传前拦截未知标签、图表错误、超限代码块及越界符号链接图片。
+- **SQLite 元数据与全文检索**：目录关系、条目元数据与全文搜索索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
 - **目录级密码继承与私有 WebDAV 代理分发**：未挂载目录的条目对访客返回 HTTP `403`；目录密码沿子树继承；WebDAV 中的 XML 与图片仅通过服务端代理输出，并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
 - **随库分发的 Agent Skill**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档一起提供，规范 agent 发现目录、离线校验、保存草稿及幂等更新流程。
 
@@ -19,7 +19,7 @@ Aumbry 是一个面向 AI agent 与人工研究产出的自托管私有报告库
 
 Aumbry 把“报告编写/校验”与“托管/权限控制”分开。AI agent 在本地生成结构化 XML 报告与相对路径配图，先运行 `aumbry validate` 通过本地校验，再使用 `api_tokens` 中的 Bearer token 推送到服务端 `POST /api/v1/ingest`。人类读者通过获分享的目录链接（`/d/<dir-id>`）或条目链接（`/r/<id>`、`/p/<id>`）访问内容，网站首页（`/`）不列出任何公开目录。
 
-项目由 DengQi 设计并维护（`github.com/nerdneilsfield/aumbry`，MIT 许可证），目前 `master` 分支维护 `v1.0` 与 `v1.1` 协议及配套功能。Aumbry 定位为单实例私有研究库，而不是多人公开 Wiki 或多副本集群，每个 `data_dir` 与私有 WebDAV 存储同一时刻仅允许连接一个服务端进程。
+项目基于 MIT 许可证开源（`github.com/nerdneilsfield/aumbry`），当前 `master` 分支同时支持 `v1.0` 与 `v1.1` 协议及配套功能。Aumbry 定位为单实例私有研究库，而不是多人公开 Wiki 或多副本集群，每个 `data_dir` 与私有 WebDAV 存储同一时刻仅允许连接一个服务端进程。
 
 ## 安装
 
@@ -104,7 +104,7 @@ make build
 
 **配置 CLI 并推送报告：**
 
-> **Caution:** `aumbry config set` 会把 Bearer `token` 以明文写入 `$XDG_CONFIG_HOME/aumbry/config.yaml`（默认 `~/.config/aumbry/config.yaml`，权限 `0600`）。在临时 CI 环境中请优先使用 `AUMBRY_SERVER` 与 `AUMBRY_TOKEN` 环境变量。
+> **警告：** `aumbry config set` 会把 Bearer `token` 以明文写入 `$XDG_CONFIG_HOME/aumbry/config.yaml`（默认 `~/.config/aumbry/config.yaml`，权限 `0600`）。在临时 CI 环境中请优先使用 `AUMBRY_SERVER` 与 `AUMBRY_TOKEN` 环境变量。
 
 ```sh
 aumbry config set --server http://127.0.0.1:8080 --token <your-api-token>
@@ -175,9 +175,9 @@ ln -sfn "$(pwd)/skills/aumbry" ~/.agents/skills/aumbry
 
 - **严格单实例运行**：服务端对 SQLite 仅开放 1 条连接，并在进程内存中统计限流（密码解锁与管理员登录每 IP 每分钟 10 次；`/ingest` 与 `/agent/*` 每 IP 每分钟 120 次且同时最多 4 个 `/ingest` 上传请求）。同一 `data_dir` 与 WebDAV 只能启动一个实例。
 - **反向代理与 Cookie**：`trusted_proxies` 默认为空，服务端忽略所有 `X-Forwarded-For` 与 `X-Forwarded-Proto`。配置代理网段后，按从右到左还原真实客户端 IP，并在到达 `X-Forwarded-Proto: https` 时为 Cookie（`aumbry_admin` 7 天、`aumbry_unlocked` 30 天，`HttpOnly`、`SameSite=Lax`）启用 `Secure` 标志。
-- **在线备份与离线 GC**：请使用 `aumbry-server backup --out <path>`（内部执行 `VACUUM INTO`），不要在 WAL 模式下直接复制 `aumbry.db`。执行破坏性 `aumbry-server gc` 前必须先停止服务端；`gc` 仅清理未被引用的 Aumbry 命名规则对象。
+- **在线备份与离线 GC**：请使用 `aumbry-server backup --out <path>`（通过 SQLite `VACUUM INTO` 在线生成一致快照），不要在 WAL 模式下直接复制 `aumbry.db`。执行破坏性 `aumbry-server gc` 前必须先停止服务端；`gc` 仅清理未被引用的 Aumbry 命名规则对象。
 
-## 开发与目录结构
+## 开发与验证
 
 运行格式化检查、静态检查、测试与 Skill 示例校验：
 
@@ -186,25 +186,6 @@ make fmt-check
 CGO_ENABLED=0 go vet ./...
 CGO_ENABLED=0 go test ./...
 make skill-check
-```
-
-仓库目录说明：
-
-```text
-main.go              CLI 入口
-cmd/                 Cobra CLI 子命令
-cmd/server/          HTTP 服务端入口与运维子命令（check-config、backup、verify-storage、gc）
-internal/api/        HTTP 路由、代理可信校验、探针、写入、agent、目录、搜索与管理接口
-internal/auth/       Bearer token 校验、管理员登录与加密签名 Cookie
-internal/cliconfig/  CLI YAML profile 存储与环境变量覆盖
-internal/client/     HTTP 上传与 agent API 客户端
-internal/config/     严格 TOML 与环境变量配置加载
-internal/db/         SQLite WAL 初始化、goose 迁移、VACUUM INTO 备份与目录锁
-internal/storage/    对象存储接口与 WebDAV 适配器
-internal/webembed/   内嵌编译后 Vue 前端资源
-pkg/schema/          共享的 v1.0/v1.1 XML 解析、Schematron/Go 校验与协议规范
-skills/aumbry/       Agent Skill、自动生成标签参考与 5 份示例报告
-web/                 Vue 3 + TypeScript + Vite 阅读器与管理控制台
 ```
 
 ## 许可证

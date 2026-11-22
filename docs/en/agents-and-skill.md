@@ -26,7 +26,7 @@ Link or copy `skills/aumbry` into your agent runner's skills directory (for exam
 
 ## Provision CLI credentials for an agent
 
-Give each distinct agent role its own Bearer token inside `api_tokens` on the server so `created_by` token digests scope `aumbry unpublish` and `aumbry delete` per token (see [Server configuration reference](configuration.md)). Remember that API tokens authenticate against `/api/v1/ingest` and `/api/v1/agent/*`; they have no relationship to directory passwords.
+Give each distinct agent role its own Bearer token inside `api_tokens` on the server so item ownership for `aumbry unpublish` and `aumbry delete` is scoped per token (see [Server configuration reference](configuration.md)). Remember that API tokens authenticate against `/api/v1/ingest` and `/api/v1/agent/*`; they have no relationship to directory passwords.
 
 Choose a directory-default strategy based on the agent's scope:
 
