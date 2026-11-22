@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { Library } from 'lucide-vue-next'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+
+const route = useRoute()
 </script>
 
 <template>
@@ -14,7 +16,8 @@ import ThemeToggle from '@/components/ThemeToggle.vue'
       <ThemeToggle class="ml-auto" />
     </header>
     <main class="py-8">
-      <RouterView />
+      <!-- keyed by path: moving to another directory starts a fresh page, so a half-typed search of the old one cannot land in the new URL -->
+      <RouterView :key="route.path" />
     </main>
   </div>
 </template>

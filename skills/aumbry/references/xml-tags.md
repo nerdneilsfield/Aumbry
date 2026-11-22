@@ -112,7 +112,7 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `<explain>` | quiz | - | Optional explanation shown after quiz submission (0-1 per quiz; indexed). |
 | `<next-steps>` | body, section, stage | - | children: 1..5 — In-document action buttons targeting anchored sections/stages/figures/equations/quizzes/refs. |
 | `<tldr>` | body, section, stage | `title`, `placement=[top|bottom]` | children: 1..n — Key takeaways card (direct child of body/section/stage only; at most 1 per container). |
-| `<point>` | tldr | - | <= 300 runes — Single takeaway point (1-7 per tldr, non-empty, <= 300 Unicode runes). |
+| `<point>` | tldr | - | <= 300 runes — Single takeaway point (1-7 per tldr, non-empty, one line, <= 300 Unicode runes). |
 | `<verdict>` | tldr | - | <= 300 runes — Optional summary verdict (0-1 per tldr, non-empty, <= 300 Unicode runes). |
 | `<news-item>` | body, section, stage | `title*`, `source`, `url`, `published`, `importance=[high|normal]`, `detail-id` | children: 0..1; <= 600 runes — News digest entry with inline summary (<= 600 Unicode runes) and optional expandable <detail>. |
 | `<detail>` | news-item | - | <= 8192 B — Optional inline expandable detail Markdown (<= 8 KB; indexed). |
@@ -233,7 +233,7 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `INVALID_DOI` | paper-card@doi or ref@doi fails ^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$ |
 | `INVALID_STAGES` | nested <stages> inside <stage>, missing stages/stage @id, missing stage @title, invalid @gated, or group outside 1..8 <stage> |
 | `INVALID_QUIZ` | missing @id, question count != 1, option outside 2..8, zero correct="true" options, >1 explain, or child XML tags inside fields |
-| `INVALID_TLDR` | <tldr> outside body/section/stage, >1 in same container, bad placement, 0 or >7 <point>, >1 <verdict>, or >300 Unicode runes |
+| `INVALID_TLDR` | <tldr> outside body/section/stage, >1 in same container, bad placement, 0 or >7 <point>, >1 <verdict>, a <point> that spans several lines, or >300 Unicode runes |
 | `INVALID_NEWS` | <news-item> missing title, invalid importance, >1 <detail>, summary >600 runes, or <detail> >8 KB |
 | `INVALID_CHECK` | <checklist> empty or <check status> not in done|todo|blocked|risk |
 | `INVALID_SEARCH_LOG` | <search-log> missing <query>, >1 <criteria>/<stop>, or non-integer negative hits/kept |

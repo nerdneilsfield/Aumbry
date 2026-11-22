@@ -21,7 +21,7 @@ const md = new MarkdownIt({
 })
 // The typeset formula carries its TeX source in data-tex (Markdown export reads it back; the KaTeX DOM cannot be turned into TeX).
 const katexWithSource = { renderToString: (tex: string, options: object) => `<span data-tex="${md.utils.escapeHtml(tex)}">${katex.renderToString(tex, options)}</span>` }
-md.use(texmath, { engine: katexWithSource, delimiters: 'dollars', katexOptions: { throwOnError: false } })
+md.use(texmath, { engine: katexWithSource, delimiters: 'dollars', katexOptions: { throwOnError: false, trust: false, strict: 'ignore', maxExpand: 1000, maxSize: 30 } })
 md.use(footnote)
 md.use(taskLists, { enabled: false })
 md.use(sub)

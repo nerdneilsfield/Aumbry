@@ -27,7 +27,20 @@ const SKIP = '[class~="print:hidden"], [data-export-skip], [data-score], button,
 const isElement = (n: Node): n is Element => n.nodeType === 1
 
 function createService(): TurndownService {
-  const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '*', hr: '---' })
+  const td = new TurndownService({
+    headingStyle: 'atx',
+    codeBlockStyle: 'fenced',
+    bulletListMarker: '-',
+    emDelimiter: '*',
+    hr: '---',
+    // turndown checks "blank" (no text, no image) before any rule: a chart without caption holds only a canvas or a
+    // placeholder, so it would vanish. Blocks that carry their own Markdown are written even when blank.
+    blankReplacement: (_content, n) => {
+      const md = isElement(n) ? n.getAttribute('data-export-md') : null
+      if (md) return `\n\n${md}\n\n`
+      return (n as Node & { isBlock?: boolean }).isBlock ? '\n\n' : ''
+    },
+  })
   td.use(gfm)
   // controls and decoration. A rule, not td.remove(): turndown tries its built-in rules (p, a, h2 ...) before its remove list.
   // Added first, so it has the lowest priority among our rules (turndown: the rule added last wins): a button that declares its

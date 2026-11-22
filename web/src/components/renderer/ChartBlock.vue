@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, useTemplateRef, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { useIntersectionObserver } from '@vueuse/core'
 import { TriangleAlert } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
@@ -13,7 +13,11 @@ const { isDark } = useTheme()
 
 // Lazy chunk: echarts + vue-echarts load only when a <chart> scrolls near the viewport.
 const ChartCanvas = defineAsyncComponent({
-  loader: () => import('./ChartCanvas.vue'),
+  loader: () =>
+    import('./ChartCanvas.vue').catch((e: unknown) => {
+      ready?.() // a chunk that never loads must not keep printing waiting
+      throw e
+    }),
   onError: (_e, _retry, fail) => fail(),
 })
 
@@ -43,6 +47,8 @@ watch([visible, spec], ([v, s]) => {
   trackRender(new Promise<void>((resolve) => (ready = resolve)))
 }, { immediate: true })
 const onReady = () => ready?.()
+// a chart that is unmounted (its tab closes) before it finishes drawing never reports ready
+onBeforeUnmount(onReady)
 </script>
 
 <template>

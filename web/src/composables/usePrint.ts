@@ -74,8 +74,13 @@ async function settle() {
 /** Expands everything, waits for the lazy figures, then opens the browser's print dialog (`afterprint` collapses it again). */
 export async function printDocument() {
   beginPrint()
-  await settle()
-  window.print()
+  try {
+    await settle()
+    window.print()
+  } catch (e) {
+    endPrint() // no afterprint will follow a print() that threw
+    throw e
+  }
 }
 
 /** Runs `fn` while the whole document is expanded and mounted (no waiting for Mermaid / charts), then puts the page back. */

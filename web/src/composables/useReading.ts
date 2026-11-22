@@ -187,7 +187,11 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   const fps = reactive(new Map<string, string>())
   const fpReady = shallowRef(false)
   onMounted(async () => {
-    await Promise.all([...quizzes.value].map(async ([k, q]) => fps.set(k, await quizFingerprint(q))))
+    try {
+      await Promise.all([...quizzes.value].map(async ([k, q]) => fps.set(k, await quizFingerprint(q))))
+    } catch {
+      // the hash chunk did not load: answers are not restored, but checking an answer computes the fingerprint again
+    }
     // a quiz that changed since the answer was stored loses that answer only
     for (const [k, v] of Object.entries(state.value.quizzes)) if (fps.has(k) && fps.get(k) !== v.fp) delete state.value.quizzes[k]
     fpReady.value = true
