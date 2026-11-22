@@ -15,7 +15,7 @@ Aumbry 文档采用基于 UTF-8 的 XML 格式，由统一的协议校验规则�
 | `<collapse>` 允许位置与子元素 | 可放在 `<body>` / `<section>` / `<stage>` 下，容纳各类叶子块与 `<search-log>` |
 | `<figure>` 资产收集范围 | 文档内任意层级的带 `src` 属性 `<figure>` |
 | 全文块数量上限 | `chart <= 10`、`mermaid <= 10`、`stages <= 8`、`stage <= 40`、`section <= 3 层` |
-| 统一锚点与跳转 | `section`、`stages`、`stage`、`quiz`、`figure`、`equation`、`ref` 共用全局 `^[a-z0-9-]{1,32}$` ID；`<next-steps>` 跳转使用 `#s-` / `#stage-` / `#fig-` / `#eq-` / `#ref-` |
+| 统一锚点与跳转 | `section`、`stages`、`stage`、`quiz`、`figure`、`equation`、`ref` 共用全局 `^[a-z0-9-]{1,32}$` ID；`<next-steps>` 跳转使用 `#s-` / `#stages-` / `#stage-` / `#quiz-` / `#fig-` / `#eq-` / `#ref-` |
 | Markdown 渲染能力 | CommonMark（禁用原始 HTML）、KaTeX `$` 公式、代码语法高亮，并支持文档间隔离的脚注、只读任务列表、下标（`~`）与上标（`^`） |
 
 ## 查看实时规范与本地校验

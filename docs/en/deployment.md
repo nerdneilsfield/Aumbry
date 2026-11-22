@@ -297,7 +297,7 @@ When an `ingest` request fails after uploading XML to WebDAV (or when an update 
 
 ### Rebuild the search index (`reindex`)
 
-Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from WebDAV, recomputes the indexed text with the rules of the installed version, and rewrites all three, so the search paths stay consistent.
+Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on the title, summary, tags, and `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from WebDAV, recomputes the indexed text with the rules of the installed version, and rewrites all three, so the search paths stay consistent.
 
 Run `reindex` in either of these cases:
 
@@ -320,7 +320,7 @@ A writing run takes the same `aumbry.lock` as `gc`, so stop `aumbry-server` firs
    dry-run: would reindex 12 of 12 items (3 with changed plain_text), 0 failed
    ```
 
-   `with changed plain_text` counts the items whose stored `plain_text` differs from the recomputed text. A real run rewrites the `items_fts` row of every item it can read, whether or not `plain_text` changed.
+   `with changed plain_text` counts the items whose stored `plain_text` differs from the recomputed text. A real run rewrites the `items_fts` and `items_fts_cjk` rows of every item it can read, whether or not `plain_text` changed.
 
 2. Stop `aumbry-server`. If the server still holds `aumbry.lock`, a writing run exits at once:
 

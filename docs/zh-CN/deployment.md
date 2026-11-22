@@ -297,7 +297,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 重建搜索索引（`reindex`）
 
-2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从 WebDAV 重新读取每个条目已存储的 XML，按当前版本的规则重新计算索引文本，并同时重写这三处，使各条检索路径保持一致。
+2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对标题、摘要、标签和 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从 WebDAV 重新读取每个条目已存储的 XML，按当前版本的规则重新计算索引文本，并同时重写这三处，使各条检索路径保持一致。
 
 出现下列情况之一时运行 `reindex`：
 
@@ -320,7 +320,7 @@ storage OK: verified 1 xml and 0 asset objects
    dry-run: would reindex 12 of 12 items (3 with changed plain_text), 0 failed
    ```
 
-   `with changed plain_text` 统计已存储的 `plain_text` 与重新计算结果不同的条目数。正式运行会重写每个可读条目的 `items_fts` 行，不论 `plain_text` 是否变化。
+   `with changed plain_text` 统计已存储的 `plain_text` 与重新计算结果不同的条目数。正式运行会重写每个可读条目的 `items_fts` 与 `items_fts_cjk` 行，不论 `plain_text` 是否变化。
 
 2. 停止 `aumbry-server`。若服务仍持有 `aumbry.lock`，写入式运行会立即退出：
 

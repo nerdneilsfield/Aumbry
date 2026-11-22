@@ -15,7 +15,7 @@ Every document declares `<document version="1.1">` at the root. Aumbry accepts n
 | `<collapse>` children | Any leaf block plus `<search-log>`, inside `<body>`, `<section>`, or `<stage>` |
 | `<figure>` asset scope | Any descendant `<figure>` with a `src` attribute |
 | Document-wide block caps | `chart <= 10`, `mermaid <= 10`, `stages <= 8`, `stage <= 40`, `sections <= 3 levels` |
-| Shared anchor IDs & links | Single document-wide `^[a-z0-9-]{1,32}$` namespace across `section`, `stages`, `stage`, `quiz`, `figure`, `equation`, `ref`; `<next-steps>` targets use `#s-`/`#stage-`/`#fig-`/`#eq-`/`#ref-` |
+| Shared anchor IDs & links | Single document-wide `^[a-z0-9-]{1,32}$` namespace across `section`, `stages`, `stage`, `quiz`, `figure`, `equation`, `ref`; `<next-steps>` targets use `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-` |
 | Markdown rendering | CommonMark (raw HTML disabled), KaTeX `$` math, syntax-highlighted code blocks, per-document isolated footnotes, read-only task lists, subscript (`~`), and superscript (`^`) |
 
 ## Inspect the specification and validate locally

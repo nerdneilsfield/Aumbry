@@ -183,7 +183,7 @@ func Spec() ProtocolSpec {
 			{Code: "INVALID_DOI", Trigger: `paper-card@doi or ref@doi fails ^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$`},
 			{Code: "INVALID_STAGES", Trigger: "nested <stages> inside <stage>, missing stages/stage @id, missing stage @title, invalid @gated, or group outside 1..8 <stage>"},
 			{Code: "INVALID_QUIZ", Trigger: "missing @id, question count != 1, option outside 2..8, zero correct=\"true\" options, >1 explain, or child XML tags inside fields"},
-			{Code: "INVALID_TLDR", Trigger: "<tldr> outside body/section/stage, >1 in same container, bad placement, 0 or >7 <point>, >1 <verdict>, or >300 Unicode runes"},
+			{Code: "INVALID_TLDR", Trigger: "<tldr> outside body/section/stage, >1 in same container, bad placement, 0 or >7 <point>, >1 <verdict>, a <point> that spans several lines, or >300 Unicode runes"},
 			{Code: "INVALID_NEWS", Trigger: "<news-item> missing title, invalid importance, >1 <detail>, summary >600 runes, or <detail> >8 KB"},
 			{Code: "INVALID_CHECK", Trigger: "<checklist> empty or <check status> not in done|todo|blocked|risk"},
 			{Code: "INVALID_SEARCH_LOG", Trigger: "<search-log> missing <query>, >1 <criteria>/<stop>, or non-integer negative hits/kept"},
@@ -529,7 +529,7 @@ func buildElementSpecs() []ElementSpec {
 				{Name: "placement", Values: slices.Clone(tldrPlacements), Description: "Display placement (top or bottom)"},
 			},
 		},
-		{Name: "point", Parents: []string{"tldr"}, MaxRunes: maxTLDRRunes, TextMode: "inline-markdown", Description: "Single takeaway point (1-7 per tldr, non-empty, <= 300 Unicode runes)."},
+		{Name: "point", Parents: []string{"tldr"}, MaxRunes: maxTLDRRunes, TextMode: "inline-markdown", Description: "Single takeaway point (1-7 per tldr, non-empty, one line, <= 300 Unicode runes)."},
 		{Name: "verdict", Parents: []string{"tldr"}, MaxRunes: maxTLDRRunes, TextMode: "inline-markdown", Description: "Optional summary verdict (0-1 per tldr, non-empty, <= 300 Unicode runes)."},
 		{
 			Name: "news-item", Parents: []string{"body", "section", "stage"}, Children: []string{"detail"}, MaxChildren: 1, MaxRunes: maxNewsSummaryRunes,

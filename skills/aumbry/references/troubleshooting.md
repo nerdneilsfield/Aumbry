@@ -47,7 +47,7 @@
 | `INVALID_DOI` | `doi` 不匹配 `^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$` | 仅填裸 DOI（如 `10.48550/arXiv.2611.01234`），去掉 URL 前缀 |
 | `INVALID_STAGES` | `<stages>` 嵌套在 `<stage>` 内、缺 `stages@id`/`stage@id`/`stage@title`、`gated` 非布尔或单组非 1..8 个 `<stage>` | 取消嵌套并补全 ID、title 与数量 |
 | `INVALID_QUIZ` | 缺 `quiz@id`、`<question>` 非 1 个或为空、`<option>` 非 2..8、少于 1 个 `correct="true"` 或 `<explain>` >1/含子标签 | 补齐规范测验结构，题干含特殊文本时包 CDATA |
-| `INVALID_TLDR` | `<tldr>` 不在 `body`/`section`/`stage` 直接子级、同容器 >1 个、`placement` 非 `top/bottom`、`<point>` 非 1..7、`<verdict>` >1/空或内容 >300 runes | 保持每容器 ≤1 个 `<tldr>`、1–7 个非空 `<point>`，每条 ≤300 字符 |
+| `INVALID_TLDR` | `<tldr>` 不在 `body`/`section`/`stage` 直接子级、同容器 >1 个、`placement` 非 `top/bottom`、`<point>` 非 1..7、`<verdict>` >1/空或内容 >300 runes | 保持每容器 ≤1 个 `<tldr>`、1–7 个非空 `<point>`，每条单行且 ≤300 字符 |
 | `INVALID_NEWS` | 缺 `title`、`importance` 非 `high/normal`、摘要 >600 runes、`<detail>` >1 或 >8 KB | 补 `title` 并控制摘要 ≤600 runes、`<detail>` ≤8 KB |
 | `INVALID_CHECK` | 缺 `<check>` 或 `status` 非 `done/todo/blocked/risk` | 设为合法状态之一 |
 | `INVALID_SEARCH_LOG` | 缺 `<query>`、`<criteria>`/`<stop>` >1 或 `hits`/`kept`（若存在）非非负整数 | 提供 ≥1 条 `<query>` 与合法计数 |
