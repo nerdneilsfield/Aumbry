@@ -86,7 +86,7 @@
 | K 每日新闻简报 | 各新闻 Agent | `report` | `news:<YYYY-MM-DD>` | `tldr`（全文 + 每个主题）、`news-item`（可带 `detail-id` 指向详情）、`metrics`、`timeline`、`sources` |
 | L 新闻详情 | 各新闻 Agent | `post` | `news:<YYYY-MM-DD>:<slug>` | `tldr`、`section`、`quote`、`timeline`、`claim`、`sources`/`references`；`related-ids` 指回简报 |
 
-`external_key` 沿用 v1.0 的 trim 语义（v1.0 已接受的键升级后仍可继续用于更新），v1.1 只额外要求 trim 后为 1–200 个字符且不含控制字符；不满足（含只传空白）→ `400 invalid_request`；约定见上表，不是服务端强制格式。
+`external_key` 先 trim，再要求为 1–200 个字符且不含控制字符；不满足（含只传空白）→ `400 invalid_request`；约定见上表，不是服务端强制格式。
 
 ### 2.3 场景 A：论文精读的逐轮增量发布
 
@@ -225,17 +225,14 @@ password = "..."
 不同的报告结构不同：精读、对比、日报、新闻、复现记录、研究报告、一页结论……**协议只提供可自由组合的块，不规定“某类文档必须长什么样”。**
 
 * **所有 v1.1 新标签都是可选积木**：校验只检查“结构合法与安全”（`id` 唯一、URL 白名单、大小与数量上限、容器嵌套规则、必填属性），**不要求**任何固定章节、固定标题、固定顺序或最少数量；`tldr`、`stages`、`metrics`、`claim` 等没有一个是必填的。
-* **放宽 v1.0 的容器限制（仅 `version="1.1"`）**：`body`、`section`、`stage` 内都可以直接放任意块级标签（不必先包一层 `section`；只含一个 `<md>` 的 `body` 是合法文档）；`section` 可嵌套至 3 层（超过 → `SECTION_TOO_DEEP`），章节标题是自由文本。v1.0 文档仍按 v1.0 原规则校验。下文 6.2 表“位置”列写作“`section` 内”的，一律读作“`body`/`section`/`stage` 内”。
+* **容器不要求先包一层 `section`**：`body`、`section`、`stage` 内都可以直接放任意块级标签（不必先包一层 `section`；只含一个 `<md>` 的 `body` 是合法文档）；`section` 可嵌套至 3 层（超过 → `SECTION_TOO_DEEP`），章节标题是自由文本。下文 6.2 表“位置”列写作“`section` 内”的，一律读作“`body`/`section`/`stage` 内”。
 * **场景表（2.2）与 `skills/aumbry/assets/examples/` 只是“这类内容常用哪些积木”的参考**，不是必填结构；用户的要求与内容本身优先于示例。服务端不引入“场景类型”字段，`type` 仍只有 `report`/`post`，也不按场景分流。
 * **不用的积木不要硬塞**：没有可量化的指标就不放 `metrics`，内容很短就不加 `tldr`，没有分阶段就不用 `stages`。
 * 逃生口：`<md>` 可承载任意 Markdown（含 6.4 的锚点链接、脚注、任务列表），表达不了的结构先用 `<md>`，而不是新增标签。
 
-### 6.1 版本与兼容
+### 6.1 文档版本
 
-* `<document version>` 接受 `1.0` 与 `1.1`。v1.0 文档在 v1.1 服务端上**原样可用**。
-* 本章新增的标签与属性（含 `<figure id/alt>`、`<cell tag>`、`<paper-card>`/`<repo-card>` 的新增属性）**只允许出现在 `version="1.1"` 的文档中**；在 `1.0` 文档里使用 → `TAG_REQUIRES_1_1`，提示把版本改为 `1.1`。这样旧技能/旧示例写出的文档不会悄悄混用新标签。
-* 其余校验规则、错误结构、CLI/服务端共用 `pkg/schema` 的约定不变。
-* **兼容边界**：已入库文档保持可读，索引无需重建；重新上传的 `version="1.0"` 文档按“v1.0 规则 + 新标签/新属性门控”校验，因此可能拒绝 v1.0 服务端当年宽松接受的个别用法（如 1.0 文档里带 `alt` 的 `<figure>`），错误带 `hint` 提示把 `version` 改为 `1.1`，这是有意取舍。6.5 的索引文本投影只对 `version="1.1"` 的新入库文档生效。**反向**：v1.1 CLI 向 v1.0 服务端推 `version="1.1"` 文档，会被其 `UNSUPPORTED_VERSION` 拒绝（HTTP 422，不写对象与数据库），CLI 提示升级服务端。
+文档版本固定为 `1.1`：`<document version>` 缺失或取其他值 → `UNSUPPORTED_VERSION`（HTTP 422），`hint` 说明只支持 `1.1`。
 
 ### 6.2 新增标签一览
 
@@ -268,7 +265,7 @@ password = "..."
 
 **既有标签的 v1.1 扩展属性**：`<paper-card>` 增加可选 `venue`、`doi`、`code-url`、`read-depth`（`full`/`abstract`/`snippet`，对应 `paper-search`/`research-report` 要求标明“全文精读 / 仅读摘要”）；`<repo-card>` 增加可选 `license`、`commit`。`code-url` 只允许 `http/https`；`doi` **不是 URL**，按 `^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$` 校验（失败 `INVALID_DOI`），渲染时拼成 `https://doi.org/<doi>`。
 
-**容器与允许的子块（校验器与示例共用同一份定义）**：`body`、`section`、`stage` 内可放全部块级标签（见 6.0）；`collapse`、`tab`、`step` 内只允许叶子内容块：`md`、`figure`、`callout`、`claim`、`equation`、`mermaid`、`chart`、`code-block`、`quote`（`collapse` 沿用 v1.0 时只含 `md`/`figure`，其余在 `version="1.1"` 下放开）。`tabs` 只含 `tab`，`steps` 只含 `step`，`figure-group` 只含 `figure`。`stages` 只含 `stage`；一份文档可有多组 `stages`（至多 8 组、全文 `stage` 合计至多 40 个，超出 → `TOO_MANY_BLOCKS`），每个 `stages` 必须有 `id`；`stages` 不能出现在任何 `stage` 的后代中（即不嵌套），每组 1–8 个 `stage`，否则 `INVALID_STAGES`；`stage` 内可放 `section` 允许的全部块级标签以及 `section`；`stages`、`stage`、`quiz` 的 `id` 与 `#stages-<id>`/`#stage-<id>` 锚点遵守同一套“文档内全局唯一”规则（不同组里的 `stage` 也不能重名）。`tldr` 只能是 `body`、`section`、`stage` 的子元素：`body` 级至多 1 个，`section`/`stage` 级各至多 1 个（否则 `INVALID_TLDR`）；
+**容器与允许的子块（校验器与示例共用同一份定义）**：`body`、`section`、`stage` 内可放全部块级标签（见 6.0）；`collapse`、`tab`、`step` 内只允许叶子内容块：`md`、`figure`、`callout`、`claim`、`equation`、`mermaid`、`chart`、`code-block`、`quote`。`tabs` 只含 `tab`，`steps` 只含 `step`，`figure-group` 只含 `figure`。`stages` 只含 `stage`；一份文档可有多组 `stages`（至多 8 组、全文 `stage` 合计至多 40 个，超出 → `TOO_MANY_BLOCKS`），每个 `stages` 必须有 `id`；`stages` 不能出现在任何 `stage` 的后代中（即不嵌套），每组 1–8 个 `stage`，否则 `INVALID_STAGES`；`stage` 内可放 `section` 允许的全部块级标签以及 `section`；`stages`、`stage`、`quiz` 的 `id` 与 `#stages-<id>`/`#stage-<id>` 锚点遵守同一套“文档内全局唯一”规则（不同组里的 `stage` 也不能重名）。`tldr` 只能是 `body`、`section`、`stage` 的子元素：`body` 级至多 1 个，`section`/`stage` 级各至多 1 个（否则 `INVALID_TLDR`）；
 
 `<figure>` 增加可选属性 `id`（用于 `#fig-<id>` 锚点）与 `alt`（无障碍；建议填写；缺省时回退为 `caption`）。**图片收集、路径校验与重写覆盖所有可含 `<figure>` 的容器**（`section`、`collapse`、`tab`、`step`、`figure-group`），实现上以 `//figure[@src]` 为准，不再按父子路径枚举。`<equation>`、`<ref>` 的 `id` 同理生成 `#eq-<id>`、`#ref-<id>`。`<equation>` 与 `<mermaid>` 在 Go 侧只校验非空与长度（空 → `INVALID_EQUATION`/`INVALID_MERMAID`，超长同码）。**`<sources>` 与 `<references>` 的分工**：`<sources>` 是日报/简报末尾的外链汇总，不被正文引用；`<references>` 是学术正文的参考文献，带 `id` 并被 `#ref-<id>` 锚点引用。`id` 取值限 `[a-z0-9-]{1,32}`，**文档内全局唯一**，重复 → `DUPLICATE_ID`。
 
@@ -316,8 +313,8 @@ password = "..."
 ### 6.5 全文索引与安全
 
 * **进入索引**：既有文本与 `title/caption/name/authors` 属性；新增的 `claim` 正文、`metric` 的 `label/value`、`term` 的 `name` 与释义、`ref` 的 `title/authors`、`step/tab/event/stage` 的 `title`、`quiz` 的 `question`/`explain`（选项与正误不入索引）、`search-log` 的 `query`、`criteria`、`gap` 与 `excluded`（含属性 `reason`）、`quote` 的 `source`/`author`、`check` 的 `detail`、`tldr` 的 `point`/`verdict`、`news-item` 的 `title`/`source` 与正文（`<detail>` 内文也入索引）。属性值需要在文本投影里显式收入，沿用“只取元素文本”的规则不会命中；`next-steps/option` 的按钮文字不入索引。**搜索只定位到文章，不定位到阶段**：命中第二组第三阶段的词，点击结果只打开文章（所有阶段内容仍可被检索）；要定位到某阶段靠已知锚点的链接。
-* **不进入索引**：`<equation>`、`<mermaid>`、`<chart>`、`<code-block>` 的源文本（只索引 `caption`/`file`），避免 LaTeX/JSON/代码噪声污染搜索。注意 v1.0 的 `PlainText()` 用的是全量 `//text()`，需要改为排除这些子树；已入库的 v1.0 文档不含这些标签，无需重建索引，规则变化后的重建见 10.5 `reindex`。
-* **版本边界**：本节的文本投影只对 `version="1.1"` 的新入库文档生效；v1.0 已入库文档沿用原投影，不要求重建索引（6.1）。长词（FTS）与 2 字短词（`LIKE`）都要有验收（见 13，#81）。
+* **不进入索引**：`<equation>`、`<mermaid>`、`<chart>`、`<code-block>` 的源文本（只索引 `caption`/`file`），避免 LaTeX/JSON/代码噪声污染搜索。`PlainText()` 因此不能取全量 `//text()`，而要遍历元素树并跳过这些子树；规则变化后已入库条目的重建见 10.5 `reindex`。
+* **验收**：长词（FTS）与 2 字短词（`LIKE`）都要有验收（见 13，#81）。
 * **安全**：所有新标签的文本经 Vue 模板转义渲染；Chart 只吃 6.3 的结构化数据；`url`/`code-url` 链接只允许 `http/https`；所有新增 `<md>` 型正文沿用现有的 markdown-it + DOMPurify 流水线；资源大小沿用 v1.0 的上限。
 * **渲染层专项防护（新标签引入的新攻击面）**：Mermaid 使用 `securityLevel:"strict"`，且生成的 SVG 再经 DOMPurify（SVG profile）后才挂载；ECharts 的 tooltip 一律使用纯文本渲染（`renderMode:"richText"`），不走 HTML 字符串拼接，防止恶意 `series[].name`/`categories` 触发 XSS；每篇文档最多 10 个 `<mermaid>`、10 个 `<chart>`（超出 → `TOO_MANY_BLOCKS`），防止渲染卡死主线程。
 
@@ -384,10 +381,9 @@ password = "..."
 ### 6.9 对现有 `pkg/schema` 的改动（实现说明）
 
 * **现状**：`protocol.sch` 的块级规则几乎都写死为 `/document/body/section/...` 或 `/document/body/section/collapse/...`（`containers`、`leaves`、`blocks`、`compare-table`、`sources`），Go 侧的 `figureXPath`、`urlXPath` 也一样，且 `urlXPath` 只覆盖 `paper-card`/`repo-card`/`source`。按 6.0 放宽容器后，原样保留这些路径会**静默漏检**（例如 `<compare-table>` 放进 `body` 或 `stage` 后列数检查失效）。
-* **做法**：块级规则的 `context` 改为按元素名匹配（`//compare-table`、`//paper-card`、`//figure` 等）；容器关系单独成组并按版本隔离：`/document[@version='1.0']` 下保持现有容器规则，`/document[@version='1.1']` 下用新规则。Go 侧 `figureXPath` 改为 `//figure[@src]`，`urlXPath` 扩到 `ref`、`quote`、`news-item` 的 `url` 与 `paper-card/@code-url`，`checkURLs` 不再硬编码只读 `url` 属性。
-* **版本门控不重复报错**：`1.0` 容器规则的 `UNKNOWN_TAG` 要排除 1.1 保留标签名，使一个标签只报一条 `TAG_REQUIRES_1_1`；v1.0 规则本来不拦多余属性，新属性（`figure@id/alt`、`cell@tag`、`paper-card@venue|doi|code-url|read-depth`、`repo-card@license|commit`、`section@id`、`steps@interactive`、`ref@read-depth` 等）要在 `1.0` 文档里显式拦截。
+* **做法**：块级规则的 `context` 改为按元素名匹配（`//compare-table`、`//paper-card`、`//figure` 等）；容器关系单独成组，按 6.0 的新规则写。Go 侧 `figureXPath` 改为 `//figure[@src]`，`urlXPath` 扩到 `ref`、`quote`、`news-item` 的 `url` 与 `paper-card/@code-url`，`checkURLs` 不再硬编码只读 `url` 属性。
 * **深度与性能**：`count(ancestor::section) <= 3` 一类谓词与 `//` 轴在 helium 的 Schematron 上的性能是**推断未验证**，实现前用单测和最大尺寸文档验证；若不满足，深度检查移到 Go 侧。
-* **`aumbry schema`**：Markdown 与 JSON 共用同一张**按版本区分的规则表**（允许的父子关系、数量上下限、属性、位置例外、错误码），skill 参考文档与校验器同源，避免漂移。
+* **`aumbry schema`**：Markdown 与 JSON 共用同一张规则表（允许的父子关系、数量上下限、属性、位置例外、错误码），skill 参考文档与校验器同源，避免漂移。
 
 ---
 
@@ -400,7 +396,7 @@ password = "..."
 * 输出 JSON 新增 `full_url`（由 **CLI** 用当前 profile 的 `server` 与服务端返回的 `url` 拼接，服务端不返回）、`draft`（布尔，即是否使用了 `--draft`）与 `published`。其余字段不变。
 * 新增 `--create-only`：服务端 ingest 新增可选表单字段 `create_only=1`，**由服务端原子裁决**：`external_key` 已存在 → `409 key_exists`；两个请求并发创建同一个新键时，由数据库唯一约束决出唯一赢家，输家得到 `409 key_exists`（可能已上传的孤儿对象留给 `gc`）；`created_by` 随首次 INSERT 一并写入。不能由 CLI 先查后推（会有竞态）。与 `--id`（`item_id`）同时出现 → 参数错误。
 * 新增 `--dry-run`：本地完整校验，并调用 `GET /api/v1/agent/dirs` 确认服务地址、Token 与目录 ID 有效；不上传、不写库、不写存储。
-* 服务端 `POST /api/v1/ingest` 只**新增**两个可选表单字段 `draft`、`create_only`；不带它们的请求（包括 v1.0 的旧 CLI）行为完全不变。新 CLI 使用 `--draft`/`--create-only` 时，先调用 `GET /api/v1/agent/dirs` 确认服务端是 v1.1（旧服务端返回 404），否则在上传前失败，避免旧服务端忽略未知字段而悄悄覆盖。
+* 服务端 `POST /api/v1/ingest` 只**新增**两个可选表单字段 `draft`、`create_only`；不带它们的请求行为不变。
 
 ### 7.2 `aumbry dirs`
 
@@ -415,9 +411,9 @@ password = "..."
 
 ### 7.4 `aumbry validate`
 
-输出结构不变；新增错误码：`TAG_REQUIRES_1_1`、`DUPLICATE_ID`、`INVALID_CHART`（带 JSON 路径）、`INVALID_EQUATION`、`INVALID_MERMAID`（仅检查非空与长度，语法无法在 Go 侧校验）、`INVALID_METRIC`、`INVALID_DOI`、`TOO_MANY_BLOCKS`、`DUPLICATE_TAB`；v1.1 又新增 `SECTION_TOO_DEEP`、`INVALID_STAGES`、`INVALID_QUIZ`、`INVALID_TARGET`、`INVALID_TLDR`、`INVALID_NEWS`、`INVALID_CHECK`（`status` 非法）、`INVALID_SEARCH_LOG`（缺 `<query>`）、`INVALID_DATE`（`timeline` 的 `date`）、`INVALID_CODE_BLOCK`（超 32 KB 等）。`INVALID_METRIC` 的触发条件是 `label`/`value` 为空或一组超过 12 个 `<metric>`；`TOO_MANY_BLOCKS` 只用于全文级上限（`mermaid`/`chart` 各 10、`stages` 8 组、`stage` 合计 40）。`TAG_REQUIRES_1_1` 与旧容器的 `UNKNOWN_TAG` 不重复报告（见 6.9）。
+输出结构不变；新增错误码：`DUPLICATE_ID`、`INVALID_CHART`（带 JSON 路径）、`INVALID_EQUATION`、`INVALID_MERMAID`（仅检查非空与长度，语法无法在 Go 侧校验）、`INVALID_METRIC`、`INVALID_DOI`、`TOO_MANY_BLOCKS`、`DUPLICATE_TAB`；v1.1 又新增 `SECTION_TOO_DEEP`、`INVALID_STAGES`、`INVALID_QUIZ`、`INVALID_TARGET`、`INVALID_TLDR`、`INVALID_NEWS`、`INVALID_CHECK`（`status` 非法）、`INVALID_SEARCH_LOG`（缺 `<query>`）、`INVALID_DATE`（`timeline` 的 `date`）、`INVALID_CODE_BLOCK`（超 32 KB 等）。`INVALID_METRIC` 的触发条件是 `label`/`value` 为空或一组超过 12 个 `<metric>`；`TOO_MANY_BLOCKS` 只用于全文级上限（`mermaid`/`chart` 各 10、`stages` 8 组、`stage` 合计 40）。
 
-**自修复提示**：`ValidationError` 增加可选字段 `hint`（一句可直接照改的修法）。大模型最常见的错误是在 `<md>`、`<callout>`、`<mermaid>`、`<chart>` 里忘记包 `<![CDATA[…]]>` 而直接写 `<`、`&`、泛型尖括号，底层解析器只会报“标签不匹配/意外 EOF”。当 `INVALID_XML` 发生在这些元素内部时，`hint` 为“把正文放进 `<![CDATA[ … ]]>`”；`TAG_REQUIRES_1_1`、`INVALID_CHART` 等也附带 `hint`。
+**自修复提示**：`ValidationError` 增加可选字段 `hint`（一句可直接照改的修法）。大模型最常见的错误是在 `<md>`、`<callout>`、`<mermaid>`、`<chart>` 里忘记包 `<![CDATA[…]]>` 而直接写 `<`、`&`、泛型尖括号，底层解析器只会报“标签不匹配/意外 EOF”。当 `INVALID_XML` 发生在这些元素内部时，`hint` 为“把正文放进 `<![CDATA[ … ]]>`”；`UNSUPPORTED_VERSION`、`INVALID_CHART` 等也附带 `hint`。
 
 ### 7.5 `aumbry list` / `unpublish` / `delete`
 
@@ -426,11 +422,11 @@ password = "..."
 * 服务端新增（均为 **API Token 鉴权**）：`GET /api/v1/agent/items`（参数 `key`（精确匹配）、`q`（**只匹配 `title` 与 `external_key`**，不搜正文与摘要，避免 Token 借全文搜索探测别的 Agent 的草稿内容）、`dir`、`limit`、`offset`；返回 `id`、`type`、`title`、`date`、`external_key`、`url`、`dirs`，**不返回 XML 正文**）、`DELETE /api/v1/agent/items/{id}/mounts`（**只撤回**：清空该条目的全部挂载；不提供“替换为任意目录列表”，那留给管理员接口）、`DELETE /api/v1/agent/items/{id}`。`list` 的每项带 `owned`（是否由当前 Token 创建）。
 * CLI：`aumbry list [--key K] [--q Q] [--dir D]`；`aumbry unpublish <id>`（清空挂载，回到草稿）；`aumbry delete <id> --yes`（无 `--yes` 拒绝执行）。
 * **所有权：Agent 只能下线或删除自己写的条目。** 条目首次创建时，服务端记录创建它的 API Token 的指纹（**完整的 `SHA-256(规范化 token)` 十六进制串**，不存明文 Token；认证成功时由鉴权层返回匹配到的规范化 Token 的摘要，不得另对 `Authorization` 头原文做摘要），保存在新增列 `items.created_by`；之后的更新不改该列。`DELETE …/mounts` 与 `DELETE …` 只在条目的 `created_by` 等于当前 Token 指纹时执行，否则 `403 not_owner`。
-* v1.0 已有的条目没有所有者（`created_by` 为 `NULL`），Agent 无法下线或删除它们，只能由管理员处理；管理员接口不受所有权限制。
+* `created_by` 为 `NULL` 的条目没有所有者，Agent 无法下线或删除它们，只能由管理员处理；管理员接口不受所有权限制。
 * 同一个 Token 被多个 Agent 共用时视为同一所有者；要让各 Agent 互相不能动对方的条目，给每个 Agent 配一个独立 Token（`AUMBRY_API_TOKENS` 本就支持多个）。轮换（更换）Token 字符串后，旧条目的所有权随之失效，需管理员处理。
-* 所有权**只约束下线与删除**，不改变 v1.0 的 `push` 语义：用同一个 `external_key` 推送仍可更新任何条目的内容（是否把所有权扩展到内容覆盖见 14.2）。
+* 所有权**只约束下线与删除**，不改变 `push` 的 upsert 语义：用同一个 `external_key` 推送仍可更新任何条目的内容（是否把所有权扩展到内容覆盖见 14.2）。
 * **`unpublish` 的保证范围**：清除挂载，使新访客的条目与正文请求返回 403。它**不保证**撤回已被浏览器缓存的图片（`Cache-Control: private, max-age=86400`，最多一天），也不影响被另一篇仍可访问的文章共用的同哈希图片。
-* 数据库迁移：新增一个 goose 迁移（`ALTER TABLE items ADD COLUMN created_by TEXT`），旧库升级后零数据变动。
+* 数据库迁移：新增一个 goose 迁移（`ALTER TABLE items ADD COLUMN created_by TEXT`），该列可空，不重建表。
 
 ---
 
@@ -567,9 +563,8 @@ SQLite 单连接与内存限流决定了**只能单实例运行**；在 README �
 
 ---
 
-## 11. 非功能与兼容
+## 11. 非功能
 
-* **向后兼容**：升级无需**人工**迁移：goose 自动新增 nullable 列 `items.created_by`（SQLite `ADD COLUMN`，不重建表，旧行为 `NULL`）；v1.0 的 env 配置、数据库、XML 文档、以及不带新字段的旧 CLI 请求继续可用。**唯一的可见变化**：官方镜像不再内置 `AUMBRY_*` 环境变量（见 3.3），直接 `docker run` 的用户需显式传 `AUMBRY_DATA_DIR`（compose 示例已包含）。
 * **性能**：新增前端依赖（Mermaid、ECharts）必须按需动态加载，不得进入首屏 chunk；不含这些标签的文章不加载它们。
 * **依赖原则**：沿用“有成熟开源库就用库，不手写”：配置（go-toml/v2 + 已有的 caarlos0/env）、XFF（chi）、图表（ECharts）、流程图（Mermaid）、Markdown 增强（markdown-it 插件）、JSON Schema 校验、镜像构建（GoReleaser `dockers_v2`）。
 * **构建约束**：`CGO_ENABLED=0` 不变。
@@ -583,8 +578,8 @@ SQLite 单连接与内存限流决定了**只能单实例运行**；在 README �
 | **M1** | 配置文件与 `check-config`、`cobra` 子命令骨架；可信代理；安全响应头（10.3）；写入口限流（10.4）；WebDAV 超时（10.2）；`/readyz`（10.1）；README/`config.example.toml`/compose 更新（含单实例约束 10.7） | – |
 | **M2** | GHCR 镜像（`dockers_v2`、`Dockerfile.release`、workflow）可构建并通过验收 11–14；`backup`/`verify-storage`/`gc`（10.5、10.6）。**正式 `v1.1.0` Release 的压缩包需包含 M4 才完成的 Skill，因此正式发布等 M4 完成**；M2 阶段只发 RC | M1 的子命令骨架 |
 | **M3** | 协议 v1.1 P0 标签（校验 + 渲染 + 索引规则 + 渲染层防护）；`aumbry push --draft/--create-only/--dry-run`；`aumbry dirs`、`list`、`unpublish`、`delete`（含 `items.created_by` 所有权迁移）与对应 `/api/v1/agent/*`；`aumbry schema`；`validate` 的 `hint` | – |
-| **M4** | P1 标签（含 `stages`、`quiz`、`next-steps`、交互式 `steps`、`search-log`、`tldr`、`news-item`）；`skills/aumbry/` 全部内容与五个示例；`make skill-refs`/`skill-check` 与 CI；读者侧 9.1、9.2、9.3（打印）、9.6、9.7 | M3 |
-| **M5（可选）** | P1：6.5.1 中文检索；P2：`series[].err`、9.3 导出 Markdown、9.4 主题、9.5 邻近条目、10.5 `reindex` | M4 |
+| **M4** | P1 标签（含 `stages`、`quiz`、`next-steps`、交互式 `steps`、`search-log`、`tldr`、`news-item`）；`skills/aumbry/` 全部内容与五个示例；`make skill-refs`/`skill-check` 与 CI；读者侧 9.1、9.2、9.3（打印）、9.6、9.7；6.5.1 中文检索（P1） | M3 |
+| **M5（可选）** | P2：`series[].err`、9.3 导出 Markdown、9.4 主题、9.5 邻近条目、10.5 `reindex` | M4 |
 
 M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M3 的协议与 `aumbry schema`。
 
@@ -616,7 +611,7 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 
 **G4 富文本**
 15. 6.6 的示例文档 `aumbry validate` 退出码 0，推送后在阅读页逐项渲染（人工检查清单：claim 徽章、公式、流程图、对比表 `na` 灰底）。
-16. `version="1.0"` 文档中使用 `<claim>` → `validate` 退出码 1，错误码 `TAG_REQUIRES_1_1`；所有 v1.0 既有测试与示例文档仍通过。
+16. `<document version>` 缺失、为 `1.0` 或其他非 `1.1` 的值 → `validate` 退出码 1，错误码 `UNSUPPORTED_VERSION` 且带 `hint`；`POST /api/v1/ingest` 对同样的文档返回 422，不写对象与数据库。
 17. 逐项负例（单测）：重复 `id` → `DUPLICATE_ID`；`<chart>` 含 NaN 或 `series` 长度不一致 → `INVALID_CHART` 且指出 JSON 路径；`<tabs>` 只有 1 个 tab → 校验失败；`<ref url="javascript:…">` → `INVALID_URL`。
 18. 全文搜索：搜索 `<equation>` 内的 LaTeX 片段命中 0 条；搜索 `<claim>` 正文命中该文章。
 19. 含 `<mermaid>` 的文章：首屏网络请求中不含 mermaid 的 chunk；打开该文章才加载（浏览器网络面板检查）。语法错误的 Mermaid 显示源码与错误提示，不让页面白屏。
@@ -643,12 +638,12 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 34. 一篇文档含 11 个 `<mermaid>` → `TOO_MANY_BLOCKS`。
 35. 带恶意 `series[].name`（如 `<img src=x onerror=alert(1)>`）的 `<chart>`，悬停 tooltip 时不执行脚本、以文本显示（jsdom 或浏览器检查）。
 36. `<code-block diff="true">` 的 `+`/`-` 行着色且有复制按钮；`<quote url="javascript:…">` → `INVALID_URL`；`<check status="maybe">` → `INVALID_CHECK`。
-37. 在 `version="1.0"` 文档中使用 `<figure id="a">`、`<cell tag="evidence">` 或 `<paper-card doi="…">` → 均报 `TAG_REQUIRES_1_1`。
+37. 在 `version="1.1"` 的文档中使用 `<figure id="a" alt="…">`、`<cell tag="evidence">`、`<section id="a">`、`<paper-card venue doi code-url read-depth>` 与 `<repo-card license commit>` → 均通过校验（单测逐项覆盖）；非法的 `<cell tag>`、`read-depth` 取值 → `INVALID_ATTR`。
 
 **G5 补充（Agent 命令）**
 38. `aumbry list --key paper:2611.01234` 返回该条目的 `id` 与当前 `dirs`，响应中不含 XML 正文；无 Token → 401。
 39. `aumbry unpublish <id>` 后访客访问该条目为 403、管理员可见、`id` 不变；`aumbry delete <id>`（无 `--yes`）退出码非 0 且不联网；加 `--yes` 后条目与其 `items_fts` 行均删除。
-39a. 所有权：Token A 创建的条目，Token A 执行 `unpublish`/`delete` 成功；Token B 执行 → `403 not_owner` 且条目不变；管理员删除不受限；v1.0 遗留条目（`created_by` 为 `NULL`）对任何 Token 都是 `403 not_owner`；Token A 用同一 `external_key` 更新条目后，`created_by` 仍是创建者。数据库中不出现 Token 明文（单测检查）。
+39a. 所有权：Token A 创建的条目，Token A 执行 `unpublish`/`delete` 成功；Token B 执行 → `403 not_owner` 且条目不变；管理员删除不受限；无所有者的条目（`created_by` 为 `NULL`）对任何 Token 都是 `403 not_owner`；Token A 用同一 `external_key` 更新条目后，`created_by` 仍是创建者。数据库中不出现 Token 明文（单测检查）。
 40. `aumbry push --dry-run`：不写存储与数据库（推送前后对象数与条目数不变）；Token 无效或目录 ID 不存在时退出码非 0。
 41. `aumbry push --create-only --key K`：键已存在 → `409 key_exists` 且内容未被覆盖；两个并发请求同时 `--create-only` 创建同一个新键 → 恰好一个成功、另一个 `409 key_exists`（并发单测，依赖数据库唯一约束而非先查后写）。
 42. 已发布条目执行 `push --draft`：服务端 `409 already_published`，条目内容与挂载均不变；CLI 退出码非 0，并提示改用 `unpublish` 或去掉 `--draft`。
@@ -669,7 +664,7 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 53. 人为删除一个 WebDAV 上的图片对象后 `aumbry-server verify-storage` 列出该缺失项，退出码非 0。
 54. 构造一个无 `item_assets` 引用的资产：`gc --dry-run` 列出它而不删；`gc` 删除其对象与 `assets` 行；仍被引用的资产不受影响；对象已上传但从未进入 `assets` 表的残留同样被列出。服务正在运行时执行不带 `--dry-run` 的 `gc` 会被拒绝或要求显式确认离线（按 10.6 的实现选择，测试断言其一）。
 55. WebDAV 响应挂起超过 30 秒时，`POST /api/v1/ingest` 以 5xx 返回而不是无限阻塞（用延迟响应的测试 WebDAV 服务验证）。
-56. 升级：用 v1.0 构建产生的数据库与对象（固定 fixture，含无 `created_by` 的遗留条目、带受保护目录的树）启动 v1.1：迁移成功，旧条目仍可按原权限访问，`push --key` 更新旧条目成功且 `created_by` 仍为 `NULL`，既有 Cookie 解锁状态不失效。
+56. 迁移：全新数据目录启动后，goose 迁移成功且 `items.created_by` 列存在、可空（单测）；`created_by` 为 `NULL` 的行保持 `NULL`，`push --key` 更新它后 `created_by` 仍为 `NULL`；既有 Cookie 解锁状态不受迁移影响。
 57. 默认配置下，来自任意 TCP 对端、带 `X-Forwarded-For`/`X-Forwarded-Proto` 的请求：登录限流键为对端地址，Cookie 不带 `Secure`；`trusted_proxies` 非空但对端不在其中时同样忽略这些头（覆盖 4.2 的 TCP 对端校验，不依赖 chi 自身行为）。
 
 **G9 分阶段阅读、互动与更多场景**
@@ -678,17 +673,17 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 60. 向已发布条目追加第 4 个 `stage`（同键再 push）：读者此前的阶段进度与 `quiz` 作答保留；改名已有 `stage id` 后，对应进度被忽略而不报错。只调换某道 `quiz` 的选项顺序或改正确答案后，该题的旧作答被清除（指纹不同），阶段进度保留；`localStorage` 里是损坏的 JSON 时页面照常打开。
 61. `<quiz>`：无正确选项、选项少于 2 个、缺 `id` → `INVALID_QUIZ`；单选与多选分别用 radio 与 checkbox；提交后错选/漏选逐项标红、显示解析；阶段得分“答对 x/y”；题干以转义文本或 CDATA 写入 `<img onerror=…>` 时只显示为文本（真正的子元素按非法结构校验失败）。
 62. `<next-steps>` 的 `target="#不存在"`、`target="#sec-3"`（按位置的锚点）、`target="https://…"`、`javascript:…`、`target="/admin"` → `INVALID_TARGET`；合法 `target` 为 6.4 表中的前缀锚点；点击指向未解锁阶段的选项会先解锁，页面不发生整页跳转（`<button>`，无 `href`）。
-63. 嵌套 `<stages>`、缺 `id` 的 `<stages>`、单组 9 个或 0 个 `stage` → `INVALID_STAGES`；跨组或跨类型重名的 `id`（如 `stage id="x"` 与 `figure id="x"`）→ `DUPLICATE_ID`；9 组各 2 个 `stage`（超组数）与 8 组合计 41 个 `stage`（超总数）分别 → `TOO_MANY_BLOCKS`；`version="1.0"` 文档使用上述任一标签 → `TAG_REQUIRES_1_1`。
+63. 嵌套 `<stages>`、缺 `id` 的 `<stages>`、单组 9 个或 0 个 `stage` → `INVALID_STAGES`；跨组或跨类型重名的 `id`（如 `stage id="x"` 与 `figure id="x"`）→ `DUPLICATE_ID`；9 组各 2 个 `stage`（超组数）与 8 组合计 41 个 `stage`（超总数）分别 → `TOO_MANY_BLOCKS`。
 63a. 同一文档里两组独立的 `<stages>`（一组在 `body` 开头，一组在某个 `section` 内）：各自有步骤条与进度，一组点“继续”不影响另一组；锚点落在另一组的未解锁阶段时，只把那一组解锁到目标阶段；两组进度各自在刷新后保持。
 64. `<steps interactive="true">`：一次只显示一步，键盘左右键与上一步/下一步可用；只有 1 个 step → 校验失败；打印时全部展开。
 65. `<cell tag="unreported">` 渲染为“未报告”且不含数字 0；`<cell tag="approx">` 带“≈ 图读”角标；非法 `tag` → 校验失败。
 66. （P2/M5）`<chart>` 的 `series[].err`：长度与 `data` 不同、含负数或 NaN、用于 `pie`/`scatter` → `INVALID_CHART` 且指出 JSON 路径；合法时图上有误差棒。
 67. `<code-block eq="loss">`：存在 `<equation id="loss">` 时显示“对应公式”并跳转；不存在 → `INVALID_TARGET`。
 68. `<search-log>`：缺少 `<query>` → 校验失败；渲染为默认折叠卡片，标题栏显示检索式条数与纳入数（纳入数为各查询 `kept` 之和，标注“各查询合计”，不去重）；`excluded` 的理由进入全文索引。
-69. `aumbry schema --format json|md` 输出一张按 `version` 区分的规则表：含所有新增容器的允许父子关系、数量上下限、属性、位置例外与错误码，`1.0` 与 `1.1` 的差异可直接读出（单测）。
+69. `aumbry schema --format json|md` 输出一张规则表：含所有容器的允许父子关系、数量上下限、属性、位置例外与错误码（单测按 `Spec()` 逐对检查父子关系，与校验器一致）。
 
 **G10 摘要、速读与新闻**
-70. `<tldr>`：`body` 级 2 个、`section` 级 2 个、`point` 为 0 个或超过 7 个、单条超过 300 字符 → `INVALID_TLDR`；`version="1.0"` 文档使用 → `TAG_REQUIRES_1_1`。
+70. `<tldr>`：`body` 级 2 个、`section` 级 2 个、`point` 为 0 个或超过 7 个、单条超过 300 字符 → `INVALID_TLDR`。
 71. 渲染与索引：全文 `tldr` 在标题下方首屏；`section` 的 `tldr` 默认在标题后，`placement="bottom"` 时在末尾；TOC 抽屉显示各节首条要点；搜索某条 `point` 的文字命中该文档。
 72. 速读模式：开启后只剩各节标题与 `tldr`，点“展开本节”才显示全文；`?skim=1` 刷新后保持；文档里没有任何 `tldr` 时不显示该开关；打印时忽略速读、全部展开；`body` 直接放置的正文块归入“展开正文”区；`?skim=0/1` 优先于本机记忆；锚点定位自动展开目标所在节；嵌套 `stage > section` 时子节的标题与 `tldr` 仍可见。
 73. `<news-item>`：缺 `title` → `INVALID_NEWS`；`url="javascript:…"` → `INVALID_URL`；`detail-id` 不是 12 位 → `INVALID_ID`；`importance="high"` 有强调样式；`<detail>` 点击展开且其内文可被搜索。
@@ -696,10 +691,10 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 75. 演练：先推两篇新闻详情、再推带 `detail-id` 的简报；用同一个键重复推简报只覆盖不新增；周报示例推送后，每天一个 `tldr` 与全文 `tldr` 均正常渲染。
 
 **G11 结构自由度**
-76. 自由结构（`version="1.1"`，单测）：只含一个 `<md>` 的 `body` 通过；`body` 直接混排 `claim`、`chart`、`metrics` 通过；`section` 嵌套 3 层通过、4 层 → `SECTION_TOO_DEEP`；一份不含 `tldr`/`stages`/`metrics` 等任何可选积木的文档通过。同样的 `body` 直接放 `claim` 在 `version="1.0"` 下仍按 v1.0 原规则失败；`version="1.0"` 下 `body > md` 也失败（只违反旧容器规则，与新标签门控分开测），行为不变。`quiz`、`next-steps`、`news-item`、`tldr` 直接放在 `body` 下通过。
+76. 自由结构（`version="1.1"`，单测）：只含一个 `<md>` 的 `body` 通过；`body` 直接混排 `claim`、`chart`、`metrics` 通过；`section` 嵌套 3 层通过、4 层 → `SECTION_TOO_DEEP`；一份不含 `tldr`/`stages`/`metrics` 等任何可选积木的文档通过。`quiz`、`next-steps`、`news-item`、`tldr` 直接放在 `body` 下通过。
 77. 示例之外的结构：用一份与所有示例都不同的文档（章节名自拟、顺序颠倒、混用 `news-item`、`claim`、`chart`）推送并正确渲染，TOC 按自拟章节生成。
 78. 演练（记录结果，不进 CI）：给没有上下文的 Agent 一个与示例结构不同的需求（如“只要一页结论加两张图”），产物不得硬塞示例里没用到的章节或空的 `tldr`/`metrics`，且通过校验并成功 push。另加一份篇幅达到 `tldr` 默认阈值、但用户明确只要正文和图的演练：产物不被硬塞 `tldr`。
-79. 兼容（单测加集成）：v1.0 构建产生的已入库文档，读取与搜索不变且无需重建索引；v1.1 CLI 向 v1.0 服务端推 `version="1.1"` 文档 → 422 `UNSUPPORTED_VERSION`，不写对象与数据库；v1.1 服务端对重新上传的 `version="1.0"` 文档（带 `<figure alt>`）→ `TAG_REQUIRES_1_1` 且带 `hint`（有意取舍，见 6.1）。
+79. 版本与错误结构：服务端 ingest 与 `aumbry validate` 共用 `pkg/schema`，同一份 `version="1.0"` 的文档在两处得到相同的 `UNSUPPORTED_VERSION` 与 `hint`；服务端返回 422（单测加集成）。
 80. 锚点：`#stage-r3`、`#fig-x`、`#s-method`、`#quiz-q1` 都能被 `next-steps` 命中；位置锚点 `#sec-3` 不能。目标位于未解锁阶段的第 2 个 `tab` 内的收起 `collapse` 中时，按 6.4 的“定位顺序”完成后再滚动并可见（浏览器检查，含跨组用例）。
 81. 搜索：只出现在 `<quiz>` 选项或 `next-steps` 按钮里的词搜不到；只出现在另一组第三阶段正文里的词命中文章（但点击只打开文章）；`search-log excluded@reason`、`quote@author`、`check@detail` 里的词可命中；长词（FTS）与 2 字短词（`LIKE`）各有一条。
 82. 中文检索：入库正文含“大模型训练与评测”的文档，搜“模型”命中且该查询打在 `items_fts_cjk` 上（单元测试断言生成的 SQL 用了该表，而不是 `LIKE`）；搜“训练”“练与”“大模型”均命中；搜“型训”“与评”也命中；不含这些字的文档不命中。
@@ -720,13 +715,13 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 | :--- | :--- | :--- |
 | 逐轮增量发布靠“同一 `--key` 重复 push” | v1.0 已有 upsert，零新接口；本地草稿是唯一事实来源，Agent 无需回读服务端 | 新增“追加 section”接口；提供 `aumbry get` 回拉 XML（回拉出的图片 URL 已被重写，反而更难改） |
 | 草稿 = 不挂载目录 | 复用 v1.0 的“未挂载仅管理员可见”，不加状态字段 | 给 item 增加 `status: draft/published` 列（要迁移、要改所有查询） |
-| 新标签要求 `version="1.1"` | 旧模板不会悄悄混用；报错能直接教会 Agent 升版本 | 不分版本、新标签随时可用（旧服务端会渲染成未知标签） |
+| 协议版本固定为 `1.1` | 项目目前没有用户，不保留 `1.0`；校验器、`aumbry schema` 与文档只有一套规则 | 同时接受 `1.0` 与 `1.1`（需要两套容器规则与版本门控） |
 | `<chart>` 只收最小 JSON 结构 | 可用 JSON Schema 完整校验，无代码型配置，Agent 容易写对 | 透传 ECharts `option`（校验不了、能力过大） |
 | 引用用 `#ref-<id>` 普通锚点 | 不新增 Markdown 语法，`safeUrl` 已支持同页锚点，Agent 零学习成本 | 自定义 `[@key]` 行内语法（需手写 markdown-it 规则，见 14.2） |
 | `aumbry dirs` 走 API Token | Token 持有者本就是受信写入方；避免让 Agent 去用管理员 Cookie | 让用户手抄目录 ID；开放管理员接口给 Agent |
 | 可信代理只认 XFF/XFwdProto | 覆盖 Nginx/Caddy/Traefik/Docker 常见反代，配置只有一个键 | 做“信任哪个头”的开关（Cloudflare 等另议） |
 | 镜像用 GoReleaser `dockers_v2` + `Dockerfile.release` | 二进制与 Release 同源；无需手写 manifest | 沿用多阶段 `Dockerfile` 在 CI 里 buildx（二进制被重复编译，两处不一致） |
-| 服务端配置用 TOML，CLI 配置仍是 YAML | 用户偏好 TOML；`~/.config/aumbry/config.yaml` 是 v1.0 已发布的格式，改它会破坏已有用户 | 两者都改成 TOML（需要 CLI 迁移读取旧 YAML 的兼容逻辑，见 14.2） |
+| 服务端配置用 TOML，CLI 配置仍是 YAML | 用户偏好 TOML；CLI 的 `~/.config/aumbry/config.yaml` 本版不改格式 | 两者都改成 TOML（见 14.2） |
 | 只发 GHCR | 用户明确要求不发 Docker Hub | – |
 | 标签/类型筛选只在已解锁子树内，不做全站 `/tags` | 守住“树外不可枚举”的权限边界 | 全局标签页（会泄露树外条目存在与标签） |
 | `--draft` 不会让已发布条目下线，另设 `unpublish` | 动词语义单一，响应里的 `published` 让后果可见 | 让 `--draft` 隐式撤回挂载（一次误用就让公开内容消失，或相反） |
@@ -756,9 +751,9 @@ M1、M3 互不依赖，可并行；M2 依赖 M1 的子命令骨架；M4 依赖 M
 4. **Cloudflare 等需要读取非 XFF 的真实 IP 头**：本版不支持；有需要时加 `client_ip_header`。
 5. **Mermaid 语法在发布前无法由 Go 侧校验**：目前只检查非空与长度；是否要求 Skill 提示 Agent 本地用 `mmdc` 预渲染，待演练后决定。
 6. **是否默认开启“每轮自动存草稿”**：现为“用户要求才发布”；是否给 skill 增加用户级开关，视使用习惯再定。
-7. **所有权是否也约束内容覆盖**：现在只约束下线与删除，`push --key` 仍可更新他人条目的内容（v1.0 行为）。若多个 Agent 共用同一服务且互不信任，应把所有权扩展到更新（对 `created_by` 为 `NULL` 的遗留条目需要迁移策略）。**决定人：用户。**
+7. **所有权是否也约束内容覆盖**：现在只约束下线与删除，`push --key` 仍可更新他人条目的内容。若多个 Agent 共用同一服务且互不信任，应把所有权扩展到更新（对 `created_by` 为 `NULL` 的无所有者条目需要另定策略）。**决定人：用户。**
 8. **暂不做的项**：`push --batch`、`push --replace-dirs`、Prometheus `/metrics`、结构化审计日志、访客解锁 Cookie 的容量上限（约 80–150 个目录后会超 4 KB）。需要时再评估。
-9. **CLI 配置是否也改 TOML**：服务端用 TOML 而 CLI 仍是 YAML，格式不统一。若要统一，CLI 需要同时读取旧的 `config.yaml`（兼容）并改写为 `config.toml`。**决定人：用户。**
+9. **CLI 配置是否也改 TOML**：服务端用 TOML 而 CLI 仍是 YAML，格式不统一。若要统一，CLI 的配置文件需要改为 `config.toml`。**决定人：用户。**
 10. **新闻详情页是否自动显示“来自哪份简报”**：现在靠详情稿的 `meta/related-ids` 手动指回简报（需在简报推送后补推一次详情）。要自动显示，服务端需要从 `detail-id` 建反向索引，本版不做。**决定人：用户。**
 
 ### 14.3 评审记录（外部评审的处理）
@@ -818,7 +813,7 @@ v1.1 草稿又经第二次外部评审（`0b047a7c…`，Codex，只读），同
 | 评审意见 | 处理 |
 | :--- | :--- |
 | `<stages>` 要求 ≥ 2 个 stage，第一轮单独发布会被拒（两方一致） | 采纳 → 1–8 个；验收 21、63 |
-| `protocol.sch` 块级规则写死 `/document/body/section/...`，放宽容器后会静默漏检；`urlXPath` 覆盖不全；1.0 拦截与 `UNKNOWN_TAG` 重复 | 采纳（已核实）→ 新增 6.9 |
+| `protocol.sch` 块级规则写死 `/document/body/section/...`，放宽容器后会静默漏检；`urlXPath` 覆盖不全 | 采纳（已核实）→ 新增 6.9 |
 | `next-steps` 写“经 `safeUrl`”，而 `safeUrl` 放行外链与同源路径 | 采纳（已核实）→ 按钮 + 前缀锚点校验；验收 62 |
 | 锚点前缀与“已存在的 `id`”表述不一致；`section` 没有 `id`；`id` 命名空间 | 采纳 → 6.4 锚点映射表、`section@id`；验收 63、80 |
 | 2.3/2.4 与 8.3 仍有“必须/每个”类措辞，与 6.0 冲突；硬规则含场景布局 | 采纳 → 2.3/2.4 改为建议写法；8.3 拆成 9 条硬规则 + 5 条默认做法 |
@@ -826,7 +821,6 @@ v1.1 草稿又经第二次外部评审（`0b047a7c…`，Codex，只读），同
 | 速读对 `body` 直属正文、嵌套章节、锚点跳转、`?skim` 与本机记忆的优先级没定义；TOC 无层级 | 采纳 → 9.7、9.2；验收 72 |
 | 错误码清单与触发条件缺失、字符上限按字节还是 rune、`INVALID_METRIC` 条件 | 采纳 → 7.4、6.2 |
 | 搜索只能定位文章而非阶段；属性值未入文本投影；`next-steps` 按钮文字是否入索引 | 采纳 → 6.5；验收 81 |
-| v1.0 兼容边界：已存文档、重新上传的门控差异、v1.1 CLI → v1.0 服务端 | 采纳 → 6.1 兼容边界；验收 79 |
 | `quiz id` 保留但内容变化时作答错位；存储结构与损坏 JSON | 采纳 → 6.7 题目指纹、存储结构 |
 | 里程碑缺 9.7；打印 P2 与 M4 矛盾；#69 与 #26 重复 | 采纳 → 打印提到 P1、M4 增 9.7；#69 改为 `schema` 规则表验收 |
 | 精简首发：后移 `series[].err`；12 个示例收成 5 个 | 采纳 `err` → P2/M5；示例 → 5 个。**不采纳**砍掉 `err` 本身：`algorithm-experiment` 要求报告多种子离散程度，P2 保留 |
