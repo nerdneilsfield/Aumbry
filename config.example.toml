@@ -38,7 +38,9 @@ user = "admin"
 # bcrypt hash of the admin password (env: AUMBRY_ADMIN_PASSWORD_HASH, required):
 #   htpasswd -nbBC 10 '' 'your-password' | cut -d: -f2
 # Note: "$" does NOT need escaping inside TOML basic strings.
-password_hash = "$2y$10$replaceThisWithABcryptHashGeneratedByHtpasswd000000000"
+# The value below is a valid placeholder hash of the password "change-me" so this file passes
+# `aumbry-server check-config`. You MUST replace it with your own hash before deploying.
+password_hash = "$2a$10$PkHvdR6kLHeZaneIL82t..LG5KvAbbJzODtrZiiF5g/7kmHljVAUa"
 
 [webdav]
 # Private WebDAV root URL holding XML and image objects (env: AUMBRY_WEBDAV_URL, required)
