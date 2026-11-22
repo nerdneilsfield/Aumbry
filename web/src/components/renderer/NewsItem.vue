@@ -19,6 +19,9 @@ const title = computed(() => attr(props.node, 'title').trim())
 const url = computed(() => httpUrl(props.node.getAttribute('url')))
 const high = computed(() => attr(props.node, 'importance') === 'high')
 const detailId = computed(() => attr(props.node, 'detail-id'))
+const DETAIL_LABEL = '阅读详情'
+// the Markdown export writes the jump to the detail entry as an absolute link (the saved file is read elsewhere)
+const detailExportMd = computed(() => (detailId.value ? `[${DETAIL_LABEL}](${location.origin}/p/${encodeURIComponent(detailId.value)})` : undefined))
 // the summary is the element's own text; an optional <detail> child is the inline long form
 const summary = computed(() =>
   Array.from(props.node.childNodes)
@@ -67,7 +70,8 @@ const open = computed({ get: () => userOpen.value || expanded.value, set: (v) =>
           v-bind="detailNav ? { type: 'button', onClick: () => detailNav!(detailId) } : { to: `/p/${encodeURIComponent(detailId)}` }"
           class="inline-flex cursor-pointer items-center gap-1 text-sm font-semibold text-blue-300 hover:text-blue-200 print:hidden"
           :data-detail-id="detailId"
-        >阅读详情<ArrowRight class="size-4" aria-hidden="true" /></component>
+          :data-export-md="detailExportMd"
+        >{{ DETAIL_LABEL }}<ArrowRight class="size-4" aria-hidden="true" /></component>
       </div>
     </div>
   </article>
