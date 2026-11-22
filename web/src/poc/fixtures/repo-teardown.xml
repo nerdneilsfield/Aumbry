@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>拆解 open-drive/driveflow：一个流匹配世界模型是怎么落地的</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>从仓库结构、推理数据流、训练循环里的关键一行，到上手前的检查清单。</summary>
+    <source-agent>repo-teardown-agent</source-agent>
+    <canonical-url>https://github.com/open-drive/driveflow</canonical-url>
+    <tags>
+      <tag>开源拆解</tag>
+      <tag>World Model</tag>
+      <tag>PyTorch</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <section title="项目速览">
+      <repo-card name="open-drive/driveflow" stars="2.4k" lang="Python / CUDA" license="Apache-2.0" commit="9f3c2ab41d7e" url="https://github.com/open-drive/driveflow">
+        <![CDATA[DriveFlow 官方实现：训练、评测、TensorRT 导出三件套。]]>
+      </repo-card>
+      <metrics>
+        <metric label="代码行数" value="18.2" unit="k" />
+        <metric label="核心模块" value="4" unit="个"/>
+        <metric label="单测覆盖" value="41" unit="%" delta="-3 vs 上月" trend="down"/>
+        <metric label="最近提交" value="2" unit="天前" trend="up" delta="活跃"/>
+      </metrics>
+    </section>
+
+    <section title="架构">
+      <md><![CDATA[
+仓库按「数据 → 模型 → 训练 → 导出」切成四个包，依赖方向单向向下，几乎没有循环引用：
+      ]]></md>
+      <mermaid caption="模块依赖与一次训练迭代的数据流"><![CDATA[flowchart TB
+  subgraph data[driveflow.data]
+    A[NuScenesDataset] --> B[BEVCache]
+  end
+  subgraph model[driveflow.model]
+    C[VisionEncoder] --> D[FlowDecoder]
+    D --> E[PlanningHead]
+  end
+  subgraph train[driveflow.train]
+    F[Trainer] --> G[EMA]
+    F --> H[Evaluator]
+  end
+  subgraph export[driveflow.export]
+    I[ONNX] --> J[TensorRT]
+  end
+  B --> C
+  E --> F
+  F --> I]]></mermaid>
+      <mermaid caption="推理时序"><![CDATA[sequenceDiagram
+  participant App as 车端应用
+  participant Enc as VisionEncoder
+  participant Dec as FlowDecoder
+  App->>Enc: 6 路图像 + 历史帧
+  Enc-->>Dec: BEV 条件张量 c
+  Dec->>Dec: x1 = x0 + v(x0, 0, c)
+  Dec-->>App: 未来 3 s 占用 + 轨迹]]></mermaid>
+    </section>
+
+    <section title="读代码：关键改动">
+      <md><![CDATA[
+下面这个提交把采样从多步 ODE 改成了一步欧拉，是「30 FPS」的直接来源（红色是删除，绿色是新增）：
+      ]]></md>
+      <code-block lang="python" file="driveflow/model/sampler.py" lines="66-78" commit="9f3c2ab41d7e" diff="true" caption="sampler.py：从 50 步 ODE 到一步欧拉"><![CDATA[ @torch.no_grad()
+ def sample(self, cond, steps=None):
+     x = torch.randn(cond.shape[0], *self.shape, device=cond.device)
+-    ts = torch.linspace(0, 1, steps or 50, device=cond.device)
+-    for t0, t1 in zip(ts[:-1], ts[1:]):
+-        v = self.net(x, t0.expand(x.shape[0]), cond)
+-        x = x + (t1 - t0) * v
++    t = torch.zeros(x.shape[0], device=cond.device)
++    x = x + self.net(x, t, cond)  # one Euler step is enough for near-straight paths
+     return x]]></code-block>
+
+      <tabs>
+        <tab title="训练损失">
+          <code-block lang="python" file="driveflow/train/loss.py" lines="21-30" caption="流匹配损失（带高亮行）"><![CDATA[def flow_matching_loss(net, x1, cond):
+    x0 = torch.randn_like(x1)
+    t = torch.rand(x1.shape[0], device=x1.device)
+    xt = (1 - t[:, None, None, None]) * x0 + t[:, None, None, None] * x1
+    target = x1 - x0
+    pred = net(xt, t, cond)
+    return F.mse_loss(pred, target)  # [!code highlight]]]></code-block>
+          <equation id="fm" number="1"><![CDATA[\mathcal{L}=\mathbb{E}\left\lVert v_\theta(x_t,t,c)-(x_1-x_0)\right\rVert^2]]></equation>
+        </tab>
+        <tab title="TensorRT 导出">
+          <code-block lang="bash" file="scripts/export_trt.sh" caption="导出命令（CUDA 12.4）"><![CDATA[python -m driveflow.export.onnx --ckpt ckpt/driveflow-1.3b.pt --out build/df.onnx
+trtexec --onnx=build/df.onnx --fp16 --saveEngine=build/df.plan
+python -m driveflow.bench --engine build/df.plan --batch 1]]></code-block>
+        </tab>
+        <tab title="配置">
+          <code-block lang="yaml" file="configs/driveflow_nuscenes.yaml" caption="默认训练配置"><![CDATA[model:
+  encoder: vit_l
+  history_frames: 4
+train:
+  batch_size: 64
+  lr: 1.0e-4
+  schedule: cosine
+  ema: 0.9999]]></code-block>
+        </tab>
+      </tabs>
+    </section>
+
+    <section title="上手前检查清单">
+      <checklist>
+        <check status="done" detail="官方 README 给出了 Python 3.11 + PyTorch 2.5 组合">环境版本与文档一致</check>
+        <check status="done">LICENSE 为 Apache-2.0，可商用</check>
+        <check status="todo" detail="需要 NVMe，缓存约 1.1 TB">准备 nuScenes 预处理缓存</check>
+        <check status="risk" detail="issue #37：CUDA 12.2 上导出失败，12.4 正常">TensorRT 导出的 CUDA 版本要求</check>
+        <check status="blocked" detail="未发布训练日志，也没有给出随机种子">无法验证 FVD 86.4 的可复现性</check>
+      </checklist>
+
+      <quote source="README.md, “Known issues”" author="driveflow 维护者" url="https://github.com/open-drive/driveflow#known-issues"><![CDATA[Night-time scenes may show temporal flicker because one-step sampling is more sensitive to out-of-distribution conditions. We are working on it.]]></quote>
+    </section>
+  </body>
+</document>

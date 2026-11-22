@@ -3,36 +3,9 @@ import texmath from 'markdown-it-texmath'
 import katex from 'katex'
 import DOMPurify from 'dompurify'
 import { dedent } from 'ts-dedent'
-import { createHighlighterCore } from 'shiki/core'
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
-import githubDark from 'shiki/themes/github-dark.mjs'
+import { dualTheme, highlighter, loadedLangs } from '@/lib/highlighter'
 import { safeUrl } from '@/lib/url'
 import 'katex/dist/katex.min.css'
-
-// Top-level await: only the lazily loaded reader chunk imports this module.
-const highlighter = await createHighlighterCore({
-  themes: [githubDark],
-  langs: [
-    import('shiki/langs/bash.mjs'),
-    import('shiki/langs/c.mjs'),
-    import('shiki/langs/cpp.mjs'),
-    import('shiki/langs/css.mjs'),
-    import('shiki/langs/diff.mjs'),
-    import('shiki/langs/go.mjs'),
-    import('shiki/langs/html.mjs'),
-    import('shiki/langs/javascript.mjs'),
-    import('shiki/langs/json.mjs'),
-    import('shiki/langs/markdown.mjs'),
-    import('shiki/langs/python.mjs'),
-    import('shiki/langs/rust.mjs'),
-    import('shiki/langs/sql.mjs'),
-    import('shiki/langs/toml.mjs'),
-    import('shiki/langs/typescript.mjs'),
-    import('shiki/langs/yaml.mjs'),
-  ],
-  engine: createJavaScriptRegexEngine(),
-})
-const loaded = new Set(highlighter.getLoadedLanguages())
 
 // html:false is the XSS boundary: raw HTML in markdown is escaped, never emitted.
 const md = new MarkdownIt({
@@ -40,7 +13,7 @@ const md = new MarkdownIt({
   linkify: true,
   breaks: false,
   highlight: (code, lang) =>
-    loaded.has(lang) ? highlighter.codeToHtml(code, { lang, theme: 'github-dark' }) : '',
+    loadedLangs.has(lang) ? highlighter.codeToHtml(code, { lang, ...dualTheme }) : '',
 })
 md.use(texmath, { engine: katex, delimiters: 'dollars', katexOptions: { throwOnError: false } })
 
@@ -59,5 +32,15 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 })
 
-export const renderMarkdown = (src: string) =>
-  DOMPurify.sanitize(md.render(dedent(src)), { ADD_TAGS: ['eq', 'eqn', 'eqno'], ADD_ATTR: ['target'] })
+const clean = (html: string) => DOMPurify.sanitize(html, { ADD_TAGS: ['eq', 'eqn', 'eqno'], ADD_ATTR: ['target'] })
+
+export const renderMarkdown = (src: string) => clean(md.render(dedent(src)))
+
+/** One line of Markdown (<tldr> points, <news-item> summaries): inline rules only, no block elements. */
+export const renderInline = (src: string) => clean(md.renderInline(src.trim()))
+
+/** Inline Markdown reduced to plain text (TOC summaries, tooltips). */
+export const inlineText = (src: string) =>
+  (md.parseInline(src.trim(), {})[0]?.children ?? [])
+    .map((t) => (t.type === 'softbreak' || t.type === 'hardbreak' ? ' ' : ['text', 'code_inline', 'math_inline'].includes(t.type) ? t.content : ''))
+    .join('')

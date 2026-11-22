@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>自建检索服务上线指南：多组互相独立的分阶段阅读</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>一份文档里有 4 组独立的 stages：开头一组、章节中间一组、一个专题自带一组（含测验）、一组不设门控。每组有自己的步进条、进度和保存的状态。</summary>
+    <source-agent>interactive-guide</source-agent>
+    <tags>
+      <tag>stages</tag>
+      <tag>检索</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <stages id="start">
+      <stage id="a-1" title="先弄清要解决什么问题">
+        <tldr>
+          <point>先写下「查什么、多快、错了怎么办」三件事，再选方案。</point>
+        </tldr>
+        <md><![CDATA[
+上线检索服务之前，先把需求写成三句话：**查什么**（文档类型与规模）、**多快**（P99 目标）、**错了怎么办**（召回不足时的兜底）。
+        ]]></md>
+        <next-steps>
+          <option target="#eq-cache-key">直接看缓存 key 的公式（在锁住的阶段里、折叠里、第 2 个标签页）</option>
+        </next-steps>
+        <quiz id="q-start">
+          <question><![CDATA[下面哪一项**不是**上线前必须先定的？]]></question>
+          <option>文档规模与类型</option>
+          <option>P99 延迟目标</option>
+          <option correct="true">选用哪个 UI 组件库</option>
+          <option>召回不足时的兜底方案</option>
+          <explain><![CDATA[前三项直接决定索引与资源规模；UI 组件库与检索服务本身无关。]]></explain>
+        </quiz>
+        <next-steps>
+          <option target="#stage-a-2">继续：准备数据</option>
+        </next-steps>
+      </stage>
+      <stage id="a-2" title="准备数据与分词">
+        <md><![CDATA[
+清洗标题与正文，统一编码；中文分词的词典要和查询侧一致，否则同一个词在索引与查询里被切成不同的 token。
+        ]]></md>
+        <callout type="warn" title="最常见的坑">
+          <![CDATA[索引侧与查询侧使用了**不同版本的分词词典**，表现为「明明有这个词却搜不到」。]]>
+        </callout>
+        <next-steps>
+          <option target="#s-load-test">跳到下面的「压测方案」</option>
+          <option target="#stage-b-2">直接看压测怎么判断（另一组的第 2 阶段）</option>
+        </next-steps>
+      </stage>
+    </stages>
+
+    <md><![CDATA[
+上面是第一组（`start`）：放在 body 最前面。下面是几个普通章节，其中第二组放在章节**中间**，第三组是一个专题自带的小课程。三组各自保存进度，互不影响。
+    ]]></md>
+
+    <section id="load-test" title="压测方案">
+      <md><![CDATA[
+压测要回答的问题：**在目标 P99 下，单机能撑多少 QPS**。
+      ]]></md>
+
+      <stages id="load">
+        <stage id="b-1" title="设计流量">
+          <md><![CDATA[
+用线上一周的查询日志按比例回放，而不是用随机词；热词与长尾的比例会显著影响缓存命中率。
+          ]]></md>
+          <next-steps>
+            <option target="#stage-b-2">继续：执行与判断</option>
+          </next-steps>
+        </stage>
+        <stage id="b-2" title="执行与判断">
+          <md><![CDATA[
+从 10% 目标 QPS 起步，每档稳定 5 分钟再加；P99 第一次超过目标时，上一档就是单机容量。
+          ]]></md>
+          <quiz id="q-load">
+            <question><![CDATA[压测中 P99 在 60% 目标 QPS 时就超标了，应该先怎么办？]]></question>
+            <option>直接加机器，继续压</option>
+            <option correct="true">先看资源瓶颈（CPU、I/O、锁），定位后再决定扩容或优化</option>
+            <option>放宽 P99 目标</option>
+            <explain><![CDATA[提前超标说明单机存在瓶颈。不先定位就加机器，容量模型会失真。]]></explain>
+          </quiz>
+        </stage>
+      </stages>
+    </section>
+
+    <section title="专题：缓存失效策略">
+      <tldr>
+        <point>这个专题自带一个三阶段的小课程，进度与上面两组无关。</point>
+      </tldr>
+
+      <stages id="cache">
+        <stage id="c-1" title="为什么缓存会错">
+          <md><![CDATA[
+缓存与索引是两份数据：索引更新了，缓存里的旧结果还在。要么**主动失效**，要么**设置较短的 TTL**。
+          ]]></md>
+          <next-steps>
+            <option target="#stage-c-2">继续：主动失效</option>
+          </next-steps>
+        </stage>
+        <stage id="c-2" title="主动失效">
+          <md><![CDATA[
+按「索引版本号」作为缓存 key 的一部分：索引一更新，旧 key 自然不再命中，不需要逐条删除。
+          ]]></md>
+          <code-block lang="go" file="cache/key.go" lines="12-16" eq="cache-key"><![CDATA[func cacheKey(q string, indexVersion uint64) string {
+	return fmt.Sprintf("%d:%s", indexVersion, q)
+}]]></code-block>
+          <collapse title="展开：缓存 key 的形式化写法">
+            <tabs>
+              <tab title="文字">
+                <md><![CDATA[key 由索引版本号与查询串拼成。]]></md>
+              </tab>
+              <tab title="公式">
+                <equation id="cache-key" number="1" caption="缓存 key"><![CDATA[\mathrm{key}(q)=\bigl(v_{\mathrm{index}},\;q\bigr)]]></equation>
+              </tab>
+            </tabs>
+          </collapse>
+          <next-steps>
+            <option target="#stage-c-3">继续：测验</option>
+          </next-steps>
+        </stage>
+        <stage id="c-3" title="检验一下">
+          <quiz id="q-cache">
+            <question><![CDATA[把**索引版本号**放进缓存 key，主要解决什么问题？]]></question>
+            <option>缓存容量不够</option>
+            <option correct="true">索引更新后旧结果不再被命中，无需逐条删除缓存</option>
+            <option>提高热词命中率</option>
+            <option>降低网络延迟</option>
+            <explain><![CDATA[版本号变了，key 就变了；旧条目自然过期被淘汰。代价是索引更新后命中率会暂时下降。]]></explain>
+          </quiz>
+        </stage>
+      </stages>
+    </section>
+
+    <section title="速查：三种部署方式">
+      <md><![CDATA[
+这一组设置了 `gated="false"`：不需要「继续」，所有阶段一开始就都可见，步进条只用来跳转。
+      ]]></md>
+
+      <stages id="deploy" gated="false">
+        <stage id="d-1" title="单机">
+          <md><![CDATA[适合 < 100 万文档，备份靠定时快照。]]></md>
+        </stage>
+        <stage id="d-2" title="主从">
+          <md><![CDATA[读写分离，读副本横向扩；注意主从延迟会让刚写入的文档暂时搜不到。]]></md>
+        </stage>
+      </stages>
+    </section>
+  </body>
+</document>

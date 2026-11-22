@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>2026-11-21 AI 与自动驾驶前沿日报</title>
+    <type>report</type>
+    <date>2026-11-21</date>
+    <summary>今天筛 57 篇预印本，真正值得读的 3 篇：流匹配世界模型、轻量 VLA 规划器，以及一个把 BEV 感知塞进 8 TOPS 的开源项目。</summary>
+    <source-agent>auto-drive-daily-agent</source-agent>
+    <tags>
+      <tag>日报</tag>
+      <tag>Autonomous Driving</tag>
+      <tag>VLA</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <section title="今日概览">
+      <metrics>
+        <metric label="筛选论文" value="57" unit="篇" delta="+9 vs 昨日" trend="up"/>
+        <metric label="入选精读" value="3" unit="篇" delta="持平" trend="flat"/>
+        <metric label="开源仓库" value="5" unit="个" delta="+2" trend="up"/>
+        <metric label="新增数据集" value="1" unit="个" delta="-1" trend="down"/>
+        <metric label="仅读摘要" value="14" unit="篇"/>
+        <metric label="待核验结论" value="6" unit="条" delta="+3" trend="up"/>
+      </metrics>
+
+      <callout type="insight" title="一句话判断">
+        <![CDATA[世界模型的竞争焦点正在从「画面像不像」转向「**能不能在车端实时跑**」：今天 3 篇入选里有 2 篇主打一步采样。]]>
+      </callout>
+    </section>
+
+    <section title="重点论文">
+      <paper-card
+        title="DriveFlow: Real-Time World Modeling for End-to-End Driving"
+        authors="Zhang et al."
+        venue="arXiv"
+        date="2026-11-19"
+        url="https://arxiv.org/abs/2611.01234"
+        code-url="https://github.com/open-drive/driveflow"
+        doi="10.48550/arXiv.2611.01234"
+        read-depth="full">
+        <![CDATA[用流匹配替代扩散去噪，单卡 H100 上 30 FPS。**已做三轮精读**，注意夜间场景的闪烁问题。]]>
+      </paper-card>
+
+      <paper-card
+        title="TinyVLA-Drive: 0.9B Vision-Language-Action Planner for Edge Chips"
+        authors="Liu, Wang, Okafor"
+        venue="CoRL 2026 (under review)"
+        date="2026-11-20"
+        url="https://arxiv.org/abs/2611.02201"
+        read-depth="abstract">
+        <![CDATA[把语言推理蒸馏进 0.9B 规划器，声称在 Orin-X 上 12 Hz。**仅读摘要**，延迟数字待核验。]]>
+      </paper-card>
+
+      <paper-card
+        title="OccWorld-Lite: Distilling 3D Occupancy Forecasting"
+        authors="Park et al."
+        date="2026-11-18"
+        url="https://arxiv.org/abs/2611.00977"
+        read-depth="snippet">
+        <![CDATA[占用预测蒸馏到轻量学生网络，仅看了方法图与表 1。]]>
+      </paper-card>
+    </section>
+
+    <section title="开源项目">
+      <repo-card name="open-drive/driveflow" stars="2.4k" lang="Python / CUDA" license="Apache-2.0" commit="9f3c2ab41d7e" url="https://github.com/open-drive/driveflow">
+        <![CDATA[官方实现，含 nuScenes 预处理脚本与 TensorRT 导出工具。]]>
+      </repo-card>
+      <repo-card name="edge-ai/bev-nano" stars="860" lang="C++ / TensorRT" license="MIT" commit="a1b2c3d4e5f6" url="https://github.com/edge-ai/bev-nano">
+        <![CDATA[把 BEV 感知压进 8 TOPS：INT8 量化 + 自研算子融合，README 给出 Orin-NX 上 18 ms 的延迟。]]>
+      </repo-card>
+    </section>
+
+    <section title="时间线：这周发生了什么">
+      <timeline>
+        <event date="2026-11-17" title="OccWorld-Lite 放出 arXiv 预印本">
+          <![CDATA[占用预测方向的又一篇蒸馏工作。]]>
+        </event>
+        <event date="2026-11-19" title="DriveFlow 论文与代码同日发布">
+          <![CDATA[代码仓库首日 **1.2k star**，issue 区已有人报告 TensorRT 导出在 CUDA 12.2 上失败。]]>
+        </event>
+        <event date="2026-11-20" title="TinyVLA-Drive 提交 CoRL">
+          <![CDATA[给出 Orin-X 上的延迟数字，但没有公开评测脚本。]]>
+        </event>
+        <event date="2026-11" title="Q4 世界模型工作坊征稿截止（月内）">
+          <![CDATA[日期只精确到月。]]>
+        </event>
+      </timeline>
+    </section>
+
+    <section title="今日选题分布">
+      <chart type="pie" caption="今日 57 篇预印本的主题分布">
+        <![CDATA[{
+  "categories": ["世界模型", "端到端规划", "BEV 感知", "VLA / 语言推理", "仿真与数据", "其他"],
+  "series": [{ "name": "篇数", "data": [14, 11, 12, 8, 7, 5] }]
+}]]>
+      </chart>
+    </section>
+
+    <sources>
+      <source title="arXiv cs.CV / cs.RO 当日新提交" url="https://arxiv.org/list/cs.RO/new"/>
+      <source title="GitHub Trending（Python / C++）" url="https://github.com/trending"/>
+      <source title="OpenReview CoRL 2026 投稿" url="https://openreview.net/group?id=robot-learning.org/CoRL/2026/Conference"/>
+    </sources>
+  </body>
+</document>

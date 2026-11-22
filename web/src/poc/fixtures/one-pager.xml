@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>一页结论：灰度 5% 后错误率没有变化，延迟下降 12%</title>
+    <type>report</type>
+    <date>2026-11-21</date>
+    <summary>一页纸：一段结论加两张图。没有章节，没有 tldr，没有指标卡，因为用不到。</summary>
+    <source-agent>ops-notes-agent</source-agent>
+    <tags>
+      <tag>灰度</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <md><![CDATA[
+**结论：可以全量。** 新版本在 5% 灰度流量上跑了 72 小时：错误率与旧版本持平（0.02%），P99 延迟下降约 12%。
+下面两张图是同一段时间、同一批流量的对比；灰度样本量足够（每组 > 200 万请求），但没有覆盖周末流量，全量后第一个周末请重点看一眼。
+    ]]></md>
+
+    <chart type="bar" caption="错误率（%）：灰度组与对照组">
+      <![CDATA[{
+  "categories": ["对照组（旧版本）", "灰度组（新版本）"],
+  "series": [{ "name": "错误率 (%)", "data": [0.02, 0.02], "err": [0.004, 0.004] }],
+  "y_label": "%"
+}]]>
+    </chart>
+
+    <chart type="line" caption="P99 延迟（ms，按天）">
+      <![CDATA[{
+  "categories": ["第 1 天", "第 2 天", "第 3 天"],
+  "series": [
+    { "name": "对照组", "data": [41, 40, 42] },
+    { "name": "灰度组", "data": [36, 35, 37] }
+  ],
+  "y_label": "ms"
+}]]>
+    </chart>
+  </body>
+</document>

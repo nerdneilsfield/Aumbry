@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>2026-11-21 自动驾驶与 AI 芯片新闻简报</title>
+    <type>report</type>
+    <date>2026-11-21</date>
+    <summary>今天 9 条值得看的消息：1 条重要（车端世界模型开源），2 条有详情可展开，1 条未证实。</summary>
+    <source-agent>news-daily-agent</source-agent>
+    <tags>
+      <tag>新闻简报</tag>
+      <tag>Autonomous Driving</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <tldr>
+      <point>今天最重要：**DriveFlow 开源**，号称车端世界模型进入实时区间（详情已单独成文）。</point>
+      <point>芯片侧：两家车规芯片厂商同日公布下一代算力，数字口径不同，**不能直接比**。</point>
+      <point>政策侧：一项关于高速 L3 责任划分的草案公开征求意见，细则未出。</point>
+      <point>一条「某车企将自研 BEV 芯片」的消息**未证实**，仅一个来源。</point>
+      <verdict>只有第一条值得今天就去读；其余先看每个主题的小结，需要时再展开。</verdict>
+    </tldr>
+
+    <section title="模型与开源">
+      <tldr>
+        <point>DriveFlow 论文与代码同日发布，Table 2 给出 H100 上 30 FPS。</point>
+        <point>一个 8 TOPS 级别的 BEV 感知项目在 GitHub 上升到热榜前列。</point>
+      </tldr>
+
+      <news-item title="DriveFlow 开源：车端世界模型进入实时区间" source="arXiv" url="https://arxiv.org/abs/2611.01234" published="2026-11-19" importance="high" detail-id="NewsDetail01">
+        流匹配 + 一步采样，单卡 H100 上 **30 FPS**；训练代码、权重与 nuScenes 预处理脚本同日放出。注意：车端（Orin 级）延迟论文**没有给**。
+      </news-item>
+
+      <news-item title="bev-nano：把 BEV 感知压进 8 TOPS" source="GitHub" url="https://github.com/edge-ai/bev-nano" published="2026-11-20" detail-id="RepoTear0001">
+        INT8 量化加自研算子融合，README 给出 Orin-NX 上 18 ms 的延迟；上升到当日 Trending 前十。
+      </news-item>
+
+      <news-item title="TinyVLA-Drive 提交 CoRL，声称 Orin-X 上 12 Hz" source="arXiv" url="https://arxiv.org/abs/2611.02201" published="2026-11-20" detail-id="Pap3rRead001">
+        0.9B 的视觉-语言-动作规划器；延迟数字没有公开评测脚本，**待核验**。
+        <detail><![CDATA[
+**读到了什么**：只读了摘要与方法图，没有精读全文。
+
+- 规模：0.9B 参数，蒸馏自一个 7B 的教师模型
+- 声称：Orin-X 上 12 Hz；没有给批大小与精度设置
+- 缺失：评测脚本、延迟的分位数
+
+**怎么用**：把它当作「方向值得跟」，而不是「数字可以引」。
+        ]]></detail>
+      </news-item>
+    </section>
+
+    <section title="芯片与算力">
+      <tldr>
+        <point>两家厂商同日公布下一代车规芯片，标称算力口径不同（稀疏 vs 稠密、INT8 vs FP16）。</point>
+        <point>对比时先把口径对齐，再比价格与功耗。</point>
+      </tldr>
+
+      <news-item title="芯片 A 公布下一代车规 SoC：标称 1000 TOPS" source="厂商发布会" url="https://example.com/chip-a" published="2026-11-21" importance="high">
+        标称算力按**稀疏 INT8** 口径给出；稠密口径下约为标称的一半。量产时间为 2027 年下半年。
+        <detail><![CDATA[
+**口径提醒**
+
+| 口径 | 标称 | 折算 |
+| --- | --- | --- |
+| 稀疏 INT8 | 1000 TOPS | — |
+| 稠密 INT8 | 约 500 TOPS | 标称 ÷ 2 |
+
+功耗与价格均未公布。
+        ]]></detail>
+      </news-item>
+
+      <news-item title="芯片 B 更新路线图：2028 年推出 FP16 的 800 TFLOPS 版本" source="厂商博客" url="https://example.com/chip-b" published="2026-11-21">
+        用的是 FP16 稠密口径，和芯片 A 的数字**不在同一个坐标系**上。
+      </news-item>
+
+      <claim level="unverified" source="单一来源：行业媒体">某车企将自研 BEV 感知芯片，据称已完成流片。没有第二个来源，也没有官方表态。</claim>
+
+      <news-item title="据称：某车企自研 BEV 芯片已流片" source="行业媒体（单一来源）" published="2026-11-21" detail-id="ZZZZZZZZZZZZ">
+        消息来自一个匿名来源，**未证实**；详情页在离线预览里没有对应条目。
+      </news-item>
+    </section>
+
+    <section title="政策与标准">
+      <tldr>
+        <point>高速公路 L3 责任划分草案公开征求意见，反馈截止日期在下月。</point>
+      </tldr>
+
+      <news-item title="高速 L3 责任划分草案公开征求意见" source="主管部门网站" url="https://example.com/policy-l3" published="2026-11-20T09:30:00+08:00" importance="high">
+        草案区分「系统接管期间」与「请求接管后」两种状态的责任；具体的接管时间窗口留给配套细则。
+      </news-item>
+    </section>
+
+    <section title="今日数字">
+      <metrics>
+        <metric label="入选新闻" value="9" unit="条" delta="+2 vs 昨日" trend="up"/>
+        <metric label="重要" value="3" unit="条"/>
+        <metric label="未证实" value="1" unit="条" delta="持平" trend="flat"/>
+      </metrics>
+
+      <timeline>
+        <event date="2026-11-19" title="DriveFlow 论文与代码发布"><![CDATA[首日 1.2k star。]]></event>
+        <event date="2026-11-20" title="L3 责任划分草案发布"><![CDATA[公开征求意见。]]></event>
+        <event date="2026-11-21" title="两家车规芯片厂商同日更新"><![CDATA[口径不同。]]></event>
+      </timeline>
+    </section>
+
+    <sources>
+      <source title="arXiv cs.RO 当日新提交" url="https://arxiv.org/list/cs.RO/new"/>
+      <source title="GitHub Trending" url="https://github.com/trending"/>
+    </sources>
+  </body>
+</document>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>DriveFlow：只读第一轮（单阶段的 stages）</title>
+    <type>post</type>
+    <date>2026-11-21</date>
+    <summary>只做了第一轮的速读：stages 里只有一个 stage。没有步进条、没有「继续」，阶段直接展开；以后补上第二个 stage，它们才会出现。</summary>
+    <source-agent>qi-read-paper</source-agent>
+    <tags>
+      <tag>stages</tag>
+      <tag>单阶段</tag>
+    </tags>
+  </meta>
+
+  <body>
+    <stages id="reading">
+      <stage id="r1" title="第一轮：问题与整体认识">
+        <claim level="claim" source="§1 Abstract">推理延迟较扩散式方法降低一个数量级，同时保持相当的预测质量。</claim>
+        <claim level="unverified">方法细节、随机种子数与车端延迟：尚未阅读，不作判断。</claim>
+
+        <md><![CDATA[
+这一组 `stages` 只有一个 `stage`：读者不需要「继续」，也看不到步进条。
+哪天补上第二轮，再往同一个 `stages` 里加一个 `stage`，步进条与「继续」按钮会自动出现。
+        ]]></md>
+
+        <quiz id="q-one">
+          <question><![CDATA[只读了第一轮，下面哪种说法最合适？]]></question>
+          <option>DriveFlow 在车端能实时运行</option>
+          <option correct="true">作者主张延迟降了一个数量级；细节与证据还没读，暂不下结论</option>
+          <option>质量一定与扩散式方法相当</option>
+          <explain><![CDATA[第一轮只建立整体认识，结论仍是「作者主张」。]]></explain>
+        </quiz>
+
+        <next-steps>
+          <option target="#quiz-q-one">回到上面的测验</option>
+        </next-steps>
+      </stage>
+    </stages>
+
+    <!-- tldr may sit anywhere in <body>; the whole-document one is drawn at the top of the content -->
+    <tldr>
+      <point>只读了第一轮：问题是扩散式世界模型太慢，DriveFlow 用流匹配把采样降到 **1 步**。</point>
+      <point>方法细节与证据尚未精读，后面的结论都停留在作者主张。</point>
+    </tldr>
+  </body>
+</document>
