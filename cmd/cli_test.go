@@ -143,7 +143,7 @@ func TestValidateExit(t *testing.T) {
 	}
 
 	bad := filepath.Join(t.TempDir(), "bad.xml")
-	if err := os.WriteFile(bad, []byte(`<report></report>`), 0o600); err != nil {
+	if err = os.WriteFile(bad, []byte(`<report></report>`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out, err = runCLI(t, "validate", bad)
@@ -183,7 +183,7 @@ func TestValidateHintAndSchemaCommand(t *testing.T) {
 	// #16: <claim> in version="1.0" exits via ValidationFailedError with TAG_REQUIRES_1_1.
 	v10Claim := filepath.Join(dir, "claim10.xml")
 	xmlClaim := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><section title="S"><claim level="claim">x</claim></section></body></document>`
-	if err := os.WriteFile(v10Claim, []byte(xmlClaim), 0o600); err != nil {
+	if err = os.WriteFile(v10Claim, []byte(xmlClaim), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	outClaim, err := runCLI(t, "validate", v10Claim)

@@ -242,7 +242,7 @@ func (s *Server) getItemContent(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

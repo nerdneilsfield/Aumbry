@@ -23,16 +23,16 @@ func TestWebDAVRoundTrip(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if ok, err := store.Exists(ctx, "/xml/a.xml"); err != nil || ok {
-		t.Fatalf("Exists before put = %v, %v", ok, err)
+	if ok, existsErr := store.Exists(ctx, "/xml/a.xml"); existsErr != nil || ok {
+		t.Fatalf("Exists before put = %v, %v", ok, existsErr)
 	}
-	if _, err := store.Open(ctx, "/xml/a.xml"); !errors.Is(err, ErrNotFound) {
+	if _, err = store.Open(ctx, "/xml/a.xml"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Open missing = %v, want ErrNotFound", err)
 	}
-	if err := store.Put(ctx, "/xml/a.xml", strings.NewReader("<a/>")); err != nil {
+	if err = store.Put(ctx, "/xml/a.xml", strings.NewReader("<a/>")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put(ctx, "/xml/a.xml", strings.NewReader("<b/>")); err != nil {
+	if err = store.Put(ctx, "/xml/a.xml", strings.NewReader("<b/>")); err != nil {
 		t.Fatalf("overwrite: %v", err)
 	}
 	r, err := store.Open(ctx, "/xml/a.xml")
@@ -64,12 +64,12 @@ func TestWebDAVList(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if _, err := store.List(ctx, "/xml"); !errors.Is(err, ErrNotFound) {
+	if _, err = store.List(ctx, "/xml"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("List missing dir = %v, want ErrNotFound", err)
 	}
 
 	for _, name := range []string{"/xml/b.xml", "/xml/a.xml", "/xml/sub/c.xml"} {
-		if err := store.Put(ctx, name, strings.NewReader("<x/>")); err != nil {
+		if err = store.Put(ctx, name, strings.NewReader("<x/>")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -115,7 +115,7 @@ func TestWebDAVProbe(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		release := make(chan struct{})
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			select {
 			case <-release:
 			case <-r.Context().Done():
@@ -220,7 +220,7 @@ func TestWebDAVIncomplete207Rejected(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := store.Probe(ctx); !errors.Is(err, ErrUnreachable) {
+			if err = store.Probe(ctx); !errors.Is(err, ErrUnreachable) {
 				t.Fatalf("Probe() = %v, want ErrUnreachable", err)
 			}
 			exists, err := store.Exists(ctx, "/xml/a.xml")

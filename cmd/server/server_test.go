@@ -173,26 +173,26 @@ func TestMaintenanceCommands(t *testing.T) {
 		manualAssetReadme:  "operator asset readme",
 		manualAssetImage:   "manual image",
 	} {
-		if err := store.Put(ctx, path, strings.NewReader(body)); err != nil {
+		if err = store.Put(ctx, path, strings.NewReader(body)); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if _, err := database.ExecContext(ctx, `INSERT INTO items
+	if _, err = database.ExecContext(ctx, `INSERT INTO items
 		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
 		VALUES ('item00000001', NULL, 'report', 'Live', '2026-11-21', 'sum', '[]', 'agent', '', '[]', ?, 'text')`, liveXMLPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, 'image/svg+xml', 6, ?)`, liveAssetHash, liveAssetPath); err != nil {
+	if _, err = database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, 'image/svg+xml', 6, ?)`, liveAssetHash, liveAssetPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO item_assets (item_id, asset_hash) VALUES ('item00000001', ?)`, liveAssetHash); err != nil {
+	if _, err = database.ExecContext(ctx, `INSERT INTO item_assets (item_id, asset_hash) VALUES ('item00000001', ?)`, liveAssetHash); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, 'image/svg+xml', 18, ?)`, orphanDBHash, orphanDBAssetPath); err != nil {
+	if _, err = database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, 'image/svg+xml', 18, ?)`, orphanDBHash, orphanDBAssetPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Close(); err != nil {
+	if err = database.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,22 +202,22 @@ func TestMaintenanceCommands(t *testing.T) {
 		cmd.SetOut(&out)
 		cmd.SetErr(&errBuf)
 		cmd.SetArgs(append([]string{"--config", cfgPath}, args...))
-		err := cmd.Execute()
-		return out.String(), err
+		execErr := cmd.Execute()
+		return out.String(), execErr
 	}
 
 	// 1. backup produces a valid snapshot that passes verify-storage when copied to a fresh data_dir.
 	snapDir := t.TempDir()
 	snapPath := filepath.Join(snapDir, "aumbry.db")
-	if out, err := runCLI("backup", "--out", snapPath); err != nil || !strings.Contains(out, snapPath) {
-		t.Fatalf("backup = %q, %v", out, err)
+	if out, backupErr := runCLI("backup", "--out", snapPath); backupErr != nil || !strings.Contains(out, snapPath) {
+		t.Fatalf("backup = %q, %v", out, backupErr)
 	}
 	snapDB, err := sqlx.Open("sqlite", snapPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var integrity string
-	if err := snapDB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
+	if err = snapDB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
 		snapDB.Close()
 		t.Fatalf("snapshot integrity_check = %q, %v", integrity, err)
 	}
@@ -227,7 +227,7 @@ func TestMaintenanceCommands(t *testing.T) {
 	snapCfgPath := filepath.Join(t.TempDir(), "snap.toml")
 	rawCfg, _ := os.ReadFile(cfgPath)
 	snapCfg := strings.Replace(string(rawCfg), filepath.ToSlash(dataDir), filepath.ToSlash(snapDir), 1)
-	if err := os.WriteFile(snapCfgPath, []byte(snapCfg), 0o600); err != nil {
+	if err = os.WriteFile(snapCfgPath, []byte(snapCfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	{
@@ -235,7 +235,7 @@ func TestMaintenanceCommands(t *testing.T) {
 		cmd := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"--config", snapCfgPath, "verify-storage"})
-		if err := cmd.Execute(); err != nil {
+		if err = cmd.Execute(); err != nil {
 			t.Fatalf("verify-storage on backup failed: %v", err)
 		}
 	}
@@ -263,11 +263,11 @@ func TestMaintenanceCommands(t *testing.T) {
 			t.Errorf("gc --dry-run listed non-Aumbry object %s:\n%s", untouched, dryOut)
 		}
 	}
-	if _, err := runCLI("gc"); err == nil {
+	if _, err = runCLI("gc"); err == nil {
 		_ = lock.Close()
 		t.Fatal("destructive gc succeeded while server lock was held, want refusal")
 	}
-	if err := lock.Close(); err != nil {
+	if err = lock.Close(); err != nil {
 		t.Fatal(err)
 	}
 

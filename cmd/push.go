@@ -45,7 +45,7 @@ func newPushCommand() *cobra.Command {
 			doc, issues := schema.Parse(input, schema.Options{HasAsset: schema.DirAssetChecker(dir)})
 			if len(issues) > 0 {
 				result := schema.ValidationResult{File: file, Errors: issues}
-				if err := writeValidation(command.OutOrStdout(), result, "json"); err != nil {
+				if err = writeValidation(command.OutOrStdout(), result, "json"); err != nil {
 					return err
 				}
 				return &ValidationFailedError{}
@@ -66,7 +66,7 @@ func newPushCommand() *cobra.Command {
 			}
 
 			if draft || createOnly {
-				if _, _, err := client.ListDirs(command.Context(), profile.Server, profile.Token, nil); err != nil {
+				if _, _, err = client.ListDirs(command.Context(), profile.Server, profile.Token, nil); err != nil {
 					var apiErr *client.APIError
 					if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
 						return fmt.Errorf("server does not support --draft/--create-only (/api/v1/agent/dirs returned 404): upgrade server to v1.1")

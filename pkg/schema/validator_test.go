@@ -333,7 +333,7 @@ func TestValidateFileRejectsSymlinkEscape(t *testing.T) {
 	}
 
 	inDirDoc := filepath.Join(docDir, "ok.xml")
-	if err := os.WriteFile(inDirDoc, []byte(doc11(`<figure src="./imgs/ok.png"/>`)), 0o644); err != nil {
+	if err = os.WriteFile(inDirDoc, []byte(doc11(`<figure src="./imgs/ok.png"/>`)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	res, err = ValidateFile(inDirDoc)

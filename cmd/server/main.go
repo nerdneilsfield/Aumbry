@@ -1,3 +1,4 @@
+// Command aumbry-server runs the Aumbry HTTP server and maintenance subcommands.
 package main
 
 import (
@@ -68,7 +69,9 @@ func newCheckConfigCmd(configPath *string) *cobra.Command {
 				return err
 			}
 			for _, w := range res.Warnings {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w)
+				if _, err = fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w); err != nil {
+					return err
+				}
 			}
 			out, err := res.Config.FormatMasked()
 			if err != nil {

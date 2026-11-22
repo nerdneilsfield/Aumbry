@@ -109,27 +109,6 @@ func (t *dirTree) accessible(v viewer, id string) bool {
 	return complete && !protected
 }
 
-// accessibleSet returns every directory v may see.
-func (t *dirTree) accessibleSet(v viewer) map[string]bool {
-	set := make(map[string]bool, len(t.dirs))
-	var walk func(id string, open, locked bool)
-	walk = func(id string, open, locked bool) {
-		d := t.dirs[id]
-		open = open || v.unlocked[id]
-		locked = locked || d.PasswordHash != ""
-		if v.admin || open || !locked {
-			set[id] = true
-		}
-		for _, kid := range t.kids[id] {
-			walk(kid, open, locked)
-		}
-	}
-	for _, root := range t.kids[""] {
-		walk(root, false, false)
-	}
-	return set
-}
-
 // subtree returns id and all its descendants.
 func (t *dirTree) subtree(id string) []string {
 	var out []string

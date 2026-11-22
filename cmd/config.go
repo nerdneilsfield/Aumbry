@@ -51,7 +51,7 @@ func newConfigSetCommand() *cobra.Command {
 			if file.ActiveProfile == "" {
 				file.ActiveProfile = profileName
 			}
-			if err := cliconfig.Save(file); err != nil {
+			if err = cliconfig.Save(file); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "profile %q saved\n", profileName)
@@ -113,7 +113,7 @@ func newConfigUseCommand() *cobra.Command {
 				return fmt.Errorf("unknown profile %q: create it with `aumbry config set --profile %s`", args[0], args[0])
 			}
 			file.ActiveProfile = args[0]
-			if err := cliconfig.Save(file); err != nil {
+			if err = cliconfig.Save(file); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "active profile: %s\n", args[0])
