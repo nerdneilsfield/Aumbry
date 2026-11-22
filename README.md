@@ -98,7 +98,7 @@ This example starts Aumbry from a `.env` file with Docker Compose and validates 
 
 5. Open `http://127.0.0.1:8080/admin` in your browser, sign in with your configured admin credentials, and select **新建根目录** to create your first directory (note its 12-character ID or fetch it with `aumbry dirs`).
 
-For TOML container configuration (`docker-compose.toml.yml`), host binary runs, backups, and offline garbage collection, see [Deployment guide](docs/en/deployment.md).
+For TOML container configuration (`docker-compose.toml.yml`), host binary runs, backups, and offline garbage collection, see [Deployment guide](docs/en/deployment.md). Compose examples for running behind Traefik, nginx, or Caddy are in [`examples/deploy/`](examples/deploy/).
 
 ## Usage
 

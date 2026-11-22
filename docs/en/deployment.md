@@ -145,6 +145,74 @@ To run behind Nginx, Caddy, or Traefik:
 1. Set `trusted_proxies` to your proxy IPs or CIDRs, for example `trusted_proxies = ["127.0.0.1", "10.0.0.0/8"]` (or `AUMBRY_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8`). Only requests whose direct TCP peer matches an entry in `trusted_proxies` honor `X-Forwarded-For` (resolved right-to-left skipping trusted proxies) and `X-Forwarded-Proto: https`.
 2. Ensure the reverse proxy passes `X-Forwarded-For`, `X-Forwarded-Proto`, and `Host`, and allows request bodies of at least `100 MiB` (for example `client_max_body_size 100m;` in Nginx) so multi-figure `aumbry push` requests are not truncated before reaching Aumbry.
 
+The directories `examples/deploy/traefik`, `examples/deploy/nginx`, and `examples/deploy/caddy` contain ready-to-copy Compose setups for these proxies. In all three, Aumbry and the proxy share one Docker network and Aumbry publishes no port. Each Compose file fixes that network to the subnet `172.31.250.0/24` and passes the same CIDR to Aumbry as `AUMBRY_TRUSTED_PROXIES`, so Aumbry honors forwarded headers only from containers on that network. If your host already uses that range, set `PROXY_SUBNET` in `.env` to another one; the subnet and `AUMBRY_TRUSTED_PROXIES` both follow it. Do not set `AUMBRY_TRUSTED_PROXIES` in `.env`, because the value in the Compose file takes precedence.
+
+Without `trusted_proxies`, Aumbry sees only the proxy's container address. All visitors then share one rate-limit bucket (the login limit of 10 requests per minute applies to everyone together), and session cookies are issued without `Secure`.
+
+The examples use the published image `ghcr.io/nerdneilsfield/aumbry:latest`; pin a release tag in production. They run a single Aumbry instance, and the image has no `curl` or `wget`, so the Aumbry service defines no container healthcheck. To configure Aumbry with `aumbry.toml` instead of `.env`, mount the file as `docker-compose.toml.yml` does, set `trusted_proxies = ["172.31.250.0/24"]` (or your `PROXY_SUBNET`), and remove the `AUMBRY_TRUSTED_PROXIES` line from the Compose file, because environment variables override TOML keys.
+
+To confirm that `trusted_proxies` took effect, log in through the proxy and inspect the response headers. Replace the host name and password:
+
+```sh
+curl -si -X POST https://aumbry.example.com/api/v1/admin/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<your-password>"}' | grep -i '^set-cookie'
+```
+
+The `aumbry_admin` cookie must include the `Secure` attribute. If it does not, the proxy's address is outside `trusted_proxies`, or the proxy does not send `X-Forwarded-Proto: https`.
+
+### Deploy with Traefik
+
+The files are `examples/deploy/traefik/docker-compose.yml` and `.env.example`. The example uses Traefik v3, obtains a Let's Encrypt certificate with the HTTP-01 challenge, and redirects HTTP to HTTPS.
+
+1. Make sure the DNS record of your host name points to the Docker host and that ports `80` and `443` are reachable from the internet.
+2. In `examples/deploy/traefik`, copy the template and restrict permissions:
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   ```
+
+3. Edit `.env`. Set `PUBLIC_HOST` (host name), `ACME_EMAIL` (Let's Encrypt account e-mail), and the Aumbry values (`AUMBRY_ADMIN_PASSWORD_HASH`, `AUMBRY_API_TOKENS`, `AUMBRY_COOKIE_SECRET`, `AUMBRY_WEBDAV_URL`, `AUMBRY_WEBDAV_USER`, `AUMBRY_WEBDAV_PASS`). Keep the single quotes around the bcrypt hash.
+4. Start the stack:
+
+   ```sh
+   docker compose up -d
+   ```
+
+Traefik stores certificates in the `traefik-letsencrypt` volume. It probes `GET /readyz` every 10 s; while SQLite or WebDAV is unavailable, Traefik stops routing to Aumbry and answers `503` itself. To keep Aumbry's own responses during a WebDAV outage, change the healthcheck path label to `/healthz`. The example also raises the entrypoint `readTimeout` to `300s`, because the Traefik v3 default of `60s` covers reading the whole request body and would cut off slow uploads of up to 100 MiB. Traefik discards `X-Forwarded-*` headers that clients send, so Aumbry receives only the values Traefik sets.
+
+### Deploy with nginx
+
+The files are `examples/deploy/nginx/docker-compose.yml`, `aumbry.conf`, and `.env.example`. nginx terminates TLS with certificate files you provide and redirects HTTP to HTTPS. The example does not run certbot; obtain the certificate with certbot or acme.sh.
+
+1. In `examples/deploy/nginx`, copy `.env.example` to `.env`, restrict its permissions with `chmod 600 .env`, and fill in the Aumbry values.
+2. In `aumbry.conf`, replace `aumbry.example.com` with your host name in both `server_name` lines.
+3. Place the certificate chain and private key in `examples/deploy/nginx/certs/` as `fullchain.pem` and `privkey.pem`.
+4. Start the stack:
+
+   ```sh
+   docker compose up -d
+   ```
+
+After each certificate renewal, copy the new files into `certs/` and run `docker compose exec nginx nginx -s reload`.
+
+`aumbry.conf` sets `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. It sets `client_max_body_size 101m` because Aumbry rejects request bodies above 100 MiB (nginx counts `m` as MiB); with the larger nginx limit, an oversized push receives Aumbry's JSON `413` response instead of an nginx error page. `proxy_send_timeout` and `proxy_read_timeout` are `120s`. They apply between two successive writes or reads, and Aumbry sends no response until it has uploaded the objects of an ingest request to WebDAV.
+
+### Deploy with Caddy
+
+The files are `examples/deploy/caddy/docker-compose.yml`, `Caddyfile`, and `.env.example`. This is the minimal setup: Caddy obtains and renews the certificate and redirects HTTP to HTTPS without further configuration.
+
+1. Make sure the DNS record of your host name points to the Docker host and that ports `80` and `443` (TCP, and UDP for HTTP/3) are reachable from the internet.
+2. In `examples/deploy/caddy`, copy `.env.example` to `.env`, restrict its permissions with `chmod 600 .env`, and set `PUBLIC_HOST`, `ACME_EMAIL`, and the Aumbry values. Compose passes the first two to the Caddy container, and the `Caddyfile` reads them as `{$PUBLIC_HOST}` and `{$ACME_EMAIL}`.
+3. Start the stack:
+
+   ```sh
+   docker compose up -d
+   ```
+
+Keep the `caddy-data` volume; it holds the certificates. Caddy sets `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` on its own and ignores the values clients send. It does not limit request body size, so Aumbry's 100 MiB limit applies.
+
 ## Backup, storage verification, and maintenance
 
 Every maintenance command uses the same config resolution (`--config`, `AUMBRY_CONFIG`, `./aumbry.toml`, `/etc/aumbry/config.toml`, or environment variables).

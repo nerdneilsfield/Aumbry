@@ -1,0 +1,11 @@
+{
+	# ACME account e-mail. Both values come from the caddy container environment.
+	email {$ACME_EMAIL}
+}
+
+# A site address with a real host name turns on automatic HTTPS and the HTTP -> HTTPS redirect.
+{$PUBLIC_HOST} {
+	# Caddy sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host itself and ignores
+	# values sent by clients. It does not cap request bodies; Aumbry enforces its own limits.
+	reverse_proxy aumbry:8080
+}
