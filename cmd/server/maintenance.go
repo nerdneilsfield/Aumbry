@@ -79,14 +79,8 @@ func newGCCmd(configPath *string) *cobra.Command {
 				return err
 			}
 			if !dryRun {
-				if _, statErr := os.Stat(filepath.Join(res.Config.DataDir, "aumbry.db")); statErr != nil {
-					return fmt.Errorf("database at %s: %w", filepath.Join(res.Config.DataDir, "aumbry.db"), statErr)
-				}
-				lock, lockErr := db.TryLockDataDir(res.Config.DataDir)
+				lock, lockErr := lockOffline(res.Config.DataDir, "destructive gc", "--dry-run")
 				if lockErr != nil {
-					if errors.Is(lockErr, db.ErrDataDirLocked) {
-						return errors.New("refusing to run destructive gc while aumbry-server is running; stop the server first or pass --dry-run")
-					}
 					return lockErr
 				}
 				defer func() { _ = lock.Close() }()
@@ -107,6 +101,20 @@ func newGCCmd(configPath *string) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "list orphan objects without deleting anything (safe while server runs)")
 	return cmd
+}
+
+// lockOffline takes the data_dir lock for a maintenance command that must not run next to a
+// live server. It refuses with a message naming the command and its read-only alternative.
+func lockOffline(dataDir, command, readOnlyFlag string) (*db.DirLock, error) {
+	dbPath := filepath.Join(dataDir, "aumbry.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, fmt.Errorf("database at %s: %w", dbPath, err)
+	}
+	lock, err := db.TryLockDataDir(dataDir)
+	if errors.Is(err, db.ErrDataDirLocked) {
+		return nil, fmt.Errorf("refusing to run %s while aumbry-server is running; stop the server first or pass %s", command, readOnlyFlag)
+	}
+	return lock, err
 }
 
 func loadAndWarn(cmd *cobra.Command, configPath string) (config.LoadResult, error) {

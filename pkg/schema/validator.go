@@ -24,6 +24,10 @@ type Options struct {
 	// HasAsset reports whether the normalized local image path exists.
 	// When nil, figure existence is not checked.
 	HasAsset func(normalized string) bool
+	// StoredAssets marks input whose figure src values were already rewritten to stored asset
+	// URLs (as in the XML kept in storage). Figure src values are then neither normalized nor
+	// checked, and Document.Assets stays empty.
+	StoredAssets bool
 }
 
 // protocolSource is the declarative rule set; see the comment at its top for the message format.
@@ -185,6 +189,9 @@ func validateHTTPURL(line int, field, raw string) *ValidationError {
 
 // checkFigures validates figure src values against the local filesystem rules and collects Assets.
 func (d *Document) checkFigures(opts Options) []ValidationError {
+	if opts.StoredAssets {
+		return nil
+	}
 	var issues []ValidationError
 	seen := map[string]bool{}
 	for _, n := range find(d.tree, d.figureXPath()) {
