@@ -160,6 +160,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 			Code:    "INVALID_CHART",
 			Field:   "chart/series",
 			Message: fmt.Sprintf("at /series: at most %d series allowed, got %d", maxChartSeries, len(series)),
+			Hint:    fmt.Sprintf("keep at most %d series", maxChartSeries),
 		})
 	}
 	if chartType == "pie" && len(series) != 1 {
@@ -168,6 +169,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 			Code:    "INVALID_CHART",
 			Field:   "chart/series",
 			Message: fmt.Sprintf("at /series: pie chart requires exactly 1 series, got %d", len(series)),
+			Hint:    "use exactly one series for a pie chart, or switch to type=\"bar\" or \"line\"",
 		})
 	}
 
@@ -184,6 +186,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 				Code:    "INVALID_CHART",
 				Field:   chartField(base + "/name"),
 				Message: fmt.Sprintf("at %s/name: series name must not be empty", base),
+				Hint:    "give every series a non-empty \"name\"",
 			})
 		}
 
@@ -195,6 +198,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 				Code:    "INVALID_CHART",
 				Field:   chartField(base + "/data"),
 				Message: fmt.Sprintf("at %s/data: data length (%d) must equal categories length (%d)", base, len(data), categoriesLen),
+				Hint:    "make each series data array the same length as categories",
 			})
 		}
 
@@ -222,6 +226,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 					Code:    "INVALID_CHART",
 					Field:   chartField(errBase),
 					Message: fmt.Sprintf("at %s: %s chart does not support series[].err", errBase, chartType),
+					Hint:    "remove \"err\" from this series, or use type=\"bar\" or \"line\"",
 				})
 				continue
 			}
@@ -231,6 +236,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 					Code:    "INVALID_CHART",
 					Field:   chartField(errBase),
 					Message: fmt.Sprintf("at %s: err length (%d) must equal data length (%d)", errBase, len(errs), len(data)),
+					Hint:    "give err exactly one value per data point",
 				})
 			}
 			for j, ev := range errs {
@@ -245,6 +251,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 						Code:    "INVALID_CHART",
 						Field:   chartField(ep),
 						Message: fmt.Sprintf("at %s: err must be non-negative", ep),
+						Hint:    "use err values >= 0",
 					})
 				}
 			}
@@ -257,6 +264,7 @@ func validateChartSemantics(line int, chartType string, val any) []ValidationErr
 			Code:    "INVALID_CHART",
 			Field:   "chart/series",
 			Message: fmt.Sprintf("at /series: total data points (%d) exceeds limit (%d)", totalPoints, maxChartPoints),
+			Hint:    "reduce the number of data points or split the data into several charts",
 		})
 	}
 	return issues
@@ -286,6 +294,7 @@ func checkFiniteJSONNumber(line int, path string, v any) *ValidationError {
 			Code:    "INVALID_CHART",
 			Field:   chartField(path),
 			Message: fmt.Sprintf("at %s: number must be finite", path),
+			Hint:    "use finite JSON numbers (no NaN or Infinity)",
 		}
 	}
 	return nil

@@ -102,10 +102,6 @@
     <rule context="/document[@version='1.1']/body | /document[@version='1.1']/body//stages/stage">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
-    <rule context="/document[@version='1.1']/body//section | /document[@version='1.1']/body//collapse | /document[@version='1.1']/body//tabs/tab | /document[@version='1.1']/body//steps/step">
-      <assert test="normalize-space(@title) != ''">MISSING_ATTR|<value-of select="name()"/>.title|&lt;<value-of select="name()"/>&gt; requires the "title" attribute</assert>
-      <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
-    </rule>
     <rule context="/document[@version='1.1']/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document[@version='1.1']/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
     </rule>
@@ -117,6 +113,15 @@
     </rule>
     <rule context="/document[@version='1.1']/body//tab/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))] | /document[@version='1.1']/body//step/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
+    </rule>
+  </pattern>
+
+  <!-- Separate pattern on purpose: within one pattern a node fires only the first rule whose context matches it,
+       so a <collapse>/<section> nested in a leaf-only container would never reach the child rules above. -->
+  <pattern id="v11-titled-containers">
+    <rule context="/document[@version='1.1']/body//section | /document[@version='1.1']/body//collapse | /document[@version='1.1']/body//tabs/tab | /document[@version='1.1']/body//steps/step">
+      <assert test="normalize-space(@title) != ''">MISSING_ATTR|<value-of select="name()"/>.title|&lt;<value-of select="name()"/>&gt; requires the "title" attribute</assert>
+      <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
   </pattern>
 

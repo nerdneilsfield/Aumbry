@@ -148,3 +148,81 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 		}
 	}
 }
+
+// TestSpecContainerRulesMatchValidator checks every declared v1.1 parent/child pair of the block
+// containers against the real validator, so Spec() and protocol.sch cannot drift apart again.
+func TestSpecContainerRulesMatchValidator(t *testing.T) {
+	always := Options{HasAsset: func(string) bool { return true }}
+	containers := Spec().Versions["1.1"].Containers
+
+	snippets := map[string]string{
+		"section":       `<section title="x"/>`,
+		"sources":       `<sources><source title="t" url="https://example.com"/></sources>`,
+		"md":            `<md>x</md>`,
+		"figure":        `<figure src="a.png"/>`,
+		"paper-card":    `<paper-card title="t" url="https://example.com"/>`,
+		"repo-card":     `<repo-card name="n" url="https://example.com"/>`,
+		"compare-table": `<compare-table><columns><col>A</col></columns><row><cell>1</cell></row></compare-table>`,
+		"callout":       `<callout type="info">x</callout>`,
+		"collapse":      `<collapse title="c"><md>x</md></collapse>`,
+		"claim":         `<claim level="claim">x</claim>`,
+		"equation":      `<equation>x</equation>`,
+		"mermaid":       `<mermaid>graph TD;A-->B</mermaid>`,
+		"chart":         `<chart type="bar"><![CDATA[{"categories":["a"],"series":[{"name":"s","data":[1]}]}]]></chart>`,
+		"metrics":       `<metrics><metric label="l" value="1"/></metrics>`,
+		"steps":         `<steps><step title="s"><md>x</md></step></steps>`,
+		"tabs":          `<tabs><tab title="a"><md>x</md></tab><tab title="b"><md>y</md></tab></tabs>`,
+		"timeline":      `<timeline><event date="2024" title="e">d</event></timeline>`,
+		"glossary":      `<glossary><term name="t">d</term></glossary>`,
+		"references":    `<references><ref id="r1" title="t"/></references>`,
+		"figure-group":  `<figure-group cols="2"><figure src="a.png"/><figure src="b.png"/></figure-group>`,
+		"code-block":    `<code-block>x</code-block>`,
+		"quote":         `<quote>x</quote>`,
+		"checklist":     `<checklist><check status="done">x</check></checklist>`,
+		"search-log":    `<search-log><query source="s">q</query></search-log>`,
+		"stages":        `<stages id="g"><stage id="g1" title="s"/></stages>`,
+		"quiz":          `<quiz id="q"><question>Q</question><option correct="true">A</option><option>B</option></quiz>`,
+		"next-steps":    `<next-steps><option target="#s-anchor">go</option></next-steps>`,
+		"tldr":          `<tldr><point>p</point></tldr>`,
+		"news-item":     `<news-item title="n">s</news-item>`,
+	}
+	wrappers := map[string]func(string) string{
+		"body":     func(s string) string { return s },
+		"section":  func(s string) string { return `<section title="w">` + s + `</section>` },
+		"stage":    func(s string) string { return `<stages id="w"><stage id="w1" title="w">` + s + `</stage></stages>` },
+		"collapse": func(s string) string { return `<collapse title="w">` + s + `</collapse>` },
+		"tab": func(s string) string {
+			return `<tabs><tab title="a">` + s + `</tab><tab title="b"><md>y</md></tab></tabs>`
+		},
+		"step": func(s string) string { return `<steps><step title="a">` + s + `</step></steps>` },
+	}
+
+	for _, block := range v11AllBlocks {
+		if _, ok := snippets[block]; !ok {
+			t.Fatalf("test has no snippet for block tag %q; add one", block)
+		}
+	}
+	for container, wrap := range wrappers {
+		rule, ok := containers[container]
+		if !ok {
+			t.Fatalf("Spec() v1.1 has no container %q", container)
+		}
+		for _, block := range v11AllBlocks {
+			want := slices.Contains(rule.AllowedChildren, block)
+			input := doc11(`<section id="anchor" title="anchor"/>` + wrap(snippets[block]))
+			_, issues := Parse([]byte(input), always)
+			if want && len(issues) != 0 {
+				t.Errorf("Spec() allows <%s> inside <%s> but validator rejects it: %+v", block, container, issues)
+			}
+			if !want && len(issues) == 0 {
+				t.Errorf("Spec() forbids <%s> inside <%s> but validator accepts it", block, container)
+			}
+			// The parent side of the declaration must agree with the child side.
+			if blockRule, ok := containers[block]; ok {
+				if got := slices.Contains(blockRule.AllowedParents, container); got != want {
+					t.Errorf("Spec() disagrees with itself: <%s> children allow <%s>=%v but <%s> parents allow <%s>=%v", container, block, want, block, container, got)
+				}
+			}
+		}
+	}
+}
