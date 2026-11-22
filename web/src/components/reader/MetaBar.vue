@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Bot, CalendarDays, ExternalLink } from 'lucide-vue-next'
 import { httpUrl } from '@/lib/url'
+import TagChip from '@/components/TagChip.vue'
 import ReadingControls from './ReadingControls.vue'
 
 defineProps<{
@@ -10,6 +11,8 @@ defineProps<{
   sourceAgent?: string
   tags?: string[]
   canonicalUrl?: string
+  /** When set, tags link to that directory's page filtered by the tag. */
+  tagDirId?: string
 }>()
 </script>
 
@@ -21,7 +24,7 @@ defineProps<{
     <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-gray-400">
       <span v-if="date" class="inline-flex items-center gap-1.5"><CalendarDays class="size-4" />{{ date }}</span>
       <span v-if="sourceAgent" class="inline-flex items-center gap-1.5"><Bot class="size-4" />{{ sourceAgent }}</span>
-      <span v-for="t in tags" :key="t" class="chip">{{ t }}</span>
+      <TagChip v-for="t in tags" :key="t" :tag="t" :dir-id="tagDirId" />
       <a v-if="httpUrl(canonicalUrl)" :href="httpUrl(canonicalUrl)" target="_blank" rel="noopener noreferrer" class="btn sm:ml-auto">
         <ExternalLink class="size-4" />原文链接
       </a>
