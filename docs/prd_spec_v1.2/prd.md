@@ -17,7 +17,7 @@ Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebD
 目标：
 
 * **G1 本地目录后端**：对象直接存在本机目录，零外部依赖，单机部署最简单。
-* **G2 S3 兼容后端**：一个实现覆盖 AWS S3、Cloudflare R2、MinIO、Backblaze B2、Wasabi 等所有 S3 协议服务。
+* **G2 S3 兼容后端**：一个实现覆盖 AWS S3、Cloudflare R2、MinIO、Backblaze B2、Wasabi 等所有 S3 协议服务；R2 另有 `r2` 便捷类型，只需账户 ID，不用自己拼端点。
 * **G3 保留 WebDAV**：现有 WebDAV 后端继续可用，行为不变。
 * **G4 后端可选**：由配置选择其中之一，运维命令（`backup`、`verify-storage`、`gc`、`reindex`）与就绪探针对三种后端行为一致。
 
@@ -37,7 +37,7 @@ Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebD
 
 ### 2.1 选择后端
 
-新增配置键 `storage`（环境变量 `AUMBRY_STORAGE`），取值 `local`、`webdav`、`s3`。**必填，没有默认值**：为避免漏配后悄悄指向一个空的新存储，缺失时启动失败并列出全部缺失项（沿用 v1.1 的「一次性列出全部缺失项，同时给出 TOML 键和 env 名」）。
+新增配置键 `storage`（环境变量 `AUMBRY_STORAGE`），取值 `local`、`webdav`、`s3`、`r2`。`r2` 是 `s3` 的便捷写法：由账户 ID 拼出端点、区域固定为 `auto`，其余行为与 `s3` 完全相同（同一个实现）。**必填，没有默认值**：为避免漏配后悄悄指向一个空的新存储，缺失时启动失败并列出全部缺失项（沿用 v1.1 的「一次性列出全部缺失项，同时给出 TOML 键和 env 名」）。
 
 只校验被选中的后端所需的键。未被选中的后端的键如果被设置，`check-config` 与启动日志给出一条警告（`storage = "local" ignores [webdav] settings`），不报错。
 
@@ -45,7 +45,7 @@ Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebD
 
 | TOML 键 | 环境变量 | 适用 | 必填 | 默认 | 说明 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `storage` | `AUMBRY_STORAGE` | 全部 | 是 | – | `local` / `webdav` / `s3` |
+| `storage` | `AUMBRY_STORAGE` | 全部 | 是 | – | `local` / `webdav` / `s3` / `r2` |
 | `local.path` | `AUMBRY_LOCAL_PATH` | local | 否 | `<data_dir>/objects` | 对象根目录，必须是绝对路径；不存在时自动创建（目录权限 `0700`） |
 | `webdav.url` | `AUMBRY_WEBDAV_URL` | webdav | 是 | – | 不变 |
 | `webdav.user` | `AUMBRY_WEBDAV_USER` | webdav | 是 | – | 不变 |
@@ -55,12 +55,18 @@ Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebD
 | `s3.bucket` | `AUMBRY_S3_BUCKET` | s3 | 是 | – | 存储桶名，必须已存在，Aumbry 不创建桶 |
 | `s3.access_key_id` | `AUMBRY_S3_ACCESS_KEY_ID` | s3 | 是 | – | |
 | `s3.secret_access_key` | `AUMBRY_S3_SECRET_ACCESS_KEY` | s3 | 是 | – | 属于密钥，`check-config` 掩码，仅保留末 4 位 |
+| `r2.account_id` | `AUMBRY_R2_ACCOUNT_ID` | r2 | 是 | – | Cloudflare 账户 ID（32 位十六进制）；端点由它拼成 `https://<account_id>.r2.cloudflarestorage.com`，区域固定为 `auto` |
+| `r2.bucket` | `AUMBRY_R2_BUCKET` | r2 | 是 | – | 同 `s3.bucket` |
+| `r2.access_key_id` | `AUMBRY_R2_ACCESS_KEY_ID` | r2 | 是 | – | R2 API 令牌的访问密钥 ID |
+| `r2.secret_access_key` | `AUMBRY_R2_SECRET_ACCESS_KEY` | r2 | 是 | – | 属于密钥，`check-config` 掩码，仅保留末 4 位 |
+| `r2.prefix` | `AUMBRY_R2_PREFIX` | r2 | 否 | 空 | 同 `s3.prefix` |
 | `s3.prefix` | `AUMBRY_S3_PREFIX` | s3 | 否 | 空 | 桶内的前缀，如 `aumbry/`；Aumbry 只读写该前缀之下的对象，两个实例用不同前缀可以共用一个桶 |
 | `s3.path_style` | `AUMBRY_S3_PATH_STYLE` | s3 | 否 | `false` | 使用路径式寻址（`endpoint/bucket/key`）；MinIO 等自建服务通常需要 `true`，R2 与 AWS 用默认即可 |
 
 校验补充：
 
 * `local.path` 不是绝对路径 → 报错；`storage = "local"` 且 `data_dir` 与 `local.path` 都不可用时一并报出。
+* `r2.account_id` 必须是 32 位十六进制字符串。需要 R2 的欧盟等司法辖区端点（`<account>.eu.r2.cloudflarestorage.com`）时，改用 `storage = "s3"` 并显式写 `s3.endpoint`。
 * `s3.endpoint` 非空时必须是带 `http://` 或 `https://` 的合法 URL，不得含路径、查询或用户信息。
 * `s3.prefix` 规范化为「无前导 `/`，非空时以 `/` 结尾」；含 `..` 段 → 报错。
 * `check-config` 不连接任何存储，只做配置的加载与校验；密钥一律掩码。
@@ -73,10 +79,9 @@ Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebD
 storage = "local"
 
 # Cloudflare R2
-storage = "s3"
-[s3]
-endpoint = "https://<account-id>.r2.cloudflarestorage.com"
-region = "auto"
+storage = "r2"
+[r2]
+account_id = "<32 位账户 ID>"
 bucket = "aumbry"
 access_key_id = "..."
 secret_access_key = "..."
@@ -133,7 +138,7 @@ secret_access_key = "..."
 * **超时**：拨号 5 秒、响应头 30 秒，大对象流式传输不设整体超时；全部请求受 `ctx` 约束。上传的是内容寻址的对象，可重复写入而无副作用，因此允许客户端库内置的有限次重试，但总时间受 `ctx` 限制。
 * **错误映射**：认证失败（访问密钥错误、签名不匹配、被拒绝）→ `ErrAuth`；桶不存在或网络不可达 → `ErrUnreachable`；超时 → `ErrTimeout`。错误文本写入日志前去掉密钥与签名。
 * **TLS 与地址**：`https://` 端点用系统根证书校验；`http://` 允许，用于内网与本地自建服务。
-* **R2 说明**（写进文档，不做实测）：端点是账户专属的 `https://<account-id>.r2.cloudflarestorage.com`，区域填 `auto`；API 令牌需要对该桶的读写权限；Aumbry 用到的操作（单对象读写删、按前缀列举、元数据查询）都在 R2 的 S3 兼容范围内，但本版没有在真实 R2 上验证，以 [Cloudflare 的 S3 兼容文档](https://developers.cloudflare.com/r2/api/s3/api/)为准。
+* **R2 说明**（写进文档，不做实测）：`storage = "r2"` 内部用账户 ID 拼出端点 `https://<account-id>.r2.cloudflarestorage.com`、区域 `auto`，之后与 `s3` 走同一份代码；API 令牌需要对该桶的读写权限；Aumbry 用到的操作（单对象读写删、按前缀列举、元数据查询）都在 R2 的 S3 兼容范围内，但本版没有在真实 R2 上验证，以 [Cloudflare 的 S3 兼容文档](https://developers.cloudflare.com/r2/api/s3/api/)为准。
 
 ---
 
@@ -202,12 +207,12 @@ secret_access_key = "..."
 
 **G4 配置与运维**
 10. 缺少 `storage` → 启动失败；缺少所选后端的必填项 → 一次性列出全部缺失项，同时给出 TOML 键和 env 名；未选中的后端的键被设置 → 一条警告，不报错。
-11. `check-config` 对 `s3.secret_access_key` 与 `s3.access_key_id` 掩码，仅保留末 4 位；`s3.endpoint` 带路径或用户信息 → 校验失败；`s3.prefix` 含 `..` → 校验失败。
+11. `check-config` 对 `s3.secret_access_key`、`s3.access_key_id`、`r2.secret_access_key`、`r2.access_key_id` 掩码，仅保留末 4 位；`storage = "r2"` 时缺少 `r2.account_id` 或它不是 32 位十六进制 → 校验失败；`r2` 生效后的端点是 `https://<account_id>.r2.cloudflarestorage.com`、区域是 `auto`（单元测试断言解析结果，不连网）；`s3.endpoint` 带路径或用户信息 → 校验失败；`s3.prefix` 含 `..` → 校验失败。
 12. `/readyz` 在三种后端下都返回 `checks.storage`，正常为 `ok`；不再出现 `checks.webdav`；响应不含地址、桶名或路径。
 13. `CGO_ENABLED=0 go build ./...`、`go vet`、`go test`、`golangci-lint`（CI 同版本）全部通过。
 
 **文档**
-14. 中英文的 `configuration.md`、`deployment.md`、README 都描述三种后端；R2 与 MinIO 有完整示例；R2 示例标明「依据官方文档核对，未在真实 R2 上验证」；有「更换存储后端」一节；`config.example.toml` 通过 `check-config`（退出码 0）。
+14. 中英文的 `configuration.md`、`deployment.md`、README 都描述三种后端；R2（`storage = "r2"`）与 MinIO（`s3`）有完整示例；R2 示例标明「依据官方文档核对，未在真实 R2 上验证」；有「更换存储后端」一节；`config.example.toml` 通过 `check-config`（退出码 0）。
 15. 文档用 deai `--mode check` 检查（中英分别），`markdown-it` 渲染后没有残留的 `**`。
 
 ---
@@ -216,7 +221,7 @@ secret_access_key = "..."
 
 ### 11.1 已定决策
 
-* **R2 不单设类型**：R2 是 S3 兼容服务，用 `storage = "s3"` 加端点与 `region = "auto"` 配置，文档里单独给出示例。
+* **R2 提供便捷类型 `r2`**：只填账户 ID 即可，内部与 `s3` 共用同一份实现；其他司法辖区端点与其他 S3 兼容服务仍用 `s3` 手写端点。
 * **`storage` 必填**：宁可让漏配的人启动失败，也不要悄悄指向一个空的新存储。
 * **只支持静态密钥**：不引入凭证链，减少依赖与行为差异。
 * **`checks.webdav` 改名为 `checks.storage`**：探针不再只检查 WebDAV；项目没有存量用户，不保留旧字段。
@@ -227,5 +232,4 @@ secret_access_key = "..."
 
 1. 配置键名：`storage` 加 `[local]`/`[s3]` 两张表与 `AUMBRY_S3_*` 环境变量，这个命名是否可以。
 2. S3 客户端库在 `minio-go` 与 `aws-sdk-go-v2` 之间的选择，由实现者按第 5 章的三点核对后决定，并说明理由。
-3. 是否需要 `type = "r2"` 这样的便捷别名（自动由账户 ID 拼出端点）。当前决定不要。
-4. 是否需要支持 AWS 的 IAM 角色等动态凭证。当前决定不要。
+3. 是否需要支持 AWS 的 IAM 角色等动态凭证。当前决定不要。
