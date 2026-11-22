@@ -68,11 +68,12 @@ type dirRef struct {
 
 type itemDetail struct {
 	itemSummary
-	CanonicalURL string        `json:"canonical_url"`
-	CreatedAt    string        `json:"created_at"`
-	UpdatedAt    string        `json:"updated_at"`
-	Dirs         []dirRef      `json:"dirs"`
-	Related      []itemSummary `json:"related"`
+	CanonicalURL string         `json:"canonical_url"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
+	Dirs         []dirRef       `json:"dirs"`
+	Related      []itemSummary  `json:"related"`
+	Neighbors    *itemNeighbors `json:"neighbors"`
 }
 
 // itemMounts returns the directories item id is mounted in.
@@ -183,6 +184,12 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	detail.Related, err = s.relatedItems(ctx, t, v, row.RelatedJSON)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	// ?dir= names the directory the reader came from; it only chooses among mounts the caller may open.
+	detail.Neighbors, err = s.neighborsFor(ctx, t, visible, r.URL.Query().Get("dir"), id)
 	if err != nil {
 		internalError(w, r, err)
 		return
