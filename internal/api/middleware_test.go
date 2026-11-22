@@ -254,8 +254,11 @@ func TestReadyzProbeCachingAndRecovery(t *testing.T) {
 	if err := json.Unmarshal(recDown.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Status != "unavailable" || body.Checks["sqlite"] != "ok" || body.Checks["webdav"] != "unreachable" {
+	if body.Status != "unavailable" || body.Checks["sqlite"] != "ok" || body.Checks["storage"] != "unreachable" {
 		t.Fatalf("body = %+v", body)
+	}
+	if _, hasOldKey := body.Checks["webdav"]; hasOldKey {
+		t.Fatalf("/readyz still exposes checks.webdav: %+v", body.Checks)
 	}
 	if strings.Contains(recDown.Body.String(), "topsecret") || strings.Contains(recDown.Body.String(), "dav.example.internal") {
 		t.Errorf("/readyz response leaked internal details: %s", recDown.Body.String())
@@ -432,6 +435,161 @@ func TestIngestReturns5xxOnWebDAVHeaderTimeout(t *testing.T) {
 	resp := e.anon().ingest(ingestReq{xml: xmlDoc(docOpts{title: "SlowDAV"})})
 	if resp.status < 500 || resp.status >= 600 {
 		t.Fatalf("ingest against hanging WebDAV status = %d %s, want 5xx", resp.status, resp.body)
+	}
+}
+
+func TestS3ReadyzAndErrorSanitization(t *testing.T) {
+	const (
+		secretBucket = "aumbry-private-bucket"
+		secretAK     = "AKIA_SECRET_KEY_ID"
+		secretSK     = "super_secret_access_key_value"
+	)
+
+	var mode atomic.Int32 // 0 = 200 ok, 1 = 403 auth, 2 = hang timeout
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch mode.Load() {
+		case 1:
+			w.WriteHeader(http.StatusForbidden)
+		case 2:
+			<-r.Context().Done()
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	store, err := storage.NewS3(storage.S3Options{
+		Endpoint:              srv.URL,
+		Region:                "us-east-1",
+		Bucket:                secretBucket,
+		AccessKeyID:           secretAK,
+		SecretAccessKey:       secretSK,
+		PathStyle:             true,
+		DialTimeout:           100 * time.Millisecond,
+		ResponseHeaderTimeout: 100 * time.Millisecond,
+		ProbeTimeout:          50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	sessions, err := auth.New(auth.Settings{
+		AdminUser: adminUser, AdminPasswordHash: testHash(t), APITokens: []string{apiToken}, CookieSecret: cookieSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	router, err := NewRouter(database, store, sessions, logger, RouterOptions{
+		ReadyCacheTTL: 40 * time.Millisecond,
+		ReadyTimeout:  120 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkNoLeaks := func(body string) {
+		t.Helper()
+		for _, secret := range []string{srv.URL, secretBucket, secretAK, secretSK, "Signature", "webdav"} {
+			if strings.Contains(body, secret) {
+				t.Errorf("/readyz body leaked %q: %s", secret, body)
+			}
+		}
+		for _, logSecret := range []string{secretAK, secretSK, "X-Amz-Signature"} {
+			if strings.Contains(logBuf.String(), logSecret) {
+				t.Errorf("readiness log leaked %q: %s", logSecret, logBuf.String())
+			}
+		}
+	}
+
+	rec := serveReq(router, http.MethodGet, "/readyz", "127.0.0.1:1000", nil, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"storage":"ok"`) {
+		t.Fatalf("healthy S3 /readyz = %d %s", rec.Code, rec.Body.String())
+	}
+	checkNoLeaks(rec.Body.String())
+
+	time.Sleep(60 * time.Millisecond)
+	mode.Store(1)
+	recAuth := serveReq(router, http.MethodGet, "/readyz", "127.0.0.1:1000", nil, "")
+	if recAuth.Code != http.StatusServiceUnavailable || !strings.Contains(recAuth.Body.String(), `"storage":"auth"`) {
+		t.Fatalf("403 S3 /readyz = %d %s", recAuth.Code, recAuth.Body.String())
+	}
+	checkNoLeaks(recAuth.Body.String())
+
+	time.Sleep(60 * time.Millisecond)
+	mode.Store(2)
+	recTO := serveReq(router, http.MethodGet, "/readyz", "127.0.0.1:1000", nil, "")
+	if recTO.Code != http.StatusServiceUnavailable || !strings.Contains(recTO.Body.String(), `"storage":"timeout"`) {
+		t.Fatalf("timeout S3 /readyz = %d %s", recTO.Code, recTO.Body.String())
+	}
+	checkNoLeaks(recTO.Body.String())
+
+	srv.Close()
+	time.Sleep(60 * time.Millisecond)
+	recDown := serveReq(router, http.MethodGet, "/readyz", "127.0.0.1:1000", nil, "")
+	if recDown.Code != http.StatusServiceUnavailable || !strings.Contains(recDown.Body.String(), `"storage":"unreachable"`) {
+		t.Fatalf("closed S3 /readyz = %d %s", recDown.Code, recDown.Body.String())
+	}
+	checkNoLeaks(recDown.Body.String())
+}
+
+func TestIngestReturns5xxOnS3HeaderTimeout(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	sessions, err := auth.New(auth.Settings{
+		AdminUser: adminUser, AdminPasswordHash: testHash(t), APITokens: []string{apiToken}, CookieSecret: cookieSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	release := make(chan struct{})
+	slowS3 := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer slowS3.Close()
+	defer close(release)
+
+	store, err := storage.NewS3(storage.S3Options{
+		Endpoint:              slowS3.URL,
+		Region:                "us-east-1",
+		Bucket:                "aumbry",
+		AccessKeyID:           "ak",
+		SecretAccessKey:       "sk",
+		PathStyle:             true,
+		DialTimeout:           100 * time.Millisecond,
+		ResponseHeaderTimeout: 60 * time.Millisecond,
+		ProbeTimeout:          50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router, err := NewRouter(database, store, sessions, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	e := &env{t: t, srv: srv, router: router}
+	resp := e.anon().ingest(ingestReq{xml: xmlDoc(docOpts{title: "SlowS3"})})
+	if resp.status < 500 || resp.status >= 600 {
+		t.Fatalf("ingest against hanging S3 status = %d %s, want 5xx", resp.status, resp.body)
 	}
 }
 

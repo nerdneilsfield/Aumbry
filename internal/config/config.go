@@ -9,27 +9,38 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/nerdneilsfield/aumbry/internal/storage"
 )
 
 const (
 	defaultListenAddr = ":8080"
+	defaultStorage    = "local"
 	bcryptAlphabet    = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 )
 
 var (
 	defaultConfigPaths = []string{"./aumbry.toml", "/etc/aumbry/config.toml"}
 	bcryptEncoding     = base64.NewEncoding(bcryptAlphabet).WithPadding(base64.NoPadding)
+	r2AccountIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 )
 
 // AdminConfig holds administrator credentials.
 type AdminConfig struct {
 	User         string `toml:"user" env:"AUMBRY_ADMIN_USER"`
 	PasswordHash string `toml:"password_hash" env:"AUMBRY_ADMIN_PASSWORD_HASH"`
+}
+
+// LocalStorageConfig holds local directory object storage settings.
+type LocalStorageConfig struct {
+	Path string `toml:"path" env:"AUMBRY_LOCAL_PATH"`
 }
 
 // WebDAVConfig holds private WebDAV object storage settings.
@@ -39,16 +50,38 @@ type WebDAVConfig struct {
 	Password string `toml:"password" env:"AUMBRY_WEBDAV_PASS"`
 }
 
+// S3Config holds S3-compatible object storage settings.
+type S3Config struct {
+	Endpoint        string `toml:"endpoint" env:"AUMBRY_S3_ENDPOINT"`
+	Region          string `toml:"region" env:"AUMBRY_S3_REGION"`
+	Bucket          string `toml:"bucket" env:"AUMBRY_S3_BUCKET"`
+	AccessKeyID     string `toml:"access_key_id" env:"AUMBRY_S3_ACCESS_KEY_ID"`
+	SecretAccessKey string `toml:"secret_access_key" env:"AUMBRY_S3_SECRET_ACCESS_KEY"`
+	PathStyle       bool   `toml:"path_style" env:"AUMBRY_S3_PATH_STYLE"`
+}
+
+// R2Config holds Cloudflare R2 object storage settings.
+type R2Config struct {
+	AccountID       string `toml:"account_id" env:"AUMBRY_R2_ACCOUNT_ID"`
+	Bucket          string `toml:"bucket" env:"AUMBRY_R2_BUCKET"`
+	AccessKeyID     string `toml:"access_key_id" env:"AUMBRY_R2_ACCESS_KEY_ID"`
+	SecretAccessKey string `toml:"secret_access_key" env:"AUMBRY_R2_SECRET_ACCESS_KEY"`
+}
+
 // Config contains the server's runtime settings.
 type Config struct {
-	ListenAddr           string         `toml:"listen_addr" env:"AUMBRY_LISTEN_ADDR"`
-	DataDir              string         `toml:"data_dir" env:"AUMBRY_DATA_DIR"`
-	Admin                AdminConfig    `toml:"admin"`
-	APITokens            []string       `toml:"api_tokens" env:"AUMBRY_API_TOKENS" envSeparator:","`
-	CookieSecret         string         `toml:"cookie_secret" env:"AUMBRY_COOKIE_SECRET"`
-	WebDAV               WebDAVConfig   `toml:"webdav"`
-	TrustedProxies       []string       `toml:"trusted_proxies" env:"AUMBRY_TRUSTED_PROXIES" envSeparator:","`
-	TrustedProxyPrefixes []netip.Prefix `toml:"-" env:"-"`
+	ListenAddr           string             `toml:"listen_addr" env:"AUMBRY_LISTEN_ADDR"`
+	DataDir              string             `toml:"data_dir" env:"AUMBRY_DATA_DIR"`
+	Storage              string             `toml:"storage" env:"AUMBRY_STORAGE"`
+	Admin                AdminConfig        `toml:"admin"`
+	APITokens            []string           `toml:"api_tokens" env:"AUMBRY_API_TOKENS" envSeparator:","`
+	CookieSecret         string             `toml:"cookie_secret" env:"AUMBRY_COOKIE_SECRET"`
+	TrustedProxies       []string           `toml:"trusted_proxies" env:"AUMBRY_TRUSTED_PROXIES" envSeparator:","`
+	Local                LocalStorageConfig `toml:"local"`
+	WebDAV               WebDAVConfig       `toml:"webdav"`
+	S3                   S3Config           `toml:"s3"`
+	R2                   R2Config           `toml:"r2"`
+	TrustedProxyPrefixes []netip.Prefix     `toml:"-" env:"-"`
 }
 
 // LoadResult holds the resolved configuration along with file discovery metadata.
@@ -107,8 +140,8 @@ func load(configPath string, defaultPaths []string, environ []string) (LoadResul
 		return LoadResult{}, fmt.Errorf("parse environment configuration: %w", err)
 	}
 
-	normalizeAndApplyDefaults(&result.Config)
-	if err := validateConfig(&result.Config); err != nil {
+	normalizeStrings(&result.Config)
+	if err := validateAndApplyDefaults(&result.Config); err != nil {
 		return LoadResult{}, err
 	}
 	return result, nil
@@ -164,16 +197,27 @@ func decodeStrictTOML(filePath string, data []byte, dst *Config) error {
 	return nil
 }
 
-func normalizeAndApplyDefaults(cfg *Config) {
+func normalizeStrings(cfg *Config) {
 	cfg.ListenAddr = strings.TrimSpace(cfg.ListenAddr)
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = defaultListenAddr
 	}
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
+	cfg.Storage = strings.TrimSpace(cfg.Storage)
 	cfg.Admin.User = strings.TrimSpace(cfg.Admin.User)
 	cfg.Admin.PasswordHash = strings.TrimSpace(cfg.Admin.PasswordHash)
+	cfg.Local.Path = strings.TrimSpace(cfg.Local.Path)
 	cfg.WebDAV.URL = strings.TrimSpace(cfg.WebDAV.URL)
 	cfg.WebDAV.User = strings.TrimSpace(cfg.WebDAV.User)
+	cfg.S3.Endpoint = strings.TrimSpace(cfg.S3.Endpoint)
+	cfg.S3.Region = strings.TrimSpace(cfg.S3.Region)
+	cfg.S3.Bucket = strings.TrimSpace(cfg.S3.Bucket)
+	cfg.S3.AccessKeyID = strings.TrimSpace(cfg.S3.AccessKeyID)
+	cfg.S3.SecretAccessKey = strings.TrimSpace(cfg.S3.SecretAccessKey)
+	cfg.R2.AccountID = strings.TrimSpace(cfg.R2.AccountID)
+	cfg.R2.Bucket = strings.TrimSpace(cfg.R2.Bucket)
+	cfg.R2.AccessKeyID = strings.TrimSpace(cfg.R2.AccessKeyID)
+	cfg.R2.SecretAccessKey = strings.TrimSpace(cfg.R2.SecretAccessKey)
 
 	cfg.APITokens = compactTrimmed(cfg.APITokens)
 	cfg.TrustedProxies = compactTrimmed(cfg.TrustedProxies)
@@ -189,7 +233,22 @@ func compactTrimmed(values []string) []string {
 	return out
 }
 
-func validateConfig(cfg *Config) error {
+func hasNonLocalBackendConfig(cfg *Config) bool {
+	if cfg.WebDAV.URL != "" || cfg.WebDAV.User != "" || cfg.WebDAV.Password != "" {
+		return true
+	}
+	if cfg.S3.Endpoint != "" || cfg.S3.Region != "" || cfg.S3.Bucket != "" ||
+		cfg.S3.AccessKeyID != "" || cfg.S3.SecretAccessKey != "" || cfg.S3.PathStyle {
+		return true
+	}
+	if cfg.R2.AccountID != "" || cfg.R2.Bucket != "" ||
+		cfg.R2.AccessKeyID != "" || cfg.R2.SecretAccessKey != "" {
+		return true
+	}
+	return false
+}
+
+func validateAndApplyDefaults(cfg *Config) error {
 	var missing []string
 	checkReq := func(val, label string) {
 		if val == "" {
@@ -203,11 +262,58 @@ func validateConfig(cfg *Config) error {
 		missing = append(missing, "api_tokens (AUMBRY_API_TOKENS)")
 	}
 	checkReq(cfg.CookieSecret, "cookie_secret (AUMBRY_COOKIE_SECRET)")
-	checkReq(cfg.WebDAV.URL, "webdav.url (AUMBRY_WEBDAV_URL)")
-	checkReq(cfg.WebDAV.User, "webdav.user (AUMBRY_WEBDAV_USER)")
-	checkReq(cfg.WebDAV.Password, "webdav.password (AUMBRY_WEBDAV_PASS)")
 
 	var errs []error
+	if cfg.Storage == "" {
+		if hasNonLocalBackendConfig(cfg) {
+			errs = append(errs, errors.New("storage (AUMBRY_STORAGE) must be set when webdav, s3, or r2 settings are provided"))
+		} else {
+			cfg.Storage = defaultStorage
+		}
+	}
+
+	switch cfg.Storage {
+	case "local":
+		if cfg.Local.Path == "" && cfg.DataDir != "" {
+			cfg.Local.Path = filepath.Join(cfg.DataDir, "objects")
+		}
+	case "webdav":
+		checkReq(cfg.WebDAV.URL, "webdav.url (AUMBRY_WEBDAV_URL)")
+		checkReq(cfg.WebDAV.User, "webdav.user (AUMBRY_WEBDAV_USER)")
+		checkReq(cfg.WebDAV.Password, "webdav.password (AUMBRY_WEBDAV_PASS)")
+		if cfg.WebDAV.URL != "" {
+			if u, err := url.Parse(cfg.WebDAV.URL); err != nil || u.Scheme == "" || u.Host == "" {
+				errs = append(errs, errors.New("webdav.url (AUMBRY_WEBDAV_URL) must be an absolute URL with scheme and host"))
+			}
+		}
+	case "s3":
+		if cfg.S3.Endpoint != "" {
+			if err := storage.ValidateS3Endpoint(cfg.S3.Endpoint); err != nil {
+				errs = append(errs, fmt.Errorf("s3.endpoint (AUMBRY_S3_ENDPOINT) %w", err))
+			}
+			if cfg.S3.Region == "" {
+				cfg.S3.Region = "auto"
+			}
+		} else {
+			checkReq(cfg.S3.Region, "s3.region (AUMBRY_S3_REGION)")
+		}
+		checkReq(cfg.S3.Bucket, "s3.bucket (AUMBRY_S3_BUCKET)")
+		checkReq(cfg.S3.AccessKeyID, "s3.access_key_id (AUMBRY_S3_ACCESS_KEY_ID)")
+		checkReq(cfg.S3.SecretAccessKey, "s3.secret_access_key (AUMBRY_S3_SECRET_ACCESS_KEY)")
+	case "r2":
+		checkReq(cfg.R2.AccountID, "r2.account_id (AUMBRY_R2_ACCOUNT_ID)")
+		checkReq(cfg.R2.Bucket, "r2.bucket (AUMBRY_R2_BUCKET)")
+		checkReq(cfg.R2.AccessKeyID, "r2.access_key_id (AUMBRY_R2_ACCESS_KEY_ID)")
+		checkReq(cfg.R2.SecretAccessKey, "r2.secret_access_key (AUMBRY_R2_SECRET_ACCESS_KEY)")
+		if cfg.R2.AccountID != "" && !r2AccountIDPattern.MatchString(cfg.R2.AccountID) {
+			errs = append(errs, errors.New("r2.account_id (AUMBRY_R2_ACCOUNT_ID) must be a 32-digit hexadecimal account ID"))
+		}
+	case "":
+		// Already recorded missing-storage error above.
+	default:
+		errs = append(errs, fmt.Errorf("storage (AUMBRY_STORAGE) must be one of local, webdav, s3, r2; got %q", cfg.Storage))
+	}
+
 	if len(missing) > 0 {
 		errs = append(errs, fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", ")))
 	}
@@ -217,11 +323,6 @@ func validateConfig(cfg *Config) error {
 	if cfg.Admin.PasswordHash != "" {
 		if err := validateBcryptHash(cfg.Admin.PasswordHash); err != nil {
 			errs = append(errs, fmt.Errorf("admin.password_hash (AUMBRY_ADMIN_PASSWORD_HASH) is not a valid bcrypt hash: %w", err))
-		}
-	}
-	if cfg.WebDAV.URL != "" {
-		if u, err := url.Parse(cfg.WebDAV.URL); err != nil || u.Scheme == "" || u.Host == "" {
-			errs = append(errs, errors.New("webdav.url (AUMBRY_WEBDAV_URL) must be an absolute URL with scheme and host"))
 		}
 	}
 
@@ -236,6 +337,36 @@ func validateConfig(cfg *Config) error {
 	}
 	cfg.TrustedProxyPrefixes = prefixes
 	return errors.Join(errs...)
+}
+
+// ResolvedLocalPath returns the effective local object root directory.
+func (c Config) ResolvedLocalPath() string {
+	if p := strings.TrimSpace(c.Local.Path); p != "" {
+		return p
+	}
+	if d := strings.TrimSpace(c.DataDir); d != "" {
+		return filepath.Join(d, "objects")
+	}
+	return ""
+}
+
+// ResolvedS3 resolves effective S3 settings for the s3 and r2 storage backends.
+func (c Config) ResolvedS3() S3Config {
+	if c.Storage == "r2" {
+		return S3Config{
+			Endpoint:        fmt.Sprintf("https://%s.r2.cloudflarestorage.com", strings.ToLower(c.R2.AccountID)),
+			Region:          "auto",
+			Bucket:          c.R2.Bucket,
+			AccessKeyID:     c.R2.AccessKeyID,
+			SecretAccessKey: c.R2.SecretAccessKey,
+			PathStyle:       false,
+		}
+	}
+	out := c.S3
+	if out.Endpoint != "" && out.Region == "" {
+		out.Region = "auto"
+	}
+	return out
 }
 
 func validateBcryptHash(hash string) error {
@@ -297,6 +428,10 @@ func (c Config) Masked() Config {
 	masked.Admin.PasswordHash = maskSecret(c.Admin.PasswordHash)
 	masked.CookieSecret = maskSecret(c.CookieSecret)
 	masked.WebDAV.Password = maskSecret(c.WebDAV.Password)
+	masked.S3.AccessKeyID = maskSecret(c.S3.AccessKeyID)
+	masked.S3.SecretAccessKey = maskSecret(c.S3.SecretAccessKey)
+	masked.R2.AccessKeyID = maskSecret(c.R2.AccessKeyID)
+	masked.R2.SecretAccessKey = maskSecret(c.R2.SecretAccessKey)
 
 	tokens := make([]string, len(c.APITokens))
 	for i, t := range c.APITokens {

@@ -30,7 +30,7 @@ type cliMemStore struct {
 	files map[string][]byte
 }
 
-func (m *cliMemStore) Put(_ context.Context, name string, body io.Reader) error {
+func (m *cliMemStore) Put(_ context.Context, name string, body io.ReadSeeker) error {
 	data, err := io.ReadAll(body)
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -42,9 +42,9 @@ func newReindexCmd(configPath *string) *cobra.Command {
 			}
 			defer func() { _ = database.Close() }()
 
-			store, err := storage.NewWebDAV(res.Config.WebDAV.URL, res.Config.WebDAV.User, res.Config.WebDAV.Password)
+			store, err := openStore(res.Config, false)
 			if err != nil {
-				return fmt.Errorf("configure WebDAV storage: %w", err)
+				return fmt.Errorf("configure %s storage: %w", res.Config.Storage, err)
 			}
 			return runReindex(cmd.Context(), database, store, dryRun, cmd.OutOrStdout())
 		},

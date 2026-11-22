@@ -45,7 +45,7 @@ func newBackupCmd(configPath *string) *cobra.Command {
 func newVerifyStorageCmd(configPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "verify-storage",
-		Short: "Verify that every XML and asset object referenced in SQLite exists in WebDAV",
+		Short: "Verify that every XML and asset object referenced in SQLite exists in object storage",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			res, err := loadAndWarn(cmd, *configPath)
@@ -58,9 +58,9 @@ func newVerifyStorageCmd(configPath *string) *cobra.Command {
 			}
 			defer func() { _ = database.Close() }()
 
-			store, err := storage.NewWebDAV(res.Config.WebDAV.URL, res.Config.WebDAV.User, res.Config.WebDAV.Password)
+			store, err := openStore(res.Config, false)
 			if err != nil {
-				return fmt.Errorf("configure WebDAV storage: %w", err)
+				return fmt.Errorf("configure %s storage: %w", res.Config.Storage, err)
 			}
 			return verifyStorage(cmd.Context(), database, store, cmd.OutOrStdout())
 		},
@@ -92,9 +92,9 @@ func newGCCmd(configPath *string) *cobra.Command {
 			}
 			defer func() { _ = database.Close() }()
 
-			store, err := storage.NewWebDAV(res.Config.WebDAV.URL, res.Config.WebDAV.User, res.Config.WebDAV.Password)
+			store, err := openStore(res.Config, false)
 			if err != nil {
-				return fmt.Errorf("configure WebDAV storage: %w", err)
+				return fmt.Errorf("configure %s storage: %w", res.Config.Storage, err)
 			}
 			return runGC(cmd.Context(), database, store, dryRun, cmd.OutOrStdout())
 		},

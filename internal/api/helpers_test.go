@@ -48,7 +48,7 @@ type memStore struct {
 	onPutPath  func(name string)
 }
 
-func (m *memStore) Put(_ context.Context, name string, body io.Reader) error {
+func (m *memStore) Put(_ context.Context, name string, body io.ReadSeeker) error {
 	if m.onPut != nil {
 		m.onPut()
 	}

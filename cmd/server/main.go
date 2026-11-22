@@ -108,9 +108,9 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 	if err != nil {
 		return err
 	}
-	store, err := storage.NewWebDAV(cfg.WebDAV.URL, cfg.WebDAV.User, cfg.WebDAV.Password)
+	store, err := openStore(cfg, true)
 	if err != nil {
-		return fmt.Errorf("configure WebDAV storage: %w", err)
+		return fmt.Errorf("configure %s storage: %w", cfg.Storage, err)
 	}
 	lock, err := db.TryLockDataDir(cfg.DataDir)
 	if err != nil {
@@ -133,9 +133,9 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 
 	ready := api.NewReadinessChecker(database, store, logger, 0, 0)
 	if rep := ready.Check(ctx); rep.Ready {
-		logger.Info("startup dependency check passed", "sqlite", rep.Checks["sqlite"], "webdav", rep.Checks["webdav"])
+		logger.Info("startup dependency check passed", "sqlite", rep.Checks["sqlite"], "storage", rep.Checks["storage"])
 	} else {
-		logger.Warn("startup dependency check degraded", "sqlite", rep.Checks["sqlite"], "webdav", rep.Checks["webdav"])
+		logger.Warn("startup dependency check degraded", "sqlite", rep.Checks["sqlite"], "storage", rep.Checks["storage"])
 	}
 
 	router, err := api.NewRouter(database, store, sessions, logger, api.RouterOptions{
@@ -166,5 +166,26 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
+	}
+}
+
+func openStore(cfg config.Config, createLocalRoot bool) (storage.Store, error) {
+	switch cfg.Storage {
+	case "local":
+		return storage.NewLocalWithOptions(cfg.ResolvedLocalPath(), storage.LocalOptions{CreateRoot: createLocalRoot})
+	case "webdav":
+		return storage.NewWebDAV(cfg.WebDAV.URL, cfg.WebDAV.User, cfg.WebDAV.Password)
+	case "s3", "r2":
+		s3cfg := cfg.ResolvedS3()
+		return storage.NewS3(storage.S3Options{
+			Endpoint:        s3cfg.Endpoint,
+			Region:          s3cfg.Region,
+			Bucket:          s3cfg.Bucket,
+			AccessKeyID:     s3cfg.AccessKeyID,
+			SecretAccessKey: s3cfg.SecretAccessKey,
+			PathStyle:       s3cfg.PathStyle,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported storage backend %q", cfg.Storage)
 	}
 }

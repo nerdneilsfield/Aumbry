@@ -20,16 +20,19 @@ const (
 	defaultReadyTimeout  = 2 * time.Second
 )
 
-var urlUserInfoPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
+var (
+	urlUserInfoPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
+	sigQueryPattern    = regexp.MustCompile(`(?i)((?:X-Amz-)?Signature=)[^&\s"]+`)
+)
 
-// ReadinessReport holds the result of probing SQLite and WebDAV storage.
+// ReadinessReport holds the result of probing SQLite and object storage.
 type ReadinessReport struct {
 	Ready  bool
 	Checks map[string]string
 }
 
-// ReadinessChecker checks SQLite and WebDAV health with bounded timeouts,
-// request coalescing, and a short cache on WebDAV probes.
+// ReadinessChecker checks SQLite and object storage health with bounded timeouts,
+// request coalescing, and a short cache on storage probes.
 type ReadinessChecker struct {
 	db       *sqlx.DB
 	store    storage.Store
@@ -39,13 +42,13 @@ type ReadinessChecker struct {
 
 	sf singleflight.Group
 
-	mu           sync.Mutex
-	hasCache     bool
-	cachedWebDAV string
-	cachedAt     time.Time
+	mu            sync.Mutex
+	hasCache      bool
+	cachedStorage string
+	cachedAt      time.Time
 }
 
-// NewReadinessChecker constructs a ReadinessChecker using default 5s WebDAV cache TTL
+// NewReadinessChecker constructs a ReadinessChecker using default 5s storage cache TTL
 // and 2s probe timeout when non-positive durations are supplied.
 func NewReadinessChecker(database *sqlx.DB, store storage.Store, logger *slog.Logger, cacheTTL, timeout time.Duration) *ReadinessChecker {
 	if cacheTTL <= 0 {
@@ -69,9 +72,9 @@ func NewReadinessChecker(database *sqlx.DB, store storage.Store, logger *slog.Lo
 // Check runs both dependency checks concurrently and returns the aggregated status.
 func (c *ReadinessChecker) Check(ctx context.Context) ReadinessReport {
 	var (
-		sqliteStatus string
-		webdavStatus string
-		wg           sync.WaitGroup
+		sqliteStatus  string
+		storageStatus string
+		wg            sync.WaitGroup
 	)
 	wg.Add(2)
 	go func() {
@@ -80,15 +83,15 @@ func (c *ReadinessChecker) Check(ctx context.Context) ReadinessReport {
 	}()
 	go func() {
 		defer wg.Done()
-		webdavStatus = c.checkWebDAV(ctx)
+		storageStatus = c.checkStorage(ctx)
 	}()
 	wg.Wait()
 
 	return ReadinessReport{
-		Ready: sqliteStatus == "ok" && webdavStatus == "ok",
+		Ready: sqliteStatus == "ok" && storageStatus == "ok",
 		Checks: map[string]string{
-			"sqlite": sqliteStatus,
-			"webdav": webdavStatus,
+			"sqlite":  sqliteStatus,
+			"storage": storageStatus,
 		},
 	}
 }
@@ -120,19 +123,19 @@ func (c *ReadinessChecker) checkSQLite(ctx context.Context) string {
 	}
 }
 
-func (c *ReadinessChecker) checkWebDAV(ctx context.Context) string {
+func (c *ReadinessChecker) checkStorage(ctx context.Context) string {
 	c.mu.Lock()
 	if c.hasCache && time.Since(c.cachedAt) < c.cacheTTL {
-		status := c.cachedWebDAV
+		status := c.cachedStorage
 		c.mu.Unlock()
 		return status
 	}
 	c.mu.Unlock()
 
-	ch := c.sf.DoChan("webdav", func() (any, error) {
+	ch := c.sf.DoChan("storage", func() (any, error) {
 		c.mu.Lock()
 		if c.hasCache && time.Since(c.cachedAt) < c.cacheTTL {
-			status := c.cachedWebDAV
+			status := c.cachedStorage
 			c.mu.Unlock()
 			return status, nil
 		}
@@ -143,11 +146,11 @@ func (c *ReadinessChecker) checkWebDAV(ctx context.Context) string {
 		err := c.store.Probe(probeCtx)
 		status := classifyStorageProbeError(err)
 		if err != nil {
-			c.logger.Warn("readiness check failed", "component", "webdav", "category", status, "error", sanitizeError(err))
+			c.logger.Warn("readiness check failed", "component", "storage", "category", status, "error", sanitizeError(err))
 		}
 
 		c.mu.Lock()
-		c.cachedWebDAV = status
+		c.cachedStorage = status
 		c.cachedAt = time.Now()
 		c.hasCache = true
 		c.mu.Unlock()
@@ -183,7 +186,8 @@ func sanitizeError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return urlUserInfoPattern.ReplaceAllString(err.Error(), "${1}***@")
+	s := urlUserInfoPattern.ReplaceAllString(err.Error(), "${1}***@")
+	return sigQueryPattern.ReplaceAllString(s, "${1}***")
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {

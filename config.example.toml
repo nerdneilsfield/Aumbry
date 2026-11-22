@@ -12,7 +12,7 @@
 #
 # IMPORTANT — SINGLE INSTANCE ONLY:
 # Aumbry uses a single SQLite writer connection and in-memory rate limiters.
-# Do NOT run multiple server replicas against the same data_dir or WebDAV store.
+# Do NOT run multiple server replicas against the same data_dir and object store.
 
 # HTTP listen address (env: AUMBRY_LISTEN_ADDR, default: ":8080")
 listen_addr = ":8080"
@@ -20,6 +20,9 @@ listen_addr = ":8080"
 # Directory for SQLite database aumbry.db (env: AUMBRY_DATA_DIR, required)
 # Uses "/data" for the container volume; change to e.g. "./data" when running directly on the host.
 data_dir = "/data"
+
+# Object storage backend: "local" (default), "webdav", "s3", or "r2" (env: AUMBRY_STORAGE)
+storage = "local"
 
 # Bearer tokens accepted by POST /api/v1/ingest (env: AUMBRY_API_TOKENS, comma-separated, required)
 api_tokens = ["replace-with-random-bearer-token"]
@@ -42,10 +45,29 @@ user = "admin"
 # `aumbry-server check-config`. You MUST replace it with your own hash before deploying.
 password_hash = "$2a$10$PkHvdR6kLHeZaneIL82t..LG5KvAbbJzODtrZiiF5g/7kmHljVAUa"
 
-[webdav]
-# Private WebDAV root URL holding XML and image objects (env: AUMBRY_WEBDAV_URL, required)
-url = "https://dav.example.com/aumbry"
+[local]
+# Optional object root when storage = "local" (env: AUMBRY_LOCAL_PATH).
+# Defaults to "<data_dir>/objects" when omitted or empty.
+# path = "/data/objects"
 
-# WebDAV credentials (env: AUMBRY_WEBDAV_USER, AUMBRY_WEBDAV_PASS, required)
-user = "aumbry"
-password = "replace-with-webdav-password"
+# --- Alternative storage backends (also set storage = "webdav" / "s3" / "r2" above) ---
+
+# [webdav]
+# url = "https://dav.example.com/aumbry"   # env: AUMBRY_WEBDAV_URL
+# user = "aumbry"                          # env: AUMBRY_WEBDAV_USER
+# password = "replace-with-webdav-password" # env: AUMBRY_WEBDAV_PASS
+
+# [s3]
+# endpoint = "http://minio:9000"           # env: AUMBRY_S3_ENDPOINT (omit for AWS S3)
+# region = "us-east-1"                     # env: AUMBRY_S3_REGION (required if endpoint empty; defaults to "auto")
+# bucket = "aumbry"                        # env: AUMBRY_S3_BUCKET
+# path_style = true                        # env: AUMBRY_S3_PATH_STYLE
+# access_key_id = "..."                    # env: AUMBRY_S3_ACCESS_KEY_ID
+# secret_access_key = "..."                # env: AUMBRY_S3_SECRET_ACCESS_KEY
+
+# Cloudflare R2 (checked against official docs; not verified on a live R2 account)
+# [r2]
+# account_id = "<32-hex-account-id>"       # env: AUMBRY_R2_ACCOUNT_ID
+# bucket = "aumbry"                        # env: AUMBRY_R2_BUCKET
+# access_key_id = "..."                    # env: AUMBRY_R2_ACCESS_KEY_ID
+# secret_access_key = "..."                # env: AUMBRY_R2_SECRET_ACCESS_KEY

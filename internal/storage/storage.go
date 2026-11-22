@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/studio-b12/gowebdav"
@@ -34,7 +35,7 @@ var (
 
 // Store abstracts private object storage. Paths are absolute, slash separated, e.g. /xml/{id}.xml.
 type Store interface {
-	Put(ctx context.Context, name string, body io.Reader) error
+	Put(ctx context.Context, name string, body io.ReadSeeker) error
 	Open(ctx context.Context, name string) (io.ReadCloser, error)
 	Exists(ctx context.Context, name string) (bool, error)
 	Delete(ctx context.Context, name string) error
@@ -76,16 +77,16 @@ func NewWebDAVWithOptions(rawURL, user, password string, opts WebDAVOptions) (*W
 	}
 
 	client := gowebdav.NewClient(rawURL, user, password)
-	client.SetTransport(newWebDAVTransport(opts.DialTimeout, opts.ResponseHeaderTimeout))
+	client.SetTransport(newHTTPTransport(opts.DialTimeout, opts.ResponseHeaderTimeout))
 
 	probeClient := gowebdav.NewClient(rawURL, user, password)
-	probeClient.SetTransport(newWebDAVTransport(opts.ProbeTimeout, opts.ProbeTimeout))
+	probeClient.SetTransport(newHTTPTransport(opts.ProbeTimeout, opts.ProbeTimeout))
 	probeClient.SetTimeout(opts.ProbeTimeout)
 
 	return &WebDAV{client: client, probeClient: probeClient}, nil
 }
 
-func newWebDAVTransport(dialTimeout, responseHeaderTimeout time.Duration) *http.Transport {
+func newHTTPTransport(dialTimeout, responseHeaderTimeout time.Duration) *http.Transport {
 	var tr *http.Transport
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		tr = base.Clone()
@@ -100,8 +101,41 @@ func newWebDAVTransport(dialTimeout, responseHeaderTimeout time.Duration) *http.
 	return tr
 }
 
+// normalizeObjectPath validates an absolute, canonical object path beneath /xml/ or /assets/
+// and returns the relative path without the leading slash.
+func normalizeObjectPath(name string) (string, error) {
+	if name == "" || !strings.HasPrefix(name, "/") || strings.ContainsAny(name, "\\\x00") {
+		return "", fmt.Errorf("invalid storage object path %q", name)
+	}
+	if name != path.Clean(name) {
+		return "", fmt.Errorf("non-canonical storage object path %q", name)
+	}
+	if !strings.HasPrefix(name, "/xml/") && !strings.HasPrefix(name, "/assets/") {
+		return "", fmt.Errorf("storage object path %q must be under /xml/ or /assets/", name)
+	}
+	return strings.TrimPrefix(name, "/"), nil
+}
+
+// normalizeDirPath validates an absolute, canonical directory path under /xml or /assets
+// and returns the relative path without the leading slash.
+func normalizeDirPath(dir string) (string, error) {
+	if dir == "" || !strings.HasPrefix(dir, "/") || strings.ContainsAny(dir, "\\\x00") {
+		return "", fmt.Errorf("invalid storage directory path %q", dir)
+	}
+	if dir != path.Clean(dir) {
+		return "", fmt.Errorf("non-canonical storage directory path %q", dir)
+	}
+	if dir != "/xml" && dir != "/assets" && !strings.HasPrefix(dir, "/xml/") && !strings.HasPrefix(dir, "/assets/") {
+		return "", fmt.Errorf("storage directory path %q must be /xml, /assets, or a child path", dir)
+	}
+	return strings.TrimPrefix(dir, "/"), nil
+}
+
 // Put writes body to name, creating parent collections.
-func (w *WebDAV) Put(_ context.Context, name string, body io.Reader) error {
+func (w *WebDAV) Put(ctx context.Context, name string, body io.ReadSeeker) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := w.client.MkdirAll(path.Dir(name), 0o755); err != nil {
 		return err
 	}
@@ -109,15 +143,21 @@ func (w *WebDAV) Put(_ context.Context, name string, body io.Reader) error {
 }
 
 // Open streams name.
-func (w *WebDAV) Open(_ context.Context, name string) (io.ReadCloser, error) {
+func (w *WebDAV) Open(ctx context.Context, name string) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r, err := w.client.ReadStream(name)
-	return r, mapErr(err)
+	return r, mapWebDAVErr(err)
 }
 
 // Exists reports whether name exists.
-func (w *WebDAV) Exists(_ context.Context, name string) (bool, error) {
+func (w *WebDAV) Exists(ctx context.Context, name string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	info, err := w.client.Stat(name)
-	if err = mapErr(err); errors.Is(err, ErrNotFound) {
+	if err = mapWebDAVErr(err); errors.Is(err, ErrNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -130,18 +170,24 @@ func (w *WebDAV) Exists(_ context.Context, name string) (bool, error) {
 }
 
 // Delete removes name; a missing object is not an error.
-func (w *WebDAV) Delete(_ context.Context, name string) error {
-	if err := mapErr(w.client.Remove(name)); !errors.Is(err, ErrNotFound) {
+func (w *WebDAV) Delete(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := mapWebDAVErr(w.client.Remove(name)); !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	return nil
 }
 
 // List returns the full object paths directly inside dir, excluding subdirectories.
-func (w *WebDAV) List(_ context.Context, dir string) ([]string, error) {
+func (w *WebDAV) List(ctx context.Context, dir string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := w.client.ReadDir(dir)
 	if err != nil {
-		return nil, mapErr(err)
+		return nil, mapWebDAVErr(err)
 	}
 	paths := make([]string, 0, len(entries))
 	for _, info := range entries {
@@ -155,7 +201,13 @@ func (w *WebDAV) List(_ context.Context, dir string) ([]string, error) {
 }
 
 // Probe performs a bounded Stat("/") against the WebDAV root and classifies failures.
-func (w *WebDAV) Probe(_ context.Context) error {
+func (w *WebDAV) Probe(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("%w: %w", ErrTimeout, err)
+		}
+		return fmt.Errorf("%w: %w", ErrUnreachable, err)
+	}
 	info, err := w.probeClient.Stat("/")
 	if err == nil {
 		if !validFileInfo(info) {
@@ -185,7 +237,7 @@ func validFileInfo(info os.FileInfo) bool {
 	return true
 }
 
-func mapErr(err error) error {
+func mapWebDAVErr(err error) error {
 	if err != nil && (gowebdav.IsErrNotFound(err) || errors.Is(err, fs.ErrNotExist)) {
 		return ErrNotFound
 	}

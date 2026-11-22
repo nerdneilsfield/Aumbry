@@ -19,33 +19,87 @@ func testBcryptHash(t *testing.T) string {
 }
 
 func TestLoadRejectsMissingRequiredSettings(t *testing.T) {
-	for _, key := range []string{
-		"AUMBRY_CONFIG",
-		"AUMBRY_DATA_DIR", "AUMBRY_ADMIN_USER", "AUMBRY_ADMIN_PASSWORD_HASH",
-		"AUMBRY_API_TOKENS", "AUMBRY_COOKIE_SECRET", "AUMBRY_WEBDAV_URL",
-		"AUMBRY_WEBDAV_USER", "AUMBRY_WEBDAV_PASS",
-	} {
-		t.Setenv(key, "")
-	}
-	_, err := load("", []string{filepath.Join(t.TempDir(), "absent.toml")}, os.Environ())
-	if err == nil {
-		t.Fatal("load() succeeded, want missing required settings")
-	}
-	// Every missing setting is reported at once with both TOML key and env name.
-	for _, pair := range [][2]string{
-		{"data_dir", "AUMBRY_DATA_DIR"},
-		{"admin.user", "AUMBRY_ADMIN_USER"},
-		{"admin.password_hash", "AUMBRY_ADMIN_PASSWORD_HASH"},
-		{"api_tokens", "AUMBRY_API_TOKENS"},
-		{"cookie_secret", "AUMBRY_COOKIE_SECRET"},
-		{"webdav.url", "AUMBRY_WEBDAV_URL"},
-		{"webdav.user", "AUMBRY_WEBDAV_USER"},
-		{"webdav.password", "AUMBRY_WEBDAV_PASS"},
-	} {
-		if !strings.Contains(err.Error(), pair[0]) || !strings.Contains(err.Error(), pair[1]) {
-			t.Errorf("load() error = %v, want it to name %s and %s", err, pair[0], pair[1])
+	clearConfigEnv(t)
+	t.Run("default local missing core required settings", func(t *testing.T) {
+		_, err := load("", []string{filepath.Join(t.TempDir(), "absent.toml")}, os.Environ())
+		if err == nil {
+			t.Fatal("load() succeeded, want missing required settings")
 		}
-	}
+		// Every missing setting is reported at once with both TOML key and env name.
+		for _, pair := range [][2]string{
+			{"data_dir", "AUMBRY_DATA_DIR"},
+			{"admin.user", "AUMBRY_ADMIN_USER"},
+			{"admin.password_hash", "AUMBRY_ADMIN_PASSWORD_HASH"},
+			{"api_tokens", "AUMBRY_API_TOKENS"},
+			{"cookie_secret", "AUMBRY_COOKIE_SECRET"},
+		} {
+			if !strings.Contains(err.Error(), pair[0]) || !strings.Contains(err.Error(), pair[1]) {
+				t.Errorf("load() error = %v, want it to name %s and %s", err, pair[0], pair[1])
+			}
+		}
+		if strings.Contains(err.Error(), "webdav.") {
+			t.Errorf("default local storage should not require webdav fields: %v", err)
+		}
+	})
+
+	t.Run("webdav backend lists all missing webdav fields", func(t *testing.T) {
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_STORAGE", "webdav")
+		_, err := load("", []string{filepath.Join(t.TempDir(), "absent.toml")}, os.Environ())
+		if err == nil {
+			t.Fatal("load() succeeded, want missing webdav settings")
+		}
+		for _, pair := range [][2]string{
+			{"webdav.url", "AUMBRY_WEBDAV_URL"},
+			{"webdav.user", "AUMBRY_WEBDAV_USER"},
+			{"webdav.password", "AUMBRY_WEBDAV_PASS"},
+		} {
+			if !strings.Contains(err.Error(), pair[0]) || !strings.Contains(err.Error(), pair[1]) {
+				t.Errorf("load() error = %v, want it to name %s and %s", err, pair[0], pair[1])
+			}
+		}
+	})
+
+	t.Run("s3 backend without endpoint lists all missing s3 fields", func(t *testing.T) {
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_STORAGE", "s3")
+		_, err := load("", []string{filepath.Join(t.TempDir(), "absent.toml")}, os.Environ())
+		if err == nil {
+			t.Fatal("load() succeeded, want missing s3 settings")
+		}
+		for _, pair := range [][2]string{
+			{"s3.region", "AUMBRY_S3_REGION"},
+			{"s3.bucket", "AUMBRY_S3_BUCKET"},
+			{"s3.access_key_id", "AUMBRY_S3_ACCESS_KEY_ID"},
+			{"s3.secret_access_key", "AUMBRY_S3_SECRET_ACCESS_KEY"},
+		} {
+			if !strings.Contains(err.Error(), pair[0]) || !strings.Contains(err.Error(), pair[1]) {
+				t.Errorf("load() error = %v, want it to name %s and %s", err, pair[0], pair[1])
+			}
+		}
+	})
+
+	t.Run("r2 backend lists all missing r2 fields", func(t *testing.T) {
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_STORAGE", "r2")
+		_, err := load("", []string{filepath.Join(t.TempDir(), "absent.toml")}, os.Environ())
+		if err == nil {
+			t.Fatal("load() succeeded, want missing r2 settings")
+		}
+		for _, pair := range [][2]string{
+			{"r2.account_id", "AUMBRY_R2_ACCOUNT_ID"},
+			{"r2.bucket", "AUMBRY_R2_BUCKET"},
+			{"r2.access_key_id", "AUMBRY_R2_ACCESS_KEY_ID"},
+			{"r2.secret_access_key", "AUMBRY_R2_SECRET_ACCESS_KEY"},
+		} {
+			if !strings.Contains(err.Error(), pair[0]) || !strings.Contains(err.Error(), pair[1]) {
+				t.Errorf("load() error = %v, want it to name %s and %s", err, pair[0], pair[1])
+			}
+		}
+	})
 }
 
 func TestLoadTreatsWhitespaceOnlyAsMissing(t *testing.T) {
@@ -90,6 +144,7 @@ func TestLoadTOMLAndEnvOverride(t *testing.T) {
 	content := `
 listen_addr = ":9090"
 data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+storage = "webdav"
 api_tokens = ["amb_toml_secret_1111"]
 cookie_secret = "toml-cookie-secret-at-least-32-bytes-9999"
 trusted_proxies = ["10.0.0.0/8", "192.0.2.5"]
@@ -189,6 +244,7 @@ func TestLoadRejectsUnknownTOMLKey(t *testing.T) {
 	content := `
 listn_addr = ":8080"
 data_dir = "/tmp/data"
+storage = "webdav"
 api_tokens = ["tok"]
 cookie_secret = "01234567890123456789012345678901"
 
@@ -236,6 +292,7 @@ func TestLoadPermissionWarning(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "world.toml")
 	content := `
 data_dir = "/tmp/data"
+storage = "webdav"
 api_tokens = ["tok"]
 cookie_secret = "01234567890123456789012345678901"
 [admin]
@@ -300,18 +357,177 @@ func TestLoadValidationErrors(t *testing.T) {
 			t.Fatalf("load() error = %v, want trusted_proxies[1] error", err)
 		}
 	})
+
+	t.Run("unset storage with non-local backend config fails", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			env  map[string]string
+		}{
+			{"webdav url", map[string]string{"AUMBRY_WEBDAV_URL": "https://dav.example.invalid"}},
+			{"s3 bucket", map[string]string{"AUMBRY_S3_BUCKET": "aumbry"}},
+			{"s3 path_style", map[string]string{"AUMBRY_S3_PATH_STYLE": "true"}},
+			{"r2 account_id", map[string]string{"AUMBRY_R2_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				clearConfigEnv(t)
+				setBaseEnvironment(t)
+				for k, v := range tc.env {
+					t.Setenv(k, v)
+				}
+				if _, err := load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "AUMBRY_STORAGE") {
+					t.Fatalf("load() error = %v, want storage hint", err)
+				}
+			})
+		}
+	})
+
+	t.Run("default storage is local and defaults objects dir", func(t *testing.T) {
+		clearConfigEnv(t)
+		dataDir := t.TempDir()
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_DATA_DIR", dataDir)
+
+		res, err := load("", nil, os.Environ())
+		if err != nil {
+			t.Fatalf("load() default local error = %v", err)
+		}
+		if res.Config.Storage != "local" {
+			t.Fatalf("Storage = %q, want local", res.Config.Storage)
+		}
+		wantPath := filepath.Join(dataDir, "objects")
+		if res.Config.ResolvedLocalPath() != wantPath || res.Config.Local.Path != wantPath {
+			t.Fatalf("local path = (%q, %q), want %q", res.Config.Local.Path, res.Config.ResolvedLocalPath(), wantPath)
+		}
+	})
+
+	t.Run("invalid r2 account_id fails and valid r2 resolves endpoint and auto region", func(t *testing.T) {
+		for _, bad := range []string{"0123456789abcdef0123456789abcde", "0123456789abcdef0123456789abcdef0", "0123456789abcdef0123456789abcdeg", "0123456789abcdef-123456789abcdef"} {
+			clearConfigEnv(t)
+			setBaseEnvironment(t)
+			t.Setenv("AUMBRY_STORAGE", "r2")
+			t.Setenv("AUMBRY_R2_ACCOUNT_ID", bad)
+			t.Setenv("AUMBRY_R2_BUCKET", "aumbry")
+			t.Setenv("AUMBRY_R2_ACCESS_KEY_ID", "ak_r2_123456")
+			t.Setenv("AUMBRY_R2_SECRET_ACCESS_KEY", "sk_r2_secret_7890")
+			if _, err := load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "r2.account_id") {
+				t.Fatalf("account_id %q: load() error = %v, want r2.account_id error", bad, err)
+			}
+		}
+
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_STORAGE", "r2")
+		t.Setenv("AUMBRY_R2_ACCOUNT_ID", "0123456789ABCDEF0123456789abcdef")
+		t.Setenv("AUMBRY_R2_BUCKET", "aumbry")
+		t.Setenv("AUMBRY_R2_ACCESS_KEY_ID", "ak_r2_123456")
+		t.Setenv("AUMBRY_R2_SECRET_ACCESS_KEY", "sk_r2_secret_7890")
+
+		res, err := load("", nil, os.Environ())
+		if err != nil {
+			t.Fatalf("valid r2 config failed: %v", err)
+		}
+		resolved := res.Config.ResolvedS3()
+		if resolved.Endpoint != "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com" || resolved.Region != "auto" || resolved.PathStyle {
+			t.Fatalf("ResolvedS3() = %+v", resolved)
+		}
+		masked, err := res.Config.FormatMasked()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, full := range []string{"ak_r2_123456", "sk_r2_secret_7890"} {
+			if strings.Contains(masked, full) {
+				t.Errorf("FormatMasked leaked R2 credential %q", full)
+			}
+		}
+		for _, tail := range []string{"****3456", "****7890"} {
+			if !strings.Contains(masked, tail) {
+				t.Errorf("FormatMasked missing R2 mask %q in:\n%s", tail, masked)
+			}
+		}
+	})
+
+	t.Run("s3 endpoint validation, default auto region, and masking", func(t *testing.T) {
+		for _, badEndpoint := range []string{
+			"http://minio:9000/sub",
+			"http://minio:9000/",
+			"http://minio:9000?foo=bar",
+			"http://user:pass@minio:9000",
+			"ftp://minio:9000",
+			"minio:9000",
+		} {
+			clearConfigEnv(t)
+			setBaseEnvironment(t)
+			t.Setenv("AUMBRY_STORAGE", "s3")
+			t.Setenv("AUMBRY_S3_ENDPOINT", badEndpoint)
+			t.Setenv("AUMBRY_S3_BUCKET", "aumbry")
+			t.Setenv("AUMBRY_S3_ACCESS_KEY_ID", "ak_s3_1111")
+			t.Setenv("AUMBRY_S3_SECRET_ACCESS_KEY", "sk_s3_2222")
+			if _, err := load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "s3.endpoint") {
+				t.Fatalf("endpoint %q: load() error = %v, want s3.endpoint error", badEndpoint, err)
+			}
+		}
+
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_STORAGE", "s3")
+		t.Setenv("AUMBRY_S3_ENDPOINT", "http://minio:9000")
+		t.Setenv("AUMBRY_S3_BUCKET", "aumbry")
+		t.Setenv("AUMBRY_S3_ACCESS_KEY_ID", "ak_s3_1111")
+		t.Setenv("AUMBRY_S3_SECRET_ACCESS_KEY", "sk_s3_2222")
+		res, err := load("", nil, os.Environ())
+		if err != nil {
+			t.Fatalf("s3 with endpoint and omitted region failed: %v", err)
+		}
+		if res.Config.S3.Region != "auto" || res.Config.ResolvedS3().Region != "auto" {
+			t.Fatalf("Region = %q, want auto", res.Config.S3.Region)
+		}
+		masked, err := res.Config.FormatMasked()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, full := range []string{"ak_s3_1111", "sk_s3_2222"} {
+			if strings.Contains(masked, full) {
+				t.Errorf("FormatMasked leaked S3 credential %q", full)
+			}
+		}
+		for _, tail := range []string{"****1111", "****2222"} {
+			if !strings.Contains(masked, tail) {
+				t.Errorf("FormatMasked missing S3 mask %q in:\n%s", tail, masked)
+			}
+		}
+	})
 }
 
-func setRequiredEnvironment(t *testing.T) {
+func clearConfigEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("AUMBRY_CONFIG", "")
-	t.Setenv("AUMBRY_LISTEN_ADDR", "")
-	t.Setenv("AUMBRY_TRUSTED_PROXIES", "")
+	for _, key := range []string{
+		"AUMBRY_CONFIG", "AUMBRY_LISTEN_ADDR", "AUMBRY_DATA_DIR", "AUMBRY_STORAGE",
+		"AUMBRY_ADMIN_USER", "AUMBRY_ADMIN_PASSWORD_HASH", "AUMBRY_API_TOKENS",
+		"AUMBRY_COOKIE_SECRET", "AUMBRY_TRUSTED_PROXIES", "AUMBRY_LOCAL_PATH",
+		"AUMBRY_WEBDAV_URL", "AUMBRY_WEBDAV_USER", "AUMBRY_WEBDAV_PASS",
+		"AUMBRY_S3_ENDPOINT", "AUMBRY_S3_REGION", "AUMBRY_S3_BUCKET",
+		"AUMBRY_S3_ACCESS_KEY_ID", "AUMBRY_S3_SECRET_ACCESS_KEY", "AUMBRY_S3_PATH_STYLE",
+		"AUMBRY_R2_ACCOUNT_ID", "AUMBRY_R2_BUCKET",
+		"AUMBRY_R2_ACCESS_KEY_ID", "AUMBRY_R2_SECRET_ACCESS_KEY",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+func setBaseEnvironment(t *testing.T) {
+	t.Helper()
+	clearConfigEnv(t)
 	t.Setenv("AUMBRY_DATA_DIR", t.TempDir())
 	t.Setenv("AUMBRY_ADMIN_USER", "admin")
 	t.Setenv("AUMBRY_ADMIN_PASSWORD_HASH", testBcryptHash(t))
 	t.Setenv("AUMBRY_API_TOKENS", "token")
 	t.Setenv("AUMBRY_COOKIE_SECRET", "01234567890123456789012345678901")
+}
+
+func setRequiredEnvironment(t *testing.T) {
+	t.Helper()
+	setBaseEnvironment(t)
+	t.Setenv("AUMBRY_STORAGE", "webdav")
 	t.Setenv("AUMBRY_WEBDAV_URL", "https://webdav.example.invalid")
 	t.Setenv("AUMBRY_WEBDAV_USER", "user")
 	t.Setenv("AUMBRY_WEBDAV_PASS", "pass")
