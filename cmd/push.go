@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,16 +64,6 @@ func newPushCommand() *cobra.Command {
 				return runPushDryRun(command, profile.Server, profile.Token, file, doc.Meta.Type, len(doc.Assets), dirs, draft, createOnly)
 			}
 
-			if draft || createOnly {
-				if _, _, err = client.ListDirs(command.Context(), profile.Server, profile.Token, nil); err != nil {
-					var apiErr *client.APIError
-					if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
-						return fmt.Errorf("server does not support --draft/--create-only (/api/v1/agent/dirs returned 404): upgrade server to v1.1")
-					}
-					return err
-				}
-			}
-
 			assets := make([]client.Asset, len(doc.Assets))
 			for i, src := range doc.Assets {
 				assets[i] = client.Asset{Src: src, Path: filepath.Join(dir, filepath.FromSlash(src))}
@@ -96,9 +85,6 @@ func newPushCommand() *cobra.Command {
 			if errors.As(err, &rejected) {
 				if _, werr := command.OutOrStdout().Write(client.Indent(rejected.Body)); werr != nil {
 					return werr
-				}
-				if strings.Contains(string(rejected.Body), "UNSUPPORTED_VERSION") {
-					_, _ = fmt.Fprintln(command.ErrOrStderr(), "hint: server rejected document version; upgrade the Aumbry server to v1.1")
 				}
 				return &ValidationFailedError{}
 			}

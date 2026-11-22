@@ -390,7 +390,7 @@ func xmlDoc(o docOpts) string {
 		o.md = "body text"
 	}
 	var b strings.Builder
-	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><document version="1.0"><meta>`)
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><document version="1.1"><meta>`)
 	fmt.Fprintf(&b, "<title>%s</title><type>%s</type><date>%s</date><summary>%s</summary><source-agent>test-agent</source-agent>", o.title, o.typ, o.date, o.summary)
 	if len(o.tags) > 0 {
 		b.WriteString("<tags>")
