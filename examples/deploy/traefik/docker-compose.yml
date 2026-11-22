@@ -69,7 +69,7 @@ services:
       - traefik.http.routers.aumbry.entrypoints=websecure
       - traefik.http.routers.aumbry.tls.certresolver=le
       - traefik.http.services.aumbry.loadbalancer.server.port=8080
-      # /readyz returns 503 when SQLite or WebDAV is unreachable. Traefik then stops routing
+      # /readyz returns 503 when SQLite or the object storage is unreachable. Traefik then stops routing
       # to Aumbry and answers 503 itself. Use /healthz instead to keep Aumbry's own responses.
       - traefik.http.services.aumbry.loadbalancer.healthcheck.path=/readyz
       - traefik.http.services.aumbry.loadbalancer.healthcheck.interval=10s

@@ -248,6 +248,12 @@ func TestLocalSymlinkEscapeBlocked(t *testing.T) {
 	if delErr := store.Delete(ctx, "/xml/escapedir/secret.txt"); delErr == nil {
 		t.Fatal("Delete traversed escaping directory symlink")
 	}
+	if putErr := store.Put(ctx, "/xml/escapedir/evil.xml", strings.NewReader("<evil/>")); putErr == nil {
+		t.Fatal("Put wrote through a directory symlink outside root")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "evil.xml")); statErr == nil {
+		t.Fatal("Put created a file outside root")
+	}
 	if _, statErr := os.Stat(outsideFile); statErr != nil {
 		t.Fatalf("outside file damaged: %v", statErr)
 	}
@@ -358,6 +364,13 @@ func TestLocalAtomicWriteAndTempExclusion(t *testing.T) {
 	}
 	if ok, exErr := store.Exists(ctx, "/xml/canceled.xml"); exErr != nil || ok {
 		t.Fatalf("canceled file exists = (%v, %v), want (false, nil)", ok, exErr)
+	}
+
+	// Failed writes must remove their staging files, not just hide them from List.
+	if entries, dirErr := os.ReadDir(filepath.Join(root, "xml")); dirErr != nil {
+		t.Fatal(dirErr)
+	} else if len(entries) != 1 || entries[0].Name() != "existing.xml" {
+		t.Fatalf("xml dir after failed writes = %v, want only existing.xml", entries)
 	}
 
 	// Simulate an orphaned temp file left behind by a killed process; List must ignore it.

@@ -392,7 +392,25 @@ func httpGetWithCookies(t *testing.T, url string, cookies []*http.Cookie) (int, 
 	return resp.StatusCode, b
 }
 
+// clearAumbryEnv keeps AUMBRY_* variables exported on the host from overriding the test configuration.
+func clearAumbryEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"AUMBRY_CONFIG", "AUMBRY_LISTEN_ADDR", "AUMBRY_DATA_DIR", "AUMBRY_STORAGE",
+		"AUMBRY_ADMIN_USER", "AUMBRY_ADMIN_PASSWORD_HASH", "AUMBRY_API_TOKENS",
+		"AUMBRY_COOKIE_SECRET", "AUMBRY_TRUSTED_PROXIES", "AUMBRY_LOCAL_PATH",
+		"AUMBRY_WEBDAV_URL", "AUMBRY_WEBDAV_USER", "AUMBRY_WEBDAV_PASS",
+		"AUMBRY_S3_ENDPOINT", "AUMBRY_S3_REGION", "AUMBRY_S3_BUCKET",
+		"AUMBRY_S3_ACCESS_KEY_ID", "AUMBRY_S3_SECRET_ACCESS_KEY", "AUMBRY_S3_PATH_STYLE",
+		"AUMBRY_R2_ACCOUNT_ID", "AUMBRY_R2_BUCKET",
+		"AUMBRY_R2_ACCESS_KEY_ID", "AUMBRY_R2_SECRET_ACCESS_KEY",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestCheckConfigAcceptsExampleTOML(t *testing.T) {
+	clearAumbryEnv(t)
 	examplePath := filepath.Join("..", "..", "config.example.toml")
 	var stdout, stderr bytes.Buffer
 	cmd := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -408,6 +426,7 @@ func TestCheckConfigAcceptsExampleTOML(t *testing.T) {
 }
 
 func TestLocalEndToEndDefaultConfig(t *testing.T) {
+	clearAumbryEnv(t)
 	dataDir := filepath.Join(t.TempDir(), "data")
 	hashBytes, err := bcrypt.GenerateFromPassword([]byte("admin-pw"), bcrypt.MinCost)
 	if err != nil {
@@ -507,6 +526,7 @@ password_hash = "` + string(hashBytes) + `"
 }
 
 func TestLocalMaintenanceRequiresExistingRoot(t *testing.T) {
+	clearAumbryEnv(t)
 	dataDir := filepath.Join(t.TempDir(), "data")
 	database, err := db.Open(dataDir)
 	if err != nil {
@@ -554,6 +574,7 @@ password_hash = "` + string(hashBytes) + `"
 }
 
 func TestS3EndToEndAndMaintenance(t *testing.T) {
+	clearAumbryEnv(t)
 	backend := s3mem.New()
 	if err := backend.CreateBucket("aumbry"); err != nil {
 		t.Fatal(err)

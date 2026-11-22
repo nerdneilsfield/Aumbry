@@ -177,6 +177,8 @@ func TestS3ContextCancellation(t *testing.T) {
 			<-r.Context().Done()
 			return
 		}
+		// The server only notices a closed connection after the request body has been read.
+		_, _ = io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
@@ -193,10 +195,15 @@ func TestS3ContextCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Cancel while the request is in flight, so the request itself must honor ctx.
 	cctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	started := time.Now()
 	if putErr := store.Put(cctx, "/xml/c.xml", strings.NewReader("<a/>")); !errors.Is(putErr, context.Canceled) {
 		t.Fatalf("canceled Put = %v, want context.Canceled", putErr)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("canceled Put returned after %v, want shortly after cancel", elapsed)
 	}
 
 	streamCtx, streamCancel := context.WithCancel(context.Background())

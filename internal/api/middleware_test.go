@@ -612,3 +612,13 @@ func testHash(t *testing.T) string {
 	_ = err
 	return "$2a$04$7/3lTQv5N3F2i9a8Z5E5mOq1rY3U5n9v1k4F8n9y0x2w4z6A8C0E2"
 }
+
+func TestSanitizeErrorMasksSecrets(t *testing.T) {
+	err := errors.New(`Get "https://user:pw@host/b?X-Amz-Signature=abc123&X-Amz-Credential=AKIAXYZ%2F2026": denied Authorization: AWS4-HMAC-SHA256 Credential=AKIAXYZ/2026/auto/s3/aws4_request, Signature=deadbeef`)
+	got := sanitizeError(err)
+	for _, secret := range []string{"pw@", "abc123", "AKIAXYZ", "deadbeef"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("sanitizeError left %q in %q", secret, got)
+		}
+	}
+}

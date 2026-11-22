@@ -157,7 +157,7 @@ func (s *S3) Put(ctx context.Context, name string, body io.ReadSeeker) error {
 		Key:    aws.String(key),
 		Body:   body,
 	})
-	return mapS3Err(err)
+	return mapS3WriteErr(err)
 }
 
 // Open issues a streaming GetObject and checks errors (including ErrNotFound) before returning the stream.
@@ -218,11 +218,8 @@ func (s *S3) Delete(ctx context.Context, name string) error {
 	if err == nil {
 		return nil
 	}
-	mapped := mapS3Err(err)
-	if errors.Is(mapped, ErrNotFound) {
-		return nil
-	}
-	return mapped
+	// S3 answers 204 for a missing key, so a 404 here comes from a wrong endpoint or proxy and is a failure.
+	return mapS3WriteErr(err)
 }
 
 // List enumerates all direct objects under dir using ListObjectsV2 pagination with delimiter "/".
@@ -253,12 +250,7 @@ func (s *S3) List(ctx context.Context, dir string) ([]string, error) {
 		}
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			mapped := mapS3Err(err)
-			if errors.Is(mapped, ErrNotFound) {
-				// A listing never reports a missing key; a 404 means the bucket or a proxy in front of it is wrong.
-				return nil, fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
-			}
-			return nil, mapped
+			return nil, mapS3WriteErr(err)
 		}
 		for _, obj := range page.Contents {
 			key := aws.ToString(obj.Key)
@@ -330,6 +322,16 @@ func mapS3Err(err error) error {
 		return ErrNotFound
 	}
 	return fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
+}
+
+// mapS3WriteErr is mapS3Err for operations that never report a missing key (Put, Delete, List):
+// a 404 there means the bucket, the endpoint or a proxy in front of it is wrong.
+func mapS3WriteErr(err error) error {
+	mapped := mapS3Err(err)
+	if errors.Is(mapped, ErrNotFound) {
+		return fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
+	}
+	return mapped
 }
 
 func isS3AuthErr(err error) bool {

@@ -17,3 +17,19 @@ WebDAV 客户端库（`gowebdav`）不接受 `context`。被取消的请求会�
 ## 被替换的 XML 对象会保留到 `gc`
 
 更新条目会写入一个新的、按内容哈希命名的 XML 对象，旧对象留在存储里。运行 `aumbry-server gc`（见[部署指南](deployment.md)）回收它们。这是有意的：提交后立刻删除旧对象，可能与复用同一路径的并发 ingest 抢跑。
+
+## S3 桶不存在时可能被当成对象缺失
+
+`Open` 和 `Exists` 把 HTTP 404 当作"对象不存在"。`Open`（GET）遇到桶不存在时，响应体带有 `NoSuchBucket`，会被报告为存储不可达。`Exists` 用的是 HEAD 请求，没有响应体，所以桶不存在与对象缺失无法区分，`verify-storage` 会把每个对象都列为缺失。这种情况下不会删除任何东西。`verify-storage` 报告全部缺失时，先检查端点和桶名。
+
+## `local` 对象目录里的 FIFO 会让读取阻塞
+
+`local` 把目录里的任何条目都当作对象。如果恢复出来的对象目录里，本该是对象的位置放着一个 FIFO，`Exists` 会返回 true，读取该对象会阻塞。Aumbry 自己不会创建 FIFO，只有手工放置文件时才会遇到。
+
+## 只设置 `s3.path_style = false` 不会触发 `storage` 校验
+
+`storage` 未设置时，只要出现 `webdav`、`s3` 或 `r2` 的任何配置项，Aumbry 就会拒绝启动。显式写的 `s3.path_style = false` 被当成"未设置"，因为 `false` 也是默认值，所以只有这一行的配置会以 `local` 后端启动。
+
+## WebDAV 的 `List` 遇到不存在的目录返回 `ErrNotFound`
+
+其它后端对不存在的目录返回空列表，WebDAV 后端返回 `ErrNotFound`，由 `gc` 处理。没有命令受影响。
