@@ -324,10 +324,12 @@ func (s *Server) adminSetMounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirs := dedupe(*body.Dirs)
-	if missing, err := s.missingDirs(ctx, dirs); err != nil {
+	missing, err := s.missingDirs(ctx, dirs)
+	if err != nil {
 		internalError(w, r, err)
 		return
-	} else if len(missing) > 0 {
+	}
+	if len(missing) > 0 {
 		writeError(w, http.StatusBadRequest, "unknown_dirs", "unknown directories: "+strings.Join(missing, ", "))
 		return
 	}

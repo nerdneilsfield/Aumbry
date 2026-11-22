@@ -138,7 +138,7 @@ func detectMissingCDATAHint(input []byte, errLine int) string {
 				return false
 			}
 			for _, r := range hex {
-				if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 					return false
 				}
 			}

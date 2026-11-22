@@ -119,7 +119,7 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		}
 		spa.ServeHTTP(w, r)
 	})
-	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+	router.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	})
 	return router, nil

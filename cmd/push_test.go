@@ -251,7 +251,7 @@ func TestPushV11FlagsAndPreflight(t *testing.T) {
 			t.Fatalf("already_published error = %v", err)
 		}
 
-		v10Reject := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v10Reject := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"valid":false,"errors":[{"code":"UNSUPPORTED_VERSION","field":"document.version","message":"version must be 1.0"}]}`))

@@ -66,16 +66,16 @@ func TestOpenAdoptsDatabaseCreatedBeforeGoose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO directories (id, name) VALUES ('d1', 'kept')`); err != nil {
+	if _, err = database.Exec(`INSERT INTO directories (id, name) VALUES ('d1', 'kept')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`ALTER TABLE items DROP COLUMN created_by`); err != nil {
+	if _, err = database.Exec(`ALTER TABLE items DROP COLUMN created_by`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`DROP TABLE goose_db_version`); err != nil {
+	if _, err = database.Exec(`DROP TABLE goose_db_version`); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Close(); err != nil {
+	if err = database.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,15 +105,15 @@ func TestMigrationLeavesLegacyCreatedByNull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.DownTo(ctx, 1); err != nil {
+	if _, err = provider.DownTo(ctx, 1); err != nil {
 		t.Fatalf("DownTo(1): %v", err)
 	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO items
+	if _, err = database.ExecContext(ctx, `INSERT INTO items
 		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
 		VALUES ('legacy000001', 'legacy:k', 'report', 'Legacy', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/legacy.xml', 'legacy')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Close(); err != nil {
+	if err = database.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -149,16 +149,16 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 	defer live.Close()
 
 	insertItem := func(idx int) error {
-		_, err := live.ExecContext(ctx, `INSERT INTO items
+		_, execErr := live.ExecContext(ctx, `INSERT INTO items
 			(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
 			VALUES (?, ?, 'report', ?, '2026-11-21', 'sum', '[]', 'agent', '', '[]', ?, 'text')`,
 			fmt.Sprintf("item%08d", idx), fmt.Sprintf("key:%d", idx), fmt.Sprintf("Title %d", idx), fmt.Sprintf("/xml/item%08d.xml", idx))
-		return err
+		return execErr
 	}
 
 	const preRows = 5
 	for i := range preRows {
-		if err := insertItem(i); err != nil {
+		if err = insertItem(i); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -173,7 +173,7 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 			case <-stopWriters:
 				return
 			default:
-				if err := insertItem(i); err != nil {
+				if writeErr := insertItem(i); writeErr != nil {
 					return
 				}
 			}
@@ -181,7 +181,7 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 	}()
 
 	backupPath := filepath.Join(t.TempDir(), "backup.db")
-	if err := Backup(ctx, dataDir, backupPath); err != nil {
+	if err = Backup(ctx, dataDir, backupPath); err != nil {
 		close(stopWriters)
 		wg.Wait()
 		t.Fatalf("Backup() error = %v", err)
@@ -190,10 +190,10 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 	wg.Wait()
 
 	// Reject overwriting an existing backup path or targeting live DB.
-	if err := Backup(ctx, dataDir, backupPath); err == nil {
+	if err = Backup(ctx, dataDir, backupPath); err == nil {
 		t.Error("Backup() allowed overwriting existing file")
 	}
-	if err := Backup(ctx, dataDir, filepath.Join(dataDir, "aumbry.db")); err == nil {
+	if err = Backup(ctx, dataDir, filepath.Join(dataDir, "aumbry.db")); err == nil {
 		t.Error("Backup() allowed targeting live database")
 	}
 
@@ -227,7 +227,7 @@ func TestBackupModeAndFailureCleanup(t *testing.T) {
 
 	outDir := t.TempDir()
 	okPath := filepath.Join(outDir, "ok.db")
-	if err := Backup(ctx, dataDir, okPath); err != nil {
+	if err = Backup(ctx, dataDir, okPath); err != nil {
 		t.Fatalf("Backup() error = %v", err)
 	}
 	fi, err := os.Stat(okPath)
@@ -255,11 +255,11 @@ func TestTryLockDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first TryLockDataDir() = %v", err)
 	}
-	if _, err := TryLockDataDir(dir); !errors.Is(err, ErrDataDirLocked) {
+	if _, err = TryLockDataDir(dir); !errors.Is(err, ErrDataDirLocked) {
 		_ = lock1.Close()
 		t.Fatalf("second TryLockDataDir() = %v, want ErrDataDirLocked", err)
 	}
-	if err := lock1.Close(); err != nil {
+	if err = lock1.Close(); err != nil {
 		t.Fatalf("lock1.Close() = %v", err)
 	}
 	lock2, err := TryLockDataDir(dir)

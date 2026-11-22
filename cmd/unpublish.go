@@ -19,7 +19,7 @@ func newUnpublishCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.Unpublish(command.Context(), profile.Server, profile.Token, args[0], nil); err != nil {
+			if err = client.Unpublish(command.Context(), profile.Server, profile.Token, args[0], nil); err != nil {
 				return err
 			}
 			out, err := json.MarshalIndent(map[string]any{"id": args[0], "published": false}, "", "  ")

@@ -42,7 +42,7 @@ func (s *Server) getAsset(w http.ResponseWriter, r *http.Request) {
 	// An asset is readable when any item that references it is readable.
 	if v := s.viewerFor(r, t); !v.admin {
 		var mounts []string
-		err := s.db.SelectContext(ctx, &mounts, `SELECT DISTINCT di.directory_id FROM item_assets ia
+		err = s.db.SelectContext(ctx, &mounts, `SELECT DISTINCT di.directory_id FROM item_assets ia
 			JOIN directory_items di ON di.item_id = ia.item_id WHERE ia.asset_hash = ?`, hash)
 		if err != nil {
 			internalError(w, r, err)
@@ -62,7 +62,7 @@ func (s *Server) getAsset(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	w.Header().Set("Content-Type", asset.MimeType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

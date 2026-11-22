@@ -94,7 +94,7 @@ func readFile(fh *multipart.FileHeader, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(io.LimitReader(f, limit))
 }
 
@@ -237,10 +237,12 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "draft cannot be combined with dirs")
 		return
 	}
-	if missing, err := s.missingDirs(ctx, dirs); err != nil {
+	missing, err := s.missingDirs(ctx, dirs)
+	if err != nil {
 		internalError(w, r, err)
 		return
-	} else if len(missing) > 0 {
+	}
+	if len(missing) > 0 {
 		writeError(w, http.StatusBadRequest, "unknown_dirs", "unknown directories: "+strings.Join(missing, ", "))
 		return
 	}
@@ -250,7 +252,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case createOnly:
 		var existingID string
-		err := s.db.GetContext(ctx, &existingID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
+		err = s.db.GetContext(ctx, &existingID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
 		if err == nil {
 			writeError(w, http.StatusConflict, "key_exists", "external_key already exists")
 			return
@@ -260,13 +262,13 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// New keys must satisfy v1.1 validation; SQLite's UNIQUE constraint still adjudicates concurrent creates.
-		if err := validateNewExternalKey(externalKey); err != nil {
+		if err = validateNewExternalKey(externalKey); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
 	case itemID != "":
 		var currentKey sql.NullString
-		err := s.db.GetContext(ctx, &currentKey, `SELECT external_key FROM items WHERE id = ?`, itemID)
+		err = s.db.GetContext(ctx, &currentKey, `SELECT external_key FROM items WHERE id = ?`, itemID)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
 			return
@@ -277,35 +279,35 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		}
 		// Existing legacy v1.0 keys remain valid when kept unchanged; setting or changing a key requires v1.1 validation.
 		if externalKey != "" && (!currentKey.Valid || currentKey.String != externalKey) {
-			if err := validateNewExternalKey(externalKey); err != nil {
+			if err = validateNewExternalKey(externalKey); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 				return
 			}
 		}
 	case externalKey != "":
-		err := s.db.GetContext(ctx, &itemID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
+		err = s.db.GetContext(ctx, &itemID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			internalError(w, r, err)
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			if err := validateNewExternalKey(externalKey); err != nil {
+			if err = validateNewExternalKey(externalKey); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 				return
 			}
 		}
 	}
 	if itemID == "" {
-		id, err := newID()
-		if err != nil {
-			internalError(w, r, err)
+		id, idErr := newID()
+		if idErr != nil {
+			internalError(w, r, idErr)
 			return
 		}
 		itemID, created = id, true
 	} else if draft {
-		mounts, err := itemMounts(ctx, s.db, itemID)
-		if err != nil {
-			internalError(w, r, err)
+		mounts, mountErr := itemMounts(ctx, s.db, itemID)
+		if mountErr != nil {
+			internalError(w, r, mountErr)
 			return
 		}
 		if len(mounts) > 0 {
@@ -332,9 +334,9 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	rewrite := make(map[string]string, len(doc.Assets))
 	var assetIssues []schema.ValidationError
 	for _, src := range doc.Assets {
-		data, err := readFile(uploads[src], maxAssetSize)
-		if err != nil {
-			internalError(w, r, err)
+		data, readErr := readFile(uploads[src], maxAssetSize)
+		if readErr != nil {
+			internalError(w, r, readErr)
 			return
 		}
 		kind := mimetype.Detect(data).String()
@@ -348,12 +350,12 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256(data)
 		hash := hex.EncodeToString(sum[:])
 		asset := storedAsset{hash: hash, mime: kind, path: "/assets/" + hash + assetTypes[kind], size: len(data)}
-		exists, err := s.store.Exists(ctx, asset.path)
-		if err == nil && !exists {
-			err = s.store.Put(ctx, asset.path, bytes.NewReader(data))
+		exists, assetErr := s.store.Exists(ctx, asset.path)
+		if assetErr == nil && !exists {
+			assetErr = s.store.Put(ctx, asset.path, bytes.NewReader(data))
 		}
-		if err != nil {
-			s.storageError(w, r, err)
+		if assetErr != nil {
+			s.storageError(w, r, assetErr)
 			return
 		}
 		stored = append(stored, asset)
@@ -514,29 +516,29 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, o
 		return nil, "", err
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM item_assets WHERE item_id = ?`, in.id); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM item_assets WHERE item_id = ?`, in.id); err != nil {
 		return nil, "", err
 	}
 	for _, a := range in.assets {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?)`,
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?)`,
 			a.hash, a.mime, a.size, a.path); err != nil {
 			return nil, "", err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_assets (item_id, asset_hash) VALUES (?, ?)`, in.id, a.hash); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_assets (item_id, asset_hash) VALUES (?, ?)`, in.id, a.hash); err != nil {
 			return nil, "", err
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, in.id); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, in.id); err != nil {
 		return nil, "", err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO items_fts (item_id, title, summary, tags, plain_text) VALUES (?, ?, ?, ?, ?)`,
+	if _, err = tx.ExecContext(ctx, `INSERT INTO items_fts (item_id, title, summary, tags, plain_text) VALUES (?, ?, ?, ?, ?)`,
 		in.id, meta.Title, meta.Summary, strings.Join(meta.Tags, " "), plain); err != nil {
 		return nil, "", err
 	}
 
 	for _, dir := range in.dirs {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO directory_items (directory_id, item_id) VALUES (?, ?)`, dir, in.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO directory_items (directory_id, item_id) VALUES (?, ?)`, dir, in.id); err != nil {
 			return nil, "", err
 		}
 	}

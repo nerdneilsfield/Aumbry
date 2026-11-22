@@ -30,7 +30,7 @@ func newBackupCmd(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := db.Backup(cmd.Context(), res.Config.DataDir, outPath); err != nil {
+			if err = db.Backup(cmd.Context(), res.Config.DataDir, outPath); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "backup written to %s\n", outPath)
@@ -115,7 +115,9 @@ func loadAndWarn(cmd *cobra.Command, configPath string) (config.LoadResult, erro
 		return config.LoadResult{}, err
 	}
 	for _, w := range res.Warnings {
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w)
+		if _, err = fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w); err != nil {
+			return config.LoadResult{}, err
+		}
 	}
 	return res, nil
 }
@@ -202,7 +204,7 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 	orphanRemoteAssets := diffPaths(filterManagedPaths(remoteAssets, managedAssetPathRe), liveAssets)
 
 	var orphanDBAssets []orphanAssetRow
-	if err := database.SelectContext(ctx, &orphanDBAssets,
+	if err = database.SelectContext(ctx, &orphanDBAssets,
 		`SELECT a.hash, a.storage_path FROM assets a WHERE NOT EXISTS (SELECT 1 FROM item_assets ia WHERE ia.asset_hash = a.hash) ORDER BY a.hash`); err != nil {
 		return fmt.Errorf("query orphan asset rows: %w", err)
 	}
@@ -210,7 +212,9 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 	if dryRun {
 		remoteSet := make(map[string]bool, len(orphanRemoteAssets))
 		for _, p := range orphanRemoteXML {
-			fmt.Fprintf(out, "orphan xml: %s\n", p)
+			if _, err = fmt.Fprintf(out, "orphan xml: %s\n", p); err != nil {
+				return err
+			}
 		}
 		for _, p := range orphanRemoteAssets {
 			remoteSet[p] = true
@@ -218,12 +222,16 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 			if knownAssets[p] {
 				kind = "unreferenced"
 			}
-			fmt.Fprintf(out, "orphan asset (%s): %s\n", kind, p)
+			if _, err = fmt.Fprintf(out, "orphan asset (%s): %s\n", kind, p); err != nil {
+				return err
+			}
 		}
 		danglingRows := 0
 		for _, row := range orphanDBAssets {
 			if !remoteSet[row.StoragePath] {
-				fmt.Fprintf(out, "orphan db asset row (missing in storage): %s (%s)\n", row.Hash, row.StoragePath)
+				if _, err = fmt.Fprintf(out, "orphan db asset row (missing in storage): %s (%s)\n", row.Hash, row.StoragePath); err != nil {
+					return err
+				}
 				danglingRows++
 			}
 		}
