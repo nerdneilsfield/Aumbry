@@ -12,7 +12,7 @@ Aumbry is a Go monorepo for a private, searchable hub for AI-agent research repo
 
 ```sh
 cp config.example.toml aumbry.toml && chmod 600 aumbry.toml
-# Fill in all required settings in aumbry.toml.
+# Fill in all required settings in aumbry.toml (for local runs, set data_dir = "./data").
 make setup
 make test
 make build
@@ -122,14 +122,16 @@ aumbry config show
 
 Multi-architecture images (`linux/amd64`, `linux/arm64`) are published to GHCR at `ghcr.io/nerdneilsfield/aumbry` (with `aumbry-server` as `ENTRYPOINT` and `aumbry` at `/usr/local/bin/aumbry`). After the very first release push, set the package visibility to **public** once in GitHub package settings if anonymous pulls are desired.
 
-Official images do not embed `AUMBRY_*` environment defaults, so `data_dir` / `AUMBRY_DATA_DIR` must be provided via TOML or env. Two standalone `docker-compose.yml` profiles are provided:
+Official images do not embed `AUMBRY_*` environment defaults, so `data_dir` / `AUMBRY_DATA_DIR` must be provided via `.env` or TOML. Two standalone compose setups are provided:
 
 ```sh
-# 1. TOML-only (using ./aumbry.toml, no .env needed)
-docker compose --profile toml up --build
+# 1. Env-only (v1.0 default: copy .env.example to .env, no aumbry.toml needed)
+docker compose up --build
 
-# 2. Env-only (using .env, no aumbry.toml needed)
-docker compose --profile env up --build
+# 2. TOML-only (copy config.example.toml to aumbry.toml keeping data_dir = "/data";
+#    grant read permission to container UID/GID 65532 instead of 0644 so secrets are not world-readable)
+sudo chgrp 65532 aumbry.toml && chmod 640 aumbry.toml
+docker compose -f docker-compose.toml.yml up --build
 ```
 
 SQLite data is persisted in the `aumbry-data` volume. Configure a private WebDAV service separately; the compose file does not expose or provision one.

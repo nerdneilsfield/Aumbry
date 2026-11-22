@@ -1,5 +1,10 @@
-# Copy to aumbry.toml (or /etc/aumbry/config.toml), fill in all required values,
-# and restrict permissions because this file contains secrets: chmod 600 aumbry.toml
+# Copy to aumbry.toml (or /etc/aumbry/config.toml) and fill in all required values.
+# Because this file contains secrets, restrict permissions:
+#   - Running directly on the host:   chmod 600 aumbry.toml
+#   - Running in Docker (UID/GID 65532 nonroot user cannot read a host user's 0600 file):
+#       sudo chgrp 65532 aumbry.toml && chmod 640 aumbry.toml
+#     (640 with group 65532 is preferred over 644 so other local users cannot read secrets;
+#      aumbry-server logs a reminder when group-readable unless you chown 65532:65532 with chmod 600.)
 #
 # Config lookup order (first match wins):
 #   --config <path> -> AUMBRY_CONFIG -> ./aumbry.toml -> /etc/aumbry/config.toml
@@ -13,7 +18,8 @@
 listen_addr = ":8080"
 
 # Directory for SQLite database aumbry.db (env: AUMBRY_DATA_DIR, required)
-data_dir = "./data"
+# Uses "/data" for the container volume; change to e.g. "./data" when running directly on the host.
+data_dir = "/data"
 
 # Bearer tokens accepted by POST /api/v1/ingest (env: AUMBRY_API_TOKENS, comma-separated, required)
 api_tokens = ["replace-with-random-bearer-token"]
