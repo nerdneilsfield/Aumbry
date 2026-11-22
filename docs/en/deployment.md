@@ -149,7 +149,7 @@ The directories `examples/deploy/traefik`, `examples/deploy/nginx`, and `example
 
 Without `trusted_proxies`, Aumbry sees only the proxy's container address. All visitors then share one rate-limit bucket (the login limit of 10 requests per minute applies to everyone together), and session cookies are issued without `Secure`.
 
-The examples use the published image `ghcr.io/nerdneilsfield/aumbry:latest`; pin a release tag in production. They run a single Aumbry instance, and the image has no `curl` or `wget`, so the Aumbry service defines no container healthcheck. To configure Aumbry with `aumbry.toml` instead of `.env`, mount the file as `docker-compose.toml.yml` does, set `trusted_proxies = ["172.31.250.0/24"]` (or your `PROXY_SUBNET`), and remove the `AUMBRY_TRUSTED_PROXIES` line from the Compose file, because environment variables override TOML keys.
+The examples use the published image `ghcr.io/nerdneilsfield/aumbry:latest`; pin a release tag in production. They run a single Aumbry instance, and the image has no `curl` or `wget`, so the Aumbry service defines no container healthcheck. To configure Aumbry with `aumbry.toml` instead of `.env`, mount the file as `docker-compose.toml.yml` does, set `trusted_proxies = ["172.31.250.0/24"]` (or your `PROXY_SUBNET`), and remove both the `env_file` entry and the `AUMBRY_TRUSTED_PROXIES` line from the Aumbry service in the Compose file, because environment variables override TOML keys and any `AUMBRY_*` value left in `.env` would still win.
 
 To confirm that `trusted_proxies` took effect, log in through the proxy and inspect the response headers. Replace the host name and password:
 

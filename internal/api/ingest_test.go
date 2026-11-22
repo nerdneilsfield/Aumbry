@@ -364,6 +364,7 @@ func TestIngestExternalKeyValidationDraftCreateOnlyAndCreatedBy(t *testing.T) {
 		"whitespace only": "   \t  ",
 		"too long":        strings.Repeat("x", 201),
 		"control char":    "bad\x07key",
+		"invalid utf-8":   "bad\xffkey",
 	} {
 		k := val
 		resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "BadKey"}), rawKey: &k})

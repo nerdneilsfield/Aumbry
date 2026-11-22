@@ -36,6 +36,13 @@ func TestSearch(t *testing.T) {
 		return titles(t, admin.do("GET", q("/api/v1/dirs/"+dir+"/search", query), nil))
 	}
 
+	t.Run("NUL in the query is not an error", func(t *testing.T) {
+		got := search("DriveFlow\x00")
+		if len(got) != 1 || got[0] != "DriveFlow benchmark" {
+			t.Fatalf("got %v, want [DriveFlow benchmark]", got)
+		}
+	})
+
 	t.Run("two character Chinese query", func(t *testing.T) {
 		if got := search("世界"); len(got) != 1 || got[0] != "世界模型推理加速" {
 			t.Errorf("世界 -> %v", got)

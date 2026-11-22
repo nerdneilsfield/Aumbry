@@ -135,6 +135,9 @@ func externalKeyField(form *multipart.Form) (string, error) {
 	if trimmed == "" {
 		return "", errors.New("external_key must not be blank")
 	}
+	if !utf8.ValidString(trimmed) {
+		return "", errors.New("external_key must be valid UTF-8")
+	}
 	if utf8.RuneCountInString(trimmed) > 200 {
 		return "", errors.New("external_key must be 1 to 200 characters after trimming")
 	}

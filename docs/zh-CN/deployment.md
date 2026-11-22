@@ -149,7 +149,7 @@
 
 不配置 `trusted_proxies` 时，Aumbry 看到的客户端地址只有代理的容器地址。此时所有访客共用同一个限流桶（登录限流每分钟 10 次由全体访客合计），签发的会话 Cookie 也不带 `Secure`。
 
-示例使用已发布的镜像 `ghcr.io/nerdneilsfield/aumbry:latest`，生产环境请固定为某个发布标签。示例只运行单个 Aumbry 实例；镜像中没有 `curl` 或 `wget`，所以 Aumbry 服务不定义容器 healthcheck。如果想用 `aumbry.toml` 代替 `.env` 配置 Aumbry，请像 `docker-compose.toml.yml` 那样挂载该文件，设置 `trusted_proxies = ["172.31.250.0/24"]`（或你的 `PROXY_SUBNET`），并删除 Compose 文件中的 `AUMBRY_TRUSTED_PROXIES` 一行，因为环境变量会覆盖 TOML 配置项。
+示例使用已发布的镜像 `ghcr.io/nerdneilsfield/aumbry:latest`，生产环境请固定为某个发布标签。示例只运行单个 Aumbry 实例；镜像中没有 `curl` 或 `wget`，所以 Aumbry 服务不定义容器 healthcheck。如果想用 `aumbry.toml` 代替 `.env` 配置 Aumbry，请像 `docker-compose.toml.yml` 那样挂载该文件，设置 `trusted_proxies = ["172.31.250.0/24"]`（或你的 `PROXY_SUBNET`），并在 Compose 文件的 Aumbry 服务里同时删除 `env_file` 和 `AUMBRY_TRUSTED_PROXIES` 一行，因为环境变量会覆盖 TOML 配置项，`.env` 里残留的任何 `AUMBRY_*` 值仍会生效。
 
 要确认 `trusted_proxies` 已生效，请通过代理登录并查看响应头。命令中的域名和密码需要替换：
 

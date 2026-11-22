@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jmoiron/sqlx"
@@ -77,7 +78,9 @@ func ftsPhrase(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) 
 // assigns each segment to the index that can answer it. All segments are ANDed.
 func splitTerms(text string) queryTerms {
 	var t queryTerms
-	for _, word := range strings.Fields(text) {
+	// Control characters (NUL ends an FTS5 string early) separate words like whitespace does.
+	words := strings.FieldsFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+	for _, word := range words {
 		for _, seg := range cjk.Segments(word) {
 			n := utf8.RuneCountInString(seg.Text)
 			switch {
