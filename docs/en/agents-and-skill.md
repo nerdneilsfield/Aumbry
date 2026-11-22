@@ -6,23 +6,67 @@ Aumbry includes an Agent Skill under [skills/aumbry/](../../skills/aumbry/SKILL.
 
 ## Install the Skill
 
-Link or copy `skills/aumbry` into your agent runner's skills directory (for example `~/.agents/skills/aumbry`):
+The repository places the skill at `skills/aumbry/SKILL.md`, which the official `vercel-labs/skills` CLI discovers automatically under `skills/`.
 
-1. **Symlink from a local checkout** (tracks `git pull` updates automatically):
+### Recommended: install with `npx skills`
 
-   ```sh
-   mkdir -p ~/.agents/skills
-   ln -sfn "$(pwd)/skills/aumbry" ~/.agents/skills/aumbry
-   ```
+Requires Node.js `22.20` or later.
 
-2. **Copy from a checkout or unpacked release archive** (for standalone agent containers):
+1. Preview available skills in the repository without installing:
 
    ```sh
-   mkdir -p ~/.agents/skills
-   cp -R skills/aumbry ~/.agents/skills/aumbry
+   npx skills add nerdneilsfield/aumbry --list
    ```
 
-3. Verify that [SKILL.md](../../skills/aumbry/SKILL.md), `references/`, and `assets/examples/` exist under `~/.agents/skills/aumbry`.
+2. Install the `aumbry` skill (omit `-g` to install only for the current project, or pass `-g` for user-level global installation across projects):
+
+   ```sh
+   # Interactive user-level install (lets you pick detected agents)
+   npx skills add nerdneilsfield/aumbry --skill aumbry -g
+
+   # Non-interactive install for specific agents
+   npx skills add nerdneilsfield/aumbry --skill aumbry -g -a claude-code -a codex -y
+   ```
+
+   Common options:
+   - `--skill <name>`: select a specific skill (`aumbry`).
+   - `-g` / `--global`: install to user-level directories instead of the current project.
+   - `-a` / `--agent <agents...>`: target specific agents (for example `claude-code`, `codex`, `cursor`, `opencode`, `gemini-cli`, `github-copilot`).
+   - `--list`: list discoverable skills in the source without installing.
+   - `-y` / `--yes`: skip confirmation prompts (useful in scripts and CI).
+
+   Default target directories installed by `npx skills` (symlinks to a canonical copy by default; pass `--copy` to copy files instead):
+
+   | Agent (`-a` value) | Project scope (default) | Global scope (`-g`) |
+   | :--- | :--- | :--- |
+   | Codex, Cline, Warp, Zed (`codex`, ...) | `.agents/skills/` | `~/.agents/skills/` |
+   | Claude Code (`claude-code`) | `.claude/skills/` | `~/.claude/skills/` |
+   | Cursor (`cursor`) | `.agents/skills/` | `~/.cursor/skills/` |
+   | OpenCode (`opencode`) | `.agents/skills/` | `~/.config/opencode/skills/` |
+   | Gemini CLI (`gemini-cli`) | `.agents/skills/` | `~/.gemini/skills/` |
+   | GitHub Copilot (`github-copilot`) | `.agents/skills/` | `~/.copilot/skills/` |
+
+3. Ensure the `aumbry` CLI binary is installed on `PATH` and verify `aumbry version` succeeds. Installing the skill provides instructions only; the agent invokes the `aumbry` binary for validation, directory lookup, and uploads. Download prebuilt Release archives or build from source as described in [Installation](../../README.md#installation) and [Deployment prerequisites](deployment.md#prerequisites).
+
+### Offline or release-archive installation
+
+If you are working offline or from an unpacked GoReleaser archive (which includes `skills/aumbry/`), copy or symlink the folder directly into your agent's skill directory (for example `~/.agents/skills/aumbry` or `~/.claude/skills/aumbry`):
+
+- **Copy from a checkout or unpacked Release archive** (for isolated environments or containers):
+
+  ```sh
+  mkdir -p ~/.agents/skills
+  cp -R skills/aumbry ~/.agents/skills/aumbry
+  ```
+
+- **Symlink from a local checkout** (tracks `git pull` updates automatically):
+
+  ```sh
+  mkdir -p ~/.agents/skills
+  ln -sfn "$(pwd)/skills/aumbry" ~/.agents/skills/aumbry
+  ```
+
+Verify that [SKILL.md](../../skills/aumbry/SKILL.md), `references/`, and `assets/examples/` exist inside the target directory, and ensure the `aumbry` CLI binary is available on `PATH`.
 
 ## Provision CLI credentials for an agent
 

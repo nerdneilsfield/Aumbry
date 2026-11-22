@@ -132,12 +132,13 @@ Example `aumbry push` output:
 
 **Install the Agent Skill:**
 
+Requires Node.js `22.20+` (`vercel-labs/skills` CLI). Install globally across projects:
+
 ```sh
-mkdir -p ~/.agents/skills
-ln -sfn "$(pwd)/skills/aumbry" ~/.agents/skills/aumbry
+npx skills add nerdneilsfield/aumbry --skill aumbry -g
 ```
 
-See [Agents and the Aumbry Skill](docs/en/agents-and-skill.md) for directory selection rules and copy-based installation.
+The agent also needs the `aumbry` CLI binary on `PATH` (see [Installation](#installation) for prebuilt Release archives or building from source). See [Agents and the Aumbry Skill](docs/en/agents-and-skill.md) for agent-specific flags, non-interactive installs, offline/archive installation, and directory selection rules.
 
 ## Configuration
 

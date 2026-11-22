@@ -25,7 +25,7 @@ Aumbry 把“报告编写/校验”与“托管/权限控制”分开。AI agent
 
 可使用预构建容器镜像或从源码编译。GitHub Release 同样通过 GoReleaser 提供 `linux`、`darwin` 与 `windows`（`amd64` / `arm64`）的 `aumbry` 与 `aumbry-server` 预编译压缩包。
 
-**容器镜像（`linux/amd64`、`linux/arm64`）：**需本机已安装 Docker Engine、Docker Compose v2，以及一个可访问的私有 WebDAV 服务：
+**容器镜像**（`linux/amd64`、`linux/arm64`）：需本机已安装 Docker Engine、Docker Compose v2，以及一个可访问的私有 WebDAV 服务：
 
 ```sh
 docker pull ghcr.io/nerdneilsfield/aumbry:latest
@@ -33,7 +33,7 @@ docker pull ghcr.io/nerdneilsfield/aumbry:latest
 
 镜像以非特权用户 `nonroot`（UID/GID `65532`）运行，默认入口为 `aumbry-server`，同时将 `aumbry` 安装在 `/usr/local/bin/aumbry`。
 
-**从源码编译：**需 Go `1.27.1` 及以上版本、Node.js `22` 及以上版本与 `npm`：
+**从源码编译**：需 Go `1.27.1` 及以上版本、Node.js `22` 及以上版本与 `npm`：
 
 ```sh
 git clone https://github.com/nerdneilsfield/Aumbry.git
@@ -130,14 +130,15 @@ aumbry push examples/minimal-report.xml --key demo:report --dir <dir-id>
 }
 ```
 
-**安装 Agent Skill：**
+**安装 Agent Skill**：
+
+需要 Node.js `22.20` 及以上版本（使用 `vercel-labs/skills` 官方 CLI）。安装到当前用户的全局目录，供所有项目使用：
 
 ```sh
-mkdir -p ~/.agents/skills
-ln -sfn "$(pwd)/skills/aumbry" ~/.agents/skills/aumbry
+npx skills add nerdneilsfield/aumbry --skill aumbry -g
 ```
 
-目录选择决策规则与复制安装方式见 [Agent 与 Skill 集成指南](docs/zh-CN/agents-and-skill.md)。
+安装 Skill 后，还需确保 `aumbry` CLI 可执行文件位于 `PATH` 中（预编译 Release 压缩包或源码编译见[安装](#安装)）。指定目标 agent、非交互安装、离线或压缩包安装及目录选择规则见[Agent 与 Skill 集成指南](docs/zh-CN/agents-and-skill.md)。
 
 ## 配置摘要
 
