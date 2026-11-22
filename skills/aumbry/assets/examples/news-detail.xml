@@ -11,6 +11,7 @@
       <tag>Inference</tag>
     </tags>
     <related-ids>
+      <!-- 占位，实际使用时替换为 aumbry list/push 返回的真实 id（指回简报条目） -->
       <id>V1StGXR8_Z5j</id>
     </related-ids>
   </meta>
