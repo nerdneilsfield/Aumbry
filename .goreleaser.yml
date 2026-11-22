@@ -50,6 +50,36 @@ archives:
 sboms:
   - disable: true
 
+# Published to the shared tap/bucket repository on release. TAP_GITHUB_TOKEN needs contents:write on that repository only.
+homebrew_casks:
+  - name: aumbry
+    binaries: [aumbry, aumbry-server]
+    homepage: https://github.com/nerdneilsfield/Aumbry
+    description: Private, searchable hub for AI-agent research reports
+    directory: Casks
+    repository:
+      owner: nerdneilsfield
+      name: homebrew-apps
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/aumbry"]
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/aumbry-server"]
+          end
+
+scoops:
+  - name: aumbry
+    homepage: https://github.com/nerdneilsfield/Aumbry
+    description: Private, searchable hub for AI-agent research reports
+    license: MIT
+    directory: bucket
+    repository:
+      owner: nerdneilsfield
+      name: homebrew-apps
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+
 dockers_v2:
   - id: aumbry
     ids:

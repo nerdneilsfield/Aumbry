@@ -33,6 +33,19 @@ docker pull ghcr.io/nerdneilsfield/aumbry:latest
 
 The image runs as `nonroot` (UID/GID `65532`), sets `aumbry-server` as the entrypoint, and installs `aumbry` at `/usr/local/bin/aumbry`.
 
+**Homebrew** installs both `aumbry` and `aumbry-server`:
+
+```sh
+brew install --cask nerdneilsfield/apps/aumbry
+```
+
+**Scoop (Windows)** installs both executables from the same bucket:
+
+```powershell
+scoop bucket add nerdneilsfield https://github.com/nerdneilsfield/homebrew-apps
+scoop install nerdneilsfield/aumbry
+```
+
 **From source** — requires Go `1.27.1` or later and Node.js `22` or later with `npm`:
 
 ```sh

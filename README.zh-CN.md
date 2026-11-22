@@ -33,6 +33,19 @@ docker pull ghcr.io/nerdneilsfield/aumbry:latest
 
 镜像以非特权用户 `nonroot`（UID/GID `65532`）运行，默认入口为 `aumbry-server`，同时将 `aumbry` 安装在 `/usr/local/bin/aumbry`。
 
+**Homebrew**：同时安装 `aumbry` 与 `aumbry-server`：
+
+```sh
+brew install --cask nerdneilsfield/apps/aumbry
+```
+
+**Scoop（Windows）**：从同一个 bucket 安装两个可执行文件：
+
+```powershell
+scoop bucket add nerdneilsfield https://github.com/nerdneilsfield/homebrew-apps
+scoop install nerdneilsfield/aumbry
+```
+
 **从源码编译**：需 Go `1.27.1` 及以上版本、Node.js `22` 及以上版本与 `npm`：
 
 ```sh
