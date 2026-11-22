@@ -1,6 +1,6 @@
 import type { ShikiTransformer } from 'shiki/core'
 import { transformerMetaHighlight, transformerNotationDiff, transformerNotationHighlight } from '@shikijs/transformers'
-import { dualTheme, highlighter, loadedLangs } from '@/lib/highlighter'
+import { dualTheme, highlighter, langAttribute, loadedLangs } from '@/lib/highlighter'
 
 /**
  * Highlights code with shiki (light+dark dual theme). The language grammar does the colouring:
@@ -12,7 +12,7 @@ import { dualTheme, highlighter, loadedLangs } from '@/lib/highlighter'
 export function highlightCode(source: string, lang: string, diff: boolean, highlight = ''): string {
   const l = diff ? 'diff' : loadedLangs.has(lang) ? lang : 'text'
   const rows = source.split('\n')
-  const transformers: ShikiTransformer[] = [transformerNotationDiff(), transformerNotationHighlight(), transformerMetaHighlight()]
+  const transformers: ShikiTransformer[] = [langAttribute, transformerNotationDiff(), transformerNotationHighlight(), transformerMetaHighlight()]
   if (l === 'diff') {
     // the diff grammar colours the text; this also tints the whole line so added / removed lines read at a glance
     transformers.push({

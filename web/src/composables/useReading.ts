@@ -1,9 +1,10 @@
 import { computed, inject, nextTick, onMounted, provide, reactive, shallowRef, watch, type ComputedRef, type InjectionKey, type WritableComputedRef } from 'vue'
-import { useEventListener, useMediaQuery, useStorage } from '@vueuse/core'
+import { useEventListener, useStorage } from '@vueuse/core'
 import { attr, children, stageDomId } from '@/lib/xml'
 import { anchorMap } from '@/lib/anchor'
 import { quizCorrect, quizFingerprint, quizKey, quizValid, sameSet } from '@/lib/quiz'
 import { stagesIssues } from '@/lib/validate'
+import { useExpanded } from '@/composables/usePrint'
 import { syncUrlParams, urlParams } from '@/composables/useUrlParams'
 
 /**
@@ -11,7 +12,7 @@ import { syncUrlParams, urlParams } from '@/composables/useUrlParams'
  * (VueUse useStorage, localStorage; silently in-memory when storage is unavailable, e.g. some file:// setups):
  *   { stages:  Record<stagesId, stageId>              the last stage reached in each group
  *     quizzes: Record<quizId, { fp, picked: number[] }> }  submitted answers: option indexes + a fingerprint
- * `fp` is the SHA-256 (Web Crypto) of question + option order + correct set: when the quiz changes, only its own stored
+ * `fp` is the SHA-256 (Web Crypto, or @noble/hashes where Web Crypto is unavailable) of question + option order + correct set: when the quiz changes, only its own stored
  * answer is dropped, stage progress stays. A stored value that is not valid JSON (or has the wrong shape) is reset
  * silently. Unknown stage ids fall back to the first stage. Everything else (selection in progress, "expand all",
  * "finished") is per-session. Pacing is soft gating (a UX choice, not access control): locked stages are not rendered.
@@ -114,7 +115,7 @@ const stageKey = (stage: Element) => stageDomId(stage).slice('stage-'.length)
 export function provideReading(getBody: () => Element | undefined, storageKey: string): Reading {
   syncUrlParams()
   const state = useStorage<Persisted>(`aumbry:read:${storageKey}`, emptyState(), undefined, { serializer: progressSerializer, onError: () => {} })
-  const printing = useMediaQuery('print')
+  const expanded = useExpanded()
 
   // Only well-formed rendered groups take part (unrendered groups, duplicates, or depth > 3 ancestors are excluded).
   const groups = computed<StageGroup[]>(() => {
@@ -140,7 +141,7 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   const indexOf = (g: StageGroup, id: string | undefined) => Math.max(g.stages.findIndex((s) => stageKey(s) === id) + 1, 0)
   const reachedIdx = (g: StageGroup) => indexOf(g, state.value.stages[g.id]) || 1
 
-  const allOpen = computed(() => groups.value.length > 0 && (expandAll.value || printing.value))
+  const allOpen = computed(() => groups.value.length > 0 && (expandAll.value || expanded.value))
   // a one-stage group has nothing to pace: it is just open
   const isOpen = (g: StageGroup) => allOpen.value || !g.gated || total(g) === 1
   const unlockedCount = (g: StageGroup) => (isOpen(g) ? total(g) : reachedIdx(g))
@@ -149,17 +150,6 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   const isFinished = (g: StageGroup) => finished.has(g.id)
   const isDone = (g: StageGroup, i: number) => i < reachedIdx(g) || (i === total(g) && isFinished(g))
   const progress = (g: StageGroup) => Math.round(((reachedIdx(g) - 1 + (isFinished(g) ? 1 : 0)) / total(g)) * 100)
-
-  // `#stage=N` mirrors the first group; later groups use `#stage-<id>` (both are read back on load / hashchange).
-  const syncHash = (g: StageGroup, i: number) => {
-    try {
-      const u = new URL(location.href)
-      u.hash = g === groups.value[0] ? `stage=${i}` : stageDomId(g.stages[i - 1])
-      history.replaceState(history.state, '', u)
-    } catch {
-      /* opaque origins may refuse; the hash is only a convenience */
-    }
-  }
 
   const unlockTo = (g: StageGroup, i: number) => {
     const n = Math.min(Math.max(Math.trunc(i) || 1, 1), total(g))
@@ -170,7 +160,6 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   function goTo(g: StageGroup, i: number, scroll = true) {
     if (i < 1 || i > total(g)) return
     unlockTo(g, i)
-    syncHash(g, i)
     if (!scroll) return
     nextTick().then(rafs).then(() => {
       document.getElementById(stageDomId(g.stages[i - 1]))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -179,6 +168,7 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
 
   // `#stage=N` deep links (first group): unlock up to N and go there (initial load, hashchange / back-forward).
   // `#stage-<id>` goes through the anchors (XmlRenderer), which unlocks only the group that owns the stage.
+  // The address bar is never rewritten by stage navigation: a shared `#stage-<id>` link stays exactly what was shared.
   const fromHash = () => {
     const m = /^#stage=(\d+)$/.exec(location.hash)
     if (m && groups.value[0]) goTo(groups.value[0], Number(m[1]))
@@ -230,8 +220,8 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   })
   const unfolded = reactive(new Set<Element>())
   watch(skim, () => unfolded.clear())
-  // printing ignores skim: everything is expanded
-  const isCollapsed = (unit: Element) => skim.value && !printing.value && !unfolded.has(unit)
+  // printing / export ignore skim: everything is expanded
+  const isCollapsed = (unit: Element) => skim.value && !expanded.value && !unfolded.has(unit)
 
   const reading: Reading = {
     groups,
@@ -272,7 +262,7 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
     isCollapsed,
     expand: (u) => void unfolded.add(u),
     collapse: (u) => void unfolded.delete(u),
-    layoutKey: computed(() => `${groups.value.map((g) => unlockedCount(g)).join(',')}|${skim.value && !printing.value}|${unfolded.size}`),
+    layoutKey: computed(() => `${groups.value.map((g) => unlockedCount(g)).join(',')}|${skim.value && !expanded.value}|${unfolded.size}`),
   }
   provide(KEY, reading)
   return reading
@@ -292,6 +282,8 @@ export interface ReaderBridge {
   reveal: (hash: string) => Promise<boolean>
   /** is stage `index` (1-based) of the <stages id="group"> group unlocked? */
   isUnlocked: (group: string, index: number) => boolean
+  /** 1-based stage the <stages id="group"> group is at (what its step bar shows as active); 0 for a group with nothing to pace */
+  currentStage: (group: string) => number
   hasStages: ComputedRef<boolean>
   expandAll: WritableComputedRef<boolean>
   hasTldr: ComputedRef<boolean>

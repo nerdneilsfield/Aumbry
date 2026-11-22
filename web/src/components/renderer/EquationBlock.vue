@@ -25,7 +25,7 @@ const number = computed(() => attr(props.node, 'number'))
   <figure :id="anchor" class="not-prose scroll-mt-20 rounded-xl border border-gray-700 bg-gray-800/60 px-4 py-4">
     <div class="grid grid-cols-[1fr_auto] items-center gap-x-4">
       <!-- eslint-disable-next-line vue/no-v-html -- KaTeX output (trust:false), re-sanitised by DOMPurify above -->
-      <div class="min-w-0 overflow-x-auto overflow-y-hidden py-1 text-lg" v-html="html" />
+      <div class="min-w-0 overflow-x-auto overflow-y-hidden py-1 text-lg" :data-tex="src" v-html="html" />
       <span v-if="number" class="font-serif text-base text-gray-300">({{ number }})</span>
     </div>
     <p v-if="broken" class="mt-2 flex items-center gap-1.5 text-xs text-red-300">

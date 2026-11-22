@@ -18,10 +18,10 @@ const source = computed(() => attr(props.node, 'source'))
 <template>
   <div :class="['not-prose rounded-r-xl border border-l-4 border-gray-700 px-4 py-3', s.bar, s.surface]" :data-level="level">
     <div class="mb-1.5 flex flex-wrap items-center gap-2">
-      <span :class="['inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset', s.badge]" :title="s.hint">
+      <span data-export-badge :class="['inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset', s.badge]" :title="s.hint">
         <component :is="s.icon" class="size-3.5" aria-hidden="true" />{{ s.label }}
       </span>
-      <span v-if="source" class="inline-flex max-w-full items-center gap-1 rounded-md border border-gray-600 px-1.5 py-0.5 font-mono text-xs text-gray-300">
+      <span v-if="source" data-export-badge class="inline-flex max-w-full items-center gap-1 rounded-md border border-gray-600 px-1.5 py-0.5 font-mono text-xs text-gray-300">
         <MapPin class="size-3 shrink-0 text-gray-500" aria-hidden="true" /><span class="truncate">{{ source }}</span>
       </span>
     </div>

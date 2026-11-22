@@ -91,7 +91,7 @@ const codes = computed(() => [...new Set(issues.value.map((i) => i.code))].join(
       <template v-for="s in stages" :key="s.index">
         <article v-if="reading.isUnlocked(g, s.index)" :id="s.domId" class="scroll-mt-24 space-y-8" :data-stage="s.index">
           <header class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-blue-400/30 bg-blue-500/5 px-4 py-3">
-            <span v-if="!single" class="rounded-full bg-blue-500/15 px-2.5 py-0.5 text-xs font-bold text-blue-300 ring-1 ring-inset ring-blue-400/40">第 {{ s.n }} 阶段</span>
+            <span v-if="!single" data-export-skip class="rounded-full bg-blue-500/15 px-2.5 py-0.5 text-xs font-bold text-blue-300 ring-1 ring-inset ring-blue-400/40">第 {{ s.n }} 阶段</span>
             <h2 class="min-w-0 flex-1 text-lg font-bold text-gray-50">{{ s.title }}</h2>
             <span v-if="s.level" class="rounded-md border border-gray-600 px-2 py-0.5 text-xs text-gray-300">{{ s.level }}</span>
           </header>

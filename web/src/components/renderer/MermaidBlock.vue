@@ -3,16 +3,23 @@ import { computed, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useIntersectionObserver } from '@vueuse/core'
 import { TriangleAlert } from 'lucide-vue-next'
 import { attr } from '@/lib/xml'
+import { fence } from '@/lib/fence'
 import { renderMermaid } from '@/lib/mermaid'
+import { trackRender, usePrinting } from '@/composables/usePrint'
 import { useTheme } from '@/composables/useTheme'
 
 const props = defineProps<{ node: Element }>()
 const { isDark } = useTheme()
 const source = computed(() => (props.node.textContent ?? '').trim())
 const caption = computed(() => attr(props.node, 'caption'))
+// what the Markdown export writes for this figure: the source, not the drawn picture
+const exportMd = computed(() => [fence('mermaid', source.value), caption.value && `*${caption.value}*`].filter(Boolean).join('\n\n'))
 
 const root = useTemplateRef<HTMLElement>('root')
-const visible = ref(false)
+const seen = ref(false)
+// Printing draws every diagram, including those never scrolled to, and printDocument() waits for them (trackRender).
+const printing = usePrinting()
+const visible = computed(() => seen.value || printing.value)
 const svg = ref('')
 const error = shallowRef<string>()
 const busy = ref(true)
@@ -20,7 +27,7 @@ const busy = ref(true)
 // Start loading mermaid only when the block is about to scroll into view.
 const { stop } = useIntersectionObserver(root, ([e]) => {
   if (e?.isIntersecting) {
-    visible.value = true
+    seen.value = true
     stop()
   }
 }, { rootMargin: '600px 0px' })
@@ -31,7 +38,7 @@ watch([visible, source, isDark], async ([v, src, dark]) => {
   const me = ++run
   busy.value = true
   try {
-    const out = await renderMermaid(src, dark)
+    const out = await trackRender(renderMermaid(src, dark))
     if (me !== run) return
     svg.value = out
     error.value = undefined
@@ -46,7 +53,7 @@ watch([visible, source, isDark], async ([v, src, dark]) => {
 </script>
 
 <template>
-  <figure ref="root" class="not-prose">
+  <figure ref="root" class="not-prose" :data-export-md="exportMd">
     <!-- error: keep the page intact, show the source and why it failed -->
     <div v-if="error" class="rounded-xl border border-amber-500/40 bg-amber-500/5">
       <p class="flex items-center gap-2 border-b border-amber-500/30 px-4 py-2 text-sm font-medium text-amber-300">

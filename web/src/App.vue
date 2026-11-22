@@ -6,7 +6,7 @@ import ThemeToggle from '@/components/ThemeToggle.vue'
 
 <template>
   <div class="mx-auto w-full max-w-7xl px-4 sm:px-6">
-    <header class="flex h-16 items-center gap-3 border-b border-gray-700">
+    <header class="flex h-16 items-center gap-3 border-b border-gray-700 print:hidden">
       <RouterLink to="/" class="inline-flex items-center gap-2 text-lg font-bold text-gray-50">
         <Library class="size-5 text-blue-300" />Aumbry
       </RouterLink>

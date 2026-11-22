@@ -33,6 +33,10 @@ const bridge: ReaderBridge = {
     const g = reading.groups.value.find((x) => x.id === group)
     return !!g && reading.isUnlocked(g, index)
   },
+  currentStage: (group) => {
+    const g = reading.groups.value.find((x) => x.id === group)
+    return g && g.stages.length > 1 ? reading.current(g) : 0
+  },
   hasStages: reading.hasStages,
   expandAll: reading.expandAll,
   hasTldr: reading.hasTldr,

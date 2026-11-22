@@ -10,6 +10,8 @@
     "build:poc": "vue-tsc -b && vite build -c vite.config.poc.ts"
   },
   "dependencies": {
+    "@joplin/turndown-plugin-gfm": "^1.0.71",
+    "@noble/hashes": "^2.4.0",
     "@shikijs/transformers": "^4.6.0",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.5",
@@ -32,6 +34,7 @@
     "shiki": "^4.6.0",
     "tailwindcss": "^4.3.5",
     "ts-dedent": "^2.3.0",
+    "turndown": "^7.2.5",
     "valibot": "^1.5.0",
     "vue": "^3.5.13",
     "vue-echarts": "^8.3.2",
@@ -40,6 +43,7 @@
   "devDependencies": {
     "@types/katex": "^0.16.8",
     "@types/markdown-it": "^14.2.0",
+    "@types/turndown": "^5.0.6",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "~5.7.2",
     "vite": "^6.0.7",

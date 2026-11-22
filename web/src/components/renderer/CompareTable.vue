@@ -43,6 +43,8 @@ const usedTags = computed(() => [...new Set(rows.value.flat().flatMap((c) => (c.
             >
               <span
                 v-if="cell.tag"
+                :data-export-badge="cell.tag !== 'unreported' ? '' : undefined"
+                :data-export-skip="cell.tag === 'unreported' ? '' : undefined"
                 :class="['absolute right-0 top-0 inline-flex items-center gap-0.5 rounded-bl-md px-1.5 py-px text-[0.65rem] font-semibold leading-4', LEVELS[cell.tag].badge]"
                 :title="LEVELS[cell.tag].hint"
               >
@@ -56,7 +58,7 @@ const usedTags = computed(() => [...new Set(rows.value.flat().flatMap((c) => (c.
         </tbody>
       </table>
     </div>
-    <p v-if="usedTags.length" class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+    <p v-if="usedTags.length" data-export-skip class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
       <span v-for="t in usedTags" :key="t" class="inline-flex items-center gap-1">
         <component :is="LEVELS[t].icon" class="size-3" aria-hidden="true" />{{ LEVELS[t].label }}：{{ LEVELS[t].hint }}
       </span>

@@ -5,7 +5,6 @@ import { CircleCheck, CircleHelp, CircleX, RotateCcw, TriangleAlert } from 'luci
 import { children } from '@/lib/xml'
 import { quizCorrect, quizKey, quizMulti, quizOptions, quizValid, sameSet } from '@/lib/quiz'
 import { useReading } from '@/composables/useReading'
-import MarkdownBlock from './MarkdownBlock.vue'
 
 const props = defineProps<{ node: Element }>()
 const reading = useReading()
@@ -16,8 +15,17 @@ const multi = computed(() => quizMulti(props.node))
 const correct = computed(() => quizCorrect(props.node))
 const question = computed(() => children(props.node).find((c) => c.tagName === 'question')?.textContent?.trim() ?? '')
 const explain = computed(() => children(props.node).find((c) => c.tagName === 'explain')?.textContent?.trim() ?? '')
-// option text is plain text (rendered by Vue, escaped)
+// question, option and explanation text are plain text (rendered by Vue, escaped), never Markdown or HTML (PRD 6.7)
 const options = computed(() => quizOptions(props.node).map((o, i) => ({ key: String(i), text: o.textContent?.trim() ?? '', right: o.getAttribute('correct') === 'true' })))
+
+// what the Markdown export writes: question, options with the right ones ticked, and the explanation (shown on screen only after answering)
+const exportMd = computed(() =>
+  [
+    `**随堂测验（${multi.value ? '多选' : '单选'}）**：${question.value}`,
+    options.value.map((o) => `- [${o.right ? 'x' : ' '}] ${o.text}`).join('\n'),
+    explain.value && `> 解析：${explain.value.replace(/\n/g, '\n> ')}`,
+  ].filter(Boolean).join('\n\n'),
+)
 
 const st = computed(() => reading.quiz(key.value))
 const picked = computed({
@@ -50,14 +58,14 @@ const rowClass = (k: string, right: boolean) => [
 </script>
 
 <template>
-  <section :id="`quiz-${key}`" class="not-prose scroll-mt-20 rounded-xl border border-violet-400/40 bg-violet-500/5 p-4 sm:p-5" :data-quiz="key" :data-result="checked ? (passed ? 'pass' : 'fail') : 'open'">
+  <section :id="`quiz-${key}`" class="not-prose scroll-mt-20 rounded-xl border border-violet-400/40 bg-violet-500/5 p-4 sm:p-5" :data-quiz="key" :data-export-md="valid ? exportMd : undefined" :data-result="checked ? (passed ? 'pass' : 'fail') : 'open'">
     <div class="mb-3 flex items-start gap-2">
       <CircleHelp class="mt-0.5 size-5 shrink-0 text-violet-300" aria-hidden="true" />
       <div class="min-w-0 flex-1">
         <p class="mb-1 flex items-center gap-2 text-xs font-semibold text-violet-300">
           随堂测验<span v-if="valid" class="rounded-full bg-violet-500/15 px-2 py-0.5 ring-1 ring-inset ring-violet-400/40">{{ multi ? '多选' : '单选' }}</span>
         </p>
-        <MarkdownBlock class="md-tight font-medium text-gray-50" :text="question" />
+        <p class="m-0 whitespace-pre-line break-words font-medium text-gray-50" data-quiz-question>{{ question }}</p>
       </div>
     </div>
 
@@ -100,7 +108,7 @@ const rowClass = (k: string, right: boolean) => [
 
       <div v-if="checked && explain" class="mt-3 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-2.5" data-explain>
         <p class="mb-1 text-xs font-semibold text-gray-400">解析</p>
-        <MarkdownBlock class="md-tight text-sm" :text="explain" />
+        <p class="m-0 whitespace-pre-line break-words text-sm text-gray-200">{{ explain }}</p>
       </div>
     </template>
   </section>
