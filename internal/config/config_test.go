@@ -272,10 +272,20 @@ func TestLoadValidationErrors(t *testing.T) {
 	})
 
 	t.Run("invalid bcrypt hash", func(t *testing.T) {
-		setRequiredEnvironment(t)
-		t.Setenv("AUMBRY_ADMIN_PASSWORD_HASH", "not-bcrypt")
-		if _, err := load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "bcrypt") {
-			t.Fatalf("load() error = %v, want bcrypt error", err)
+		for _, bad := range []string{
+			"not-bcrypt",
+			"$2y$10$" + strings.Repeat("!", 53),
+			"$2y$10$" + strings.Repeat("a", 52),
+			"$2y$10$" + strings.Repeat("a", 54),
+			"$1$10$" + strings.Repeat("a", 53),
+			"$2z$10$" + strings.Repeat("a", 53),
+			"$2y$10X" + strings.Repeat("a", 53),
+		} {
+			setRequiredEnvironment(t)
+			t.Setenv("AUMBRY_ADMIN_PASSWORD_HASH", bad)
+			if _, err := load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "bcrypt") {
+				t.Fatalf("hash %q: load() error = %v, want bcrypt error", bad, err)
+			}
 		}
 	})
 

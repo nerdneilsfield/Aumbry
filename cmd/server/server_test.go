@@ -156,7 +156,11 @@ func TestMaintenanceCommands(t *testing.T) {
 	orphanDBHash := strings.Repeat("b", 64)
 	orphanDBAssetPath := "/assets/" + orphanDBHash + ".svg"
 	untrackedAssetPath := "/assets/" + strings.Repeat("c", 64) + ".png"
-	orphanXMLPath := "/xml/item-old.xml"
+	orphanXMLPath := "/xml/item00000002-" + strings.Repeat("d", 64) + ".xml"
+	manualXMLReadme := "/xml/README.txt"
+	manualXMLNotes := "/xml/notes.xml"
+	manualAssetReadme := "/assets/README.txt"
+	manualAssetImage := "/assets/manual.png"
 
 	for path, body := range map[string]string{
 		liveXMLPath:        "<document/>",
@@ -164,6 +168,10 @@ func TestMaintenanceCommands(t *testing.T) {
 		orphanDBAssetPath:  "<svg>orphan-db</svg>",
 		untrackedAssetPath: "untracked-upload",
 		orphanXMLPath:      "<document>old</document>",
+		manualXMLReadme:    "operator readme",
+		manualXMLNotes:     "<notes/>",
+		manualAssetReadme:  "operator asset readme",
+		manualAssetImage:   "manual image",
 	} {
 		if err := store.Put(ctx, path, strings.NewReader(body)); err != nil {
 			t.Fatal(err)
@@ -250,6 +258,11 @@ func TestMaintenanceCommands(t *testing.T) {
 	if strings.Contains(dryOut, liveAssetPath) || strings.Contains(dryOut, liveXMLPath) {
 		t.Errorf("gc --dry-run listed live object:\n%s", dryOut)
 	}
+	for _, untouched := range []string{manualXMLReadme, manualXMLNotes, manualAssetReadme, manualAssetImage} {
+		if strings.Contains(dryOut, untouched) {
+			t.Errorf("gc --dry-run listed non-Aumbry object %s:\n%s", untouched, dryOut)
+		}
+	}
 	if _, err := runCLI("gc"); err == nil {
 		_ = lock.Close()
 		t.Fatal("destructive gc succeeded while server lock was held, want refusal")
@@ -271,9 +284,9 @@ func TestMaintenanceCommands(t *testing.T) {
 			t.Errorf("orphan %s still exists after gc", gone)
 		}
 	}
-	for _, kept := range []string{liveXMLPath, liveAssetPath} {
+	for _, kept := range []string{liveXMLPath, liveAssetPath, manualXMLReadme, manualXMLNotes, manualAssetReadme, manualAssetImage} {
 		if ok, _ := store.Exists(ctx, kept); !ok {
-			t.Errorf("live object %s was deleted by gc", kept)
+			t.Errorf("object %s was deleted by gc", kept)
 		}
 	}
 

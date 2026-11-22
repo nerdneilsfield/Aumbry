@@ -183,3 +183,50 @@ func TestWebDAVResponseHeaderTimeout(t *testing.T) {
 		t.Fatalf("Put() took %v, expected prompt timeout", time.Since(start))
 	}
 }
+
+func TestWebDAVIncomplete207Rejected(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "empty multistatus",
+			body: `<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"/>`,
+		},
+		{
+			name: "response without 200 propstat",
+			body: `<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/xml/a.xml</D:href><D:propstat><D:prop/><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response></D:multistatus>`,
+		},
+		{
+			name: "truncated XML body",
+			body: `<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "PROPFIND" {
+					t.Fatalf("unexpected method %s", r.Method)
+				}
+				w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+				w.WriteHeader(http.StatusMultiStatus)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+
+			store, err := NewWebDAV(server.URL, "u", "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Probe(ctx); !errors.Is(err, ErrUnreachable) {
+				t.Fatalf("Probe() = %v, want ErrUnreachable", err)
+			}
+			exists, err := store.Exists(ctx, "/xml/a.xml")
+			if exists || err == nil {
+				t.Fatalf("Exists() = (%v, %v), want (false, non-nil error)", exists, err)
+			}
+		})
+	}
+}

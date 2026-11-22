@@ -26,11 +26,25 @@ func Backup(ctx context.Context, dataDir, outPath string) error {
 	if absOut == absSrc {
 		return errors.New("backup output path must differ from live database")
 	}
-	if _, statErr := os.Stat(absOut); statErr == nil {
-		return fmt.Errorf("backup output path %s already exists", outPath)
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return fmt.Errorf("stat backup output path %s: %w", outPath, statErr)
+	// Create the destination file upfront with 0600 (O_CREATE|O_EXCL) so VACUUM INTO writes into
+	// an already-restricted file instead of briefly exposing a 0644 snapshot under default umask.
+	f, err := os.OpenFile(absOut, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("backup output path %s already exists", outPath)
+		}
+		return fmt.Errorf("create backup output path %s: %w", outPath, err)
 	}
+	if closeErr := f.Close(); closeErr != nil {
+		_ = os.Remove(absOut)
+		return fmt.Errorf("close backup output path %s: %w", outPath, closeErr)
+	}
+	removeOnErr := true
+	defer func() {
+		if removeOnErr {
+			_ = os.Remove(absOut)
+		}
+	}()
 
 	database, err := OpenExisting(dataDir)
 	if err != nil {
@@ -44,5 +58,6 @@ func Backup(ctx context.Context, dataDir, outPath string) error {
 	if err := os.Chmod(absOut, 0o600); err != nil {
 		return fmt.Errorf("chmod backup %s: %w", outPath, err)
 	}
+	removeOnErr = false
 	return nil
 }

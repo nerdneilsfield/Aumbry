@@ -3,6 +3,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -15,9 +16,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const defaultListenAddr = ":8080"
+const (
+	defaultListenAddr = ":8080"
+	bcryptAlphabet    = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
 
-var defaultConfigPaths = []string{"./aumbry.toml", "/etc/aumbry/config.toml"}
+var (
+	defaultConfigPaths = []string{"./aumbry.toml", "/etc/aumbry/config.toml"}
+	bcryptEncoding     = base64.NewEncoding(bcryptAlphabet).WithPadding(base64.NoPadding)
+)
 
 // AdminConfig holds administrator credentials.
 type AdminConfig struct {
@@ -208,7 +215,7 @@ func validateConfig(cfg *Config) error {
 		errs = append(errs, errors.New("cookie_secret (AUMBRY_COOKIE_SECRET) must contain at least 32 bytes"))
 	}
 	if cfg.Admin.PasswordHash != "" {
-		if _, err := bcrypt.Cost([]byte(cfg.Admin.PasswordHash)); err != nil {
+		if err := validateBcryptHash(cfg.Admin.PasswordHash); err != nil {
 			errs = append(errs, fmt.Errorf("admin.password_hash (AUMBRY_ADMIN_PASSWORD_HASH) is not a valid bcrypt hash: %w", err))
 		}
 	}
@@ -229,6 +236,40 @@ func validateConfig(cfg *Config) error {
 	}
 	cfg.TrustedProxyPrefixes = prefixes
 	return errors.Join(errs...)
+}
+
+func validateBcryptHash(hash string) error {
+	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
+		return err
+	}
+	prefixLen := 0
+	switch {
+	case strings.HasPrefix(hash, "$2$"):
+		prefixLen = 6 // $2$XX$
+	case strings.HasPrefix(hash, "$2a$"),
+		strings.HasPrefix(hash, "$2b$"),
+		strings.HasPrefix(hash, "$2x$"),
+		strings.HasPrefix(hash, "$2y$"):
+		prefixLen = 7 // $2y$XX$
+	default:
+		return errors.New("unsupported bcrypt version prefix")
+	}
+	if len(hash) < prefixLen+53 || hash[prefixLen-1] != '$' {
+		return errors.New("malformed bcrypt cost delimiter or length")
+	}
+	body := hash[prefixLen:]
+	if len(body) != 53 {
+		return fmt.Errorf("expected 53 encoded salt+digest characters, got %d", len(body))
+	}
+	salt, err := bcryptEncoding.DecodeString(body[:22])
+	if err != nil || len(salt) != 16 {
+		return errors.New("invalid bcrypt base64 salt")
+	}
+	digest, err := bcryptEncoding.DecodeString(body[22:])
+	if err != nil || len(digest) != 23 {
+		return errors.New("invalid bcrypt base64 digest")
+	}
+	return nil
 }
 
 func parseTrustedProxy(raw string) (netip.Prefix, error) {
