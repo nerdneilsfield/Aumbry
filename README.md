@@ -184,6 +184,7 @@ For all validation rules, secret masking rules, and container UID `65532` file p
 | [CLI reference](docs/en/cli.md) | Profiles, env overrides, `validate`, `push`, `dirs`, `list`, `unpublish`, `delete`, real command examples |
 | [Agents and the Aumbry Skill](docs/en/agents-and-skill.md) | Skill installation, target-directory decision flow, draft vs publish authorization, token scoping |
 | [XML protocol overview](docs/en/protocol.md) | Protocol purpose, the `1.1` structure rules, `aumbry schema`, pointer to full generated reference |
+| [Known issues](docs/en/known-issues.md) | Understood problems that are not fixed yet, with when you hit them and what to do |
 
 The repository issue tracker and discussions live on GitHub (`github.com/nerdneilsfield/Aumbry`).
 

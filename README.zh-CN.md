@@ -184,6 +184,7 @@ npx skills add nerdneilsfield/aumbry --skill aumbry -g
 | [CLI 使用与配置参考](docs/zh-CN/cli.md) | profile 与环境变量、配置优先级、`validate`/`push`/`dirs`/`list`/`unpublish`/`delete` 命令与实测输出 |
 | [Agent 与 Skill 集成指南](docs/zh-CN/agents-and-skill.md) | Skill 安装、目标目录决策流程、草稿与发布授权约定、Token 与归属权 |
 | [XML 协议入门](docs/zh-CN/protocol.md) | 协议定位、`1.1` 结构规则、`aumbry schema` 与完整参考入口 |
+| [已知问题](docs/zh-CN/known-issues.md) | 已弄清、尚未修复的问题：什么情况下遇到、怎么处理 |
 
 问题反馈与讨论见 GitHub 仓库（`github.com/nerdneilsfield/Aumbry`）。
 
