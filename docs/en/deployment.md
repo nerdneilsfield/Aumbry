@@ -2,7 +2,7 @@ English | [简体中文](../zh-CN/deployment.md)
 
 # Deployment and operations guide
 
-This guide covers deploying `aumbry-server` with Docker Compose or a host binary, configuring reverse proxies, checking service readiness, and running backup, storage verification, and garbage collection commands.
+This guide covers deploying `aumbry-server` with Docker Compose or a host binary, configuring reverse proxies, checking service readiness, and running backup, storage verification, garbage collection, and search reindex commands.
 
 > **Caution — Single instance only:** Aumbry serializes SQLite writes on a single connection, holds an advisory file lock (`aumbry.lock`) in `data_dir`, and stores rate-limit counters in process memory. Do not run two `aumbry-server` processes against the same `data_dir` or private WebDAV root; concurrent processes cause lock conflicts and broken rate limiting.
 
@@ -167,11 +167,15 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
 
 2. `backup` captures SQLite metadata and full-text search only; updating an item later deletes its superseded XML object from WebDAV. Pair every SQLite snapshot with a simultaneous WebDAV snapshot to achieve full point-in-time recovery.
 
-3. After restoring a backup and WebDAV snapshot, verify integrity against WebDAV before serving traffic:
+3. After restoring a database snapshot and its paired WebDAV snapshot, verify the restore before serving traffic:
 
-   ```sh
-   aumbry-server verify-storage --config ./aumbry.toml
-   ```
+   1. Run `verify-storage` (see below). It must exit `0`:
+
+      ```sh
+      aumbry-server verify-storage --config ./aumbry.toml
+      ```
+
+   2. Start `aumbry-server`, sign in to the admin page, and open one report, preferably one that contains figures. Confirm that the report text renders and that at least one image displays. `verify-storage` only checks that objects exist; this step confirms that they are readable through the server.
 
 ### Verify WebDAV objects (`verify-storage`)
 
@@ -223,6 +227,63 @@ When an `ingest` request fails after uploading XML to WebDAV (or when legacy ass
 
 4. Restart `aumbry-server`.
 
-### Search index and reindexing
+### Rebuild the search index (`reindex`)
 
-Full-text search uses SQLite full-text indexing for search terms of 3 or more characters and automatically falls back to substring matching for shorter terms. `aumbry-server` updates the search index atomically on every `POST /api/v1/ingest` and item deletion. **There is no `reindex` subcommand** in `aumbry-server`; to rebuild the search entry for an item, re-push the XML document with its existing `--key` or `--id`.
+Search terms of 3 or more characters use the SQLite full-text index (`items_fts`); shorter terms use substring matching on `items.plain_text`. Every `POST /api/v1/ingest` writes both in one transaction. `reindex` re-reads the stored XML of every item from WebDAV, recomputes the indexed text with the rules of the installed version, and rewrites both `items.plain_text` and `items_fts`, so the two search paths stay consistent.
+
+Run `reindex` in either of these cases:
+
+- You upgraded to a version that changes which text is indexed. Documents ingested earlier keep the old index text until you rebuild it.
+- Search results disagree with the content of a report, for example after restoring a database snapshot or repairing the database by hand.
+
+Normal ingest, deletion, and `backup` do not require it.
+
+A writing run takes the same `aumbry.lock` as `gc`, so stop `aumbry-server` first. `--dry-run` only reads, so you can run it while the server is up.
+
+1. Preview the run. `--dry-run` reads and parses every item but writes nothing:
+
+   ```sh
+   aumbry-server reindex --config ./aumbry.toml --dry-run
+   ```
+
+   Expected output resembles:
+
+   ```text
+   dry-run: would reindex 12 of 12 items (3 with changed plain_text), 0 failed
+   ```
+
+   `with changed plain_text` counts the items whose stored `plain_text` differs from the recomputed text. A real run rewrites the `items_fts` row of every item it can read, whether or not `plain_text` changed.
+
+2. Stop `aumbry-server`. If the server still holds `aumbry.lock`, a writing run exits at once:
+
+   ```text
+   refusing to run reindex while aumbry-server is running; stop the server first or pass --dry-run
+   ```
+
+3. Run the rebuild. It updates items in batches of 100, one transaction per batch:
+
+   ```sh
+   aumbry-server reindex --config ./aumbry.toml
+   ```
+
+   Expected output resembles:
+
+   ```text
+   reindexed 12 of 12 items (3 with changed plain_text), 0 failed
+   ```
+
+4. Restart `aumbry-server`.
+
+If an item's XML cannot be read from WebDAV or is no longer valid XML, `reindex` prints `error: item <id> (<xml path>): ...`, leaves that item's search data unchanged, and continues with the other items. After the last item, the command prints the summary and exits `1`. Fix the cause (run `verify-storage` to find missing objects), then run `reindex` again; repeated runs are safe.
+
+## First release: make the GHCR package public
+
+This section is for maintainers and applies once, after the first release that pushes `ghcr.io/nerdneilsfield/aumbry`. GitHub creates a new container package as private, so `docker pull` from a host that is not signed in to `ghcr.io` fails until you change the package visibility. Later releases keep the setting.
+
+1. After the release workflow succeeds, open the owner's **Packages** tab on GitHub and select `aumbry`.
+2. Check that the package page shows the repository `nerdneilsfield/Aumbry`. The image carries the `org.opencontainers.image.source` label, which normally links it automatically. If no repository is shown, select **Connect repository** and choose `nerdneilsfield/Aumbry`.
+3. Select **Package settings**, scroll to **Danger Zone**, and select **Change visibility**.
+4. Choose **Public**, type the package name `aumbry` to confirm, and select **I understand the consequences, change package visibility**.
+5. From a host that is not signed in to `ghcr.io`, pull the released tag, for example `docker pull ghcr.io/nerdneilsfield/aumbry:<version>`. The pull succeeds without credentials.
+
+These steps follow the GitHub package settings pages; they were not run during verification, and GitHub may rename the labels.

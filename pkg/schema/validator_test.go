@@ -362,3 +362,17 @@ func TestV10FigureXPathPreservesLegacyScope(t *testing.T) {
 		t.Fatalf("unexpected rewritten v1.0 XML:\n%s", out)
 	}
 }
+
+func TestParseStoredAssetsSkipsFigureChecks(t *testing.T) {
+	input := doc(`<section title="a"><md><![CDATA[needle text]]></md><figure src="/api/v1/assets/` + strings.Repeat("a", 64) + `"/></section>`)
+	if _, issues := Parse([]byte(input), Options{}); len(issues) != 1 || issues[0].Code != "INVALID_ASSET_PATH" {
+		t.Fatalf("default options: issues = %+v, want one INVALID_ASSET_PATH", issues)
+	}
+	parsed, issues := Parse([]byte(input), Options{StoredAssets: true})
+	if len(issues) != 0 {
+		t.Fatalf("StoredAssets: issues = %+v, want none", issues)
+	}
+	if !strings.Contains(parsed.PlainText(), "needle text") {
+		t.Errorf("PlainText = %q, want it to contain the md text", parsed.PlainText())
+	}
+}

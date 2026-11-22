@@ -46,6 +46,10 @@ archives:
       - README*
       - skills/aumbry/**
 
+# GoReleaser creates a Syft SBOM per archive when `sboms` is unset; disable it explicitly (PRD 1.3, 5.2).
+sboms:
+  - disable: true
+
 dockers_v2:
   - id: aumbry
     ids:

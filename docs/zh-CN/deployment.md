@@ -2,7 +2,7 @@
 
 # 部署与运维指南
 
-本文说明如何使用 Docker Compose 或宿主机二进制部署 `aumbry-server`，配置反向代理，检查服务探针，以及执行 WAL 安全备份、存储核验与垃圾回收。
+本文说明如何使用 Docker Compose 或宿主机二进制部署 `aumbry-server`，配置反向代理，检查服务探针，以及执行 WAL 安全备份、存储核验、垃圾回收与搜索索引重建。
 
 > **注意：严格单实例运行。** Aumbry 串行处理数据库写入，在 `data_dir` 中持有文件锁（`aumbry.lock`），并在进程内存中保存限流计数器。部署时请确保同一 `data_dir` 与私有 WebDAV 根目录仅运行一个 `aumbry-server` 实例；同时启动多个实例会引发锁冲突并使限流失效。
 
@@ -167,7 +167,15 @@
 
 2. `backup` 仅备份 SQLite 数据库；条目后续更新时，服务端会删除 WebDAV 中的旧版 XML。如需完整时间点恢复，请将 SQLite 快照与同时刻的 WebDAV 存储快照成对保存。
 
-3. 恢复完成后，先运行 `verify-storage` 确认数据库与对象存储引用一致，再重新对外提供访问。
+3. 恢复数据库快照及与之配对的 WebDAV 快照后，先验证恢复结果，再对外提供访问：
+
+   1. 运行 `verify-storage`（见下一节），退出码必须为 `0`：
+
+      ```sh
+      aumbry-server verify-storage --config ./aumbry.toml
+      ```
+
+   2. 启动 `aumbry-server`，登录管理员页面，打开一篇报告（最好是含图片的报告），确认正文正常渲染且至少有一张图片能显示。`verify-storage` 只检查对象是否存在；这一步确认对象能经服务端读取。
 
 ### 核验对象引用完整性（`verify-storage`）
 
@@ -219,6 +227,63 @@ storage OK: verified 1 xml and 0 asset objects
 
 4. 重新启动 `aumbry-server`。
 
-### 搜索索引与重索引（`reindex`）
+### 重建搜索索引（`reindex`）
 
-全站检索对 3 个字符及以上的检索词使用 SQLite 全文索引，检索词不足 3 个字符时自动退化为子串匹配。服务端在每次 `POST /api/v1/ingest` 和条目删除时于同一事务内同步更新搜索索引。**当前版本未实现独立 `reindex` 子命令**；如需重建某条目的索引文本，使用原 `--key` 或 `--id` 重新推送该 XML 文档即可。
+3 个字符及以上的检索词使用 SQLite 全文索引（`items_fts`），不足 3 个字符的检索词对 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入这两处。`reindex` 从 WebDAV 重新读取每个条目已存储的 XML，按当前版本的规则重新计算索引文本，并同时重写 `items.plain_text` 与 `items_fts`，使两条检索路径保持一致。
+
+出现下列情况之一时运行 `reindex`：
+
+- 升级到改变了索引文本范围的版本。此前入库的文档仍保留旧的索引文本，重建后才会按新规则生效。
+- 检索结果与报告内容不一致，例如恢复数据库快照后，或手工修复过数据库后。
+
+正常的入库、删除和 `backup` 不需要它。
+
+写入式运行与 `gc` 使用同一把 `aumbry.lock`，因此必须先停止 `aumbry-server`。`--dry-run` 只读，服务运行时也可执行。
+
+1. 预览结果。`--dry-run` 会读取并解析每个条目，但不写入任何数据：
+
+   ```sh
+   aumbry-server reindex --config ./aumbry.toml --dry-run
+   ```
+
+   输出示例：
+
+   ```text
+   dry-run: would reindex 12 of 12 items (3 with changed plain_text), 0 failed
+   ```
+
+   `with changed plain_text` 统计已存储的 `plain_text` 与重新计算结果不同的条目数。正式运行会重写每个可读条目的 `items_fts` 行，不论 `plain_text` 是否变化。
+
+2. 停止 `aumbry-server`。若服务仍持有 `aumbry.lock`，写入式运行会立即退出：
+
+   ```text
+   refusing to run reindex while aumbry-server is running; stop the server first or pass --dry-run
+   ```
+
+3. 执行重建。命令每 100 个条目为一批，一批一个事务：
+
+   ```sh
+   aumbry-server reindex --config ./aumbry.toml
+   ```
+
+   输出示例：
+
+   ```text
+   reindexed 12 of 12 items (3 with changed plain_text), 0 failed
+   ```
+
+4. 重新启动 `aumbry-server`。
+
+如果某个条目的 XML 无法从 WebDAV 读取，或已不是有效 XML，`reindex` 会输出 `error: item <id> (<xml 路径>): ...`，保持该条目的检索数据不变，并继续处理其余条目。处理完最后一个条目后，命令输出汇总并以退出码 `1` 结束。排除原因后（可用 `verify-storage` 查找缺失对象）再次运行 `reindex` 即可，重复运行是安全的。
+
+## 首次发布：把 GHCR 包设为公开
+
+本节面向维护者，只在首次发布并推送 `ghcr.io/nerdneilsfield/aumbry` 之后执行一次。GitHub 会把新建的容器包默认设为私有，未登录 `ghcr.io` 的主机执行 `docker pull` 会失败，直到修改包的可见性。之后的发布沿用该设置。
+
+1. 发布工作流成功后，在 GitHub 上打开所有者的 **Packages** 标签页，选择 `aumbry`。
+2. 确认包页面显示的关联仓库是 `nerdneilsfield/Aumbry`。镜像带有 `org.opencontainers.image.source` 标签，GitHub 通常会据此自动关联。如果没有显示仓库，选择 **Connect repository** 并选中 `nerdneilsfield/Aumbry`。
+3. 选择 **Package settings**，滚动到 **Danger Zone**，选择 **Change visibility**。
+4. 选择 **Public**，输入包名 `aumbry` 确认，再选择 **I understand the consequences, change package visibility**。
+5. 在未登录 `ghcr.io` 的主机上拉取已发布的标签，例如 `docker pull ghcr.io/nerdneilsfield/aumbry:<version>`，应无需凭据即可成功。
+
+以上步骤依据 GitHub 的包设置页面编写，验证期间没有实际操作，界面标签可能被 GitHub 改名。

@@ -54,6 +54,7 @@ func newRootCmd(logger *slog.Logger) *cobra.Command {
 		newBackupCmd(&configPath),
 		newVerifyStorageCmd(&configPath),
 		newGCCmd(&configPath),
+		newReindexCmd(&configPath),
 	)
 	return root
 }
