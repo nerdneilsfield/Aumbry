@@ -6,78 +6,61 @@
 | **文档版本** | v1.2（在 v1.1 基线上的增量规格，未提及的部分一律沿用 v1.1）  |
 | **基线**     | `docs/prd_spec_v1.1/prd.md`，对应 master 上已发布的 v0.1.1   |
 | **日期**     | 2026-11-22                                                   |
-| **本版主题** | **对象存储不再只有 WebDAV**：新增本地目录与 S3 兼容存储（含 AWS S3、Cloudflare R2、MinIO 等） |
+| **本版主题** | **对象存储不再只有 WebDAV**：新增本地目录与 S3 兼容存储（含 Cloudflare R2、MinIO、AWS S3 等） |
 
 ---
 
 ## 1. 背景与目标
 
-Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebDAV 一种实现。WebDAV 服务不可用时，整个服务无法启动（启动探测失败），也无法读写任何报告；没有 WebDAV 的用户则根本没法部署。
+Aumbry 把报告的 XML 与图片存在私有对象存储里，目前只有 WebDAV 一种实现。WebDAV 服务挂掉时，所有读写都失败（`/readyz` 返回 503），没有 WebDAV 的人则无法部署。
 
-目标：
+目标：新增 **本地目录**（`local`）与 **S3 兼容**（`s3`，另有 R2 便捷类型 `r2`）两种后端；WebDAV（`webdav`）保持可用；由配置选择其一。
 
-* **G1 本地目录后端**：对象直接存在本机目录，零外部依赖，单机部署最简单。
-* **G2 S3 兼容后端**：一个实现覆盖 AWS S3、Cloudflare R2、MinIO、Backblaze B2、Wasabi 等所有 S3 协议服务；R2 另有 `r2` 便捷类型，只需账户 ID，不用自己拼端点。
-* **G3 保留 WebDAV**：现有 WebDAV 后端继续可用，行为不变。
-* **G4 后端可选**：由配置选择其中之一，运维命令（`backup`、`verify-storage`、`gc`、`reindex`）与就绪探针对三种后端行为一致。
+**这是个小需求，只做三件事：选后端、两个新后端、让现有运维命令与就绪探针适配。** 不做：
 
-### 1.1 不做（Out of scope）
-
-* 同时使用多个后端、按条目分后端、后端之间的自动迁移命令（换后端的做法见 7.3）。
-* IAM 角色、实例元数据、`AWS_*` 环境变量链等动态凭证；只支持配置里写明的静态密钥。
-* 预签名 URL、让浏览器直连存储桶：所有读取仍由 Aumbry 服务端代理，存储桶不需要公开。
-* 服务端加密、桶策略、生命周期规则的配置与管理（由使用者在存储服务侧自行设置）。
-* GCS、Azure Blob 的原生协议（它们的 S3 兼容入口可以用 S3 后端）。
-* 多实例部署：单实例约束不变。
-* 本项目没有存量用户，**不做任何向后兼容处理**：与旧版本的配置键、`/readyz` 响应字段的差异见 11.1，直接以本文为准。
+* 同时使用多个后端；后端之间的迁移命令（做法见 7.2）。
+* IAM 角色、`AWS_*` 环境变量链等动态凭证；只支持配置里的静态密钥。
+* 预签名 URL、让浏览器直连存储桶：读取仍由 Aumbry 代理，桶不需要公开。
+* 同一个桶/目录由多套数据库共用：**每套 Aumbry 数据库独占一个桶或一个目录**（否则对其中一套运行 `gc` 会把另一套的有效对象当孤儿删除）。因此没有 `prefix` 配置。
+* 服务端加密、桶策略、生命周期规则（在存储服务侧自行设置）。
+* 多实例部署；单实例约束不变。
+* 本项目没有存量用户，**不做任何向后兼容处理**，以本文为准。
 
 ---
 
-## 2. 配置（G4）
+## 2. 配置
 
 ### 2.1 选择后端
 
-新增配置键 `storage`（环境变量 `AUMBRY_STORAGE`），取值 `local`、`webdav`、`s3`、`r2`。`r2` 是 `s3` 的便捷写法：由账户 ID 拼出端点、区域固定为 `auto`，其余行为与 `s3` 完全相同（同一个实现）。**必填，没有默认值**：为避免漏配后悄悄指向一个空的新存储，缺失时启动失败并列出全部缺失项（沿用 v1.1 的「一次性列出全部缺失项，同时给出 TOML 键和 env 名」）。
+配置键 `storage`（环境变量 `AUMBRY_STORAGE`），取值 `local`（**默认**）、`webdav`、`s3`、`r2`。`r2` 是 `s3` 的便捷写法：由账户 ID 拼出端点、区域固定为 `auto`，之后与 `s3` 是同一份实现。
 
-只校验被选中的后端所需的键。未被选中的后端的键如果被设置，`check-config` 与启动日志给出一条警告（`storage = "local" ignores [webdav] settings`），不报错。
+只校验被选中的后端所需的键（沿用 v1.1：缺失项一次性全部列出，同时给出 TOML 键和 env 名）。**防误配**：`storage` 未设置、却填写了 `webdav`、`s3` 或 `r2` 的任何配置项时，启动失败并提示设置 `storage`（避免悄悄用空的本地目录）。v1.1 中 `webdav.*` 不再是全局必填，只在 `storage = "webdav"` 时必填。
 
 ### 2.2 键与环境变量
 
-| TOML 键 | 环境变量 | 适用 | 必填 | 默认 | 说明 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `storage` | `AUMBRY_STORAGE` | 全部 | 是 | – | `local` / `webdav` / `s3` / `r2` |
-| `local.path` | `AUMBRY_LOCAL_PATH` | local | 否 | `<data_dir>/objects` | 对象根目录，必须是绝对路径；不存在时自动创建（目录权限 `0700`） |
-| `webdav.url` | `AUMBRY_WEBDAV_URL` | webdav | 是 | – | 不变 |
-| `webdav.user` | `AUMBRY_WEBDAV_USER` | webdav | 是 | – | 不变 |
-| `webdav.password` | `AUMBRY_WEBDAV_PASS` | webdav | 是 | – | 不变 |
-| `s3.endpoint` | `AUMBRY_S3_ENDPOINT` | s3 | 否 | AWS 官方端点 | 形如 `https://<account>.r2.cloudflarestorage.com` 或 `http://minio:9000`；协议头决定是否使用 TLS；AWS S3 可省略 |
-| `s3.region` | `AUMBRY_S3_REGION` | s3 | 是 | – | AWS 用真实区域；R2 填 `auto`；MinIO 填 `us-east-1` |
-| `s3.bucket` | `AUMBRY_S3_BUCKET` | s3 | 是 | – | 存储桶名，必须已存在，Aumbry 不创建桶 |
-| `s3.access_key_id` | `AUMBRY_S3_ACCESS_KEY_ID` | s3 | 是 | – | |
-| `s3.secret_access_key` | `AUMBRY_S3_SECRET_ACCESS_KEY` | s3 | 是 | – | 属于密钥，`check-config` 掩码，仅保留末 4 位 |
-| `r2.account_id` | `AUMBRY_R2_ACCOUNT_ID` | r2 | 是 | – | Cloudflare 账户 ID（32 位十六进制）；端点由它拼成 `https://<account_id>.r2.cloudflarestorage.com`，区域固定为 `auto` |
-| `r2.bucket` | `AUMBRY_R2_BUCKET` | r2 | 是 | – | 同 `s3.bucket` |
-| `r2.access_key_id` | `AUMBRY_R2_ACCESS_KEY_ID` | r2 | 是 | – | R2 API 令牌的访问密钥 ID |
-| `r2.secret_access_key` | `AUMBRY_R2_SECRET_ACCESS_KEY` | r2 | 是 | – | 属于密钥，`check-config` 掩码，仅保留末 4 位 |
-| `r2.prefix` | `AUMBRY_R2_PREFIX` | r2 | 否 | 空 | 同 `s3.prefix` |
-| `s3.prefix` | `AUMBRY_S3_PREFIX` | s3 | 否 | 空 | 桶内的前缀，如 `aumbry/`；Aumbry 只读写该前缀之下的对象，两个实例用不同前缀可以共用一个桶 |
-| `s3.path_style` | `AUMBRY_S3_PATH_STYLE` | s3 | 否 | `false` | 使用路径式寻址（`endpoint/bucket/key`）；MinIO 等自建服务通常需要 `true`，R2 与 AWS 用默认即可 |
+| TOML 键 | 环境变量 | 后端 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `storage` | `AUMBRY_STORAGE` | 全部 | 否（默认 `local`） | `local` / `webdav` / `s3` / `r2` |
+| `local.path` | `AUMBRY_LOCAL_PATH` | local | 否 | 对象根目录，默认 `<data_dir>/objects`；允许相对路径，与 `data_dir` 一样相对进程工作目录解析 |
+| `webdav.url` / `user` / `password` | `AUMBRY_WEBDAV_URL` / `_USER` / `_PASS` | webdav | 是 | 不变 |
+| `s3.endpoint` | `AUMBRY_S3_ENDPOINT` | s3 | 否 | 形如 `http://minio:9000`；空表示 AWS 官方端点；协议头决定是否使用 TLS |
+| `s3.region` | `AUMBRY_S3_REGION` | s3 | 端点为空时必填 | 端点非空且未设置时默认 `auto`（R2）；MinIO 填 `us-east-1` |
+| `s3.bucket` | `AUMBRY_S3_BUCKET` | s3 | 是 | 必须已存在，Aumbry 不创建桶 |
+| `s3.access_key_id` / `s3.secret_access_key` | `AUMBRY_S3_ACCESS_KEY_ID` / `AUMBRY_S3_SECRET_ACCESS_KEY` | s3 | 是 | `check-config` 对两者都掩码，仅保留末 4 位 |
+| `s3.path_style` | `AUMBRY_S3_PATH_STYLE` | s3 | 否 | 默认 `false`；MinIO 等自建服务通常要 `true` |
+| `r2.account_id` | `AUMBRY_R2_ACCOUNT_ID` | r2 | 是 | 32 位十六进制；端点为 `https://<account_id>.r2.cloudflarestorage.com` |
+| `r2.bucket` / `access_key_id` / `secret_access_key` | `AUMBRY_R2_BUCKET` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | r2 | 是 | 含义同 `s3`，掩码规则相同 |
 
-校验补充：
+校验补充：`s3.endpoint` 非空时必须是带 `http://` 或 `https://` 的合法 URL，不含路径、查询或用户信息；R2 欧盟等司法辖区端点（`<account>.eu.r2.cloudflarestorage.com`）用 `storage = "s3"` 手写端点。`check-config` 只加载与校验配置，不连接存储。
 
-* `local.path` 不是绝对路径 → 报错；`storage = "local"` 且 `data_dir` 与 `local.path` 都不可用时一并报出。
-* `r2.account_id` 必须是 32 位十六进制字符串。需要 R2 的欧盟等司法辖区端点（`<account>.eu.r2.cloudflarestorage.com`）时，改用 `storage = "s3"` 并显式写 `s3.endpoint`。
-* `s3.endpoint` 非空时必须是带 `http://` 或 `https://` 的合法 URL，不得含路径、查询或用户信息。
-* `s3.prefix` 规范化为「无前导 `/`，非空时以 `/` 结尾」；含 `..` 段 → 报错。
-* `check-config` 不连接任何存储，只做配置的加载与校验；密钥一律掩码。
-* `config.example.toml` 同时给出三种后端的示例，默认示例是 `storage = "local"`。
-
-### 2.3 示例
+### 2.3 示例（每个代码块独立可解析）
 
 ```toml
-# 本地目录
+# 本地目录（默认，可省略）
 storage = "local"
+```
 
+```toml
 # Cloudflare R2
 storage = "r2"
 [r2]
@@ -85,7 +68,9 @@ account_id = "<32 位账户 ID>"
 bucket = "aumbry"
 access_key_id = "..."
 secret_access_key = "..."
+```
 
+```toml
 # 自建 MinIO
 storage = "s3"
 [s3]
@@ -101,135 +86,81 @@ secret_access_key = "..."
 
 ## 3. 存储接口
 
-`internal/storage.Store` 保持现有的六个方法与路径约定（绝对路径、斜杠分隔，如 `/xml/<id>-<hash>.xml`、`/assets/<hash>`），只做两处调整：
+`internal/storage.Store` 保持六个方法与路径约定（绝对路径、斜杠分隔，如 `/xml/<id>-<hash>.xml`、`/assets/<hash>.<ext>`），调整三处：
 
-* `Put(ctx, name, body io.Reader, size int64) error`：新增已知长度 `size`。所有调用方（`internal/api/ingest.go` 的 XML 与图片）上传的都是内存里的字节切片，长度已知；S3 需要它做单次上传，WebDAV 与本地后端忽略它。
-* 所有方法**必须遵守 `ctx` 的取消与截止时间**（含读取响应体阶段）。WebDAV 实现因底层库不支持 `context` 而做不到的部分维持现状，不在本版修复。
+* `Put(ctx, name, body io.ReadSeeker) error`：把 `io.Reader` 改为 `io.ReadSeeker`。现有两个调用点（`internal/api/ingest.go` 的 XML 与图片）传的都是 `bytes.NewReader`，这样 S3 能得到长度并安全重试。
+* 方法在可行范围内遵守 `ctx` 的取消与截止时间；S3 的请求与响应体读取都要传 `ctx`。WebDAV 底层库不支持 `context` 的部分维持现状。
+* 错误语义对新后端与 WebDAV 一致：`Open` 对不存在的对象返回 `ErrNotFound`，**且必须在返回流之前就报告**（不能等到第一次 `Read`；正文与图片接口依赖它返回 404）；`Exists` 对不存在返回 `(false, nil)`；`Delete` 对不存在不是错误；`List(dir)` 只返回 `dir` 直接下的对象（不递归），对分页服务取完所有分页，目录不存在时返回空列表且无错误，不返回目录占位对象和临时文件；`Probe` 把失败归类为 `ErrAuth`、`ErrTimeout`、`ErrUnreachable` 之一。
 
-错误语义对三种后端一致，沿用 `ErrNotFound`、`ErrAuth`、`ErrTimeout`、`ErrUnreachable`：
-
-* `Open`、`Exists` 对不存在的对象，分别返回 `ErrNotFound` 与 `(false, nil)`；**`Open` 必须在返回时就报告不存在**，不能等到第一次 `Read`（读取条目正文的接口依赖这一点返回 404）。
-* `Delete` 对不存在的对象不是错误。
-* `List(dir)` 只返回 `dir` 直接下的对象（不递归），返回完整对象路径；对分页服务要取完全部分页；不返回目录占位对象和后端内部的临时对象。
-* `Probe` 对 `local` 检查根目录存在且可写，对 `s3` 检查桶可访问，对 `webdav` 沿用现状；2 秒期限。
-
-`/readyz` 响应里的 `checks.webdav` 改名为 `checks.storage`（见 11.1），取值仍是固定的 `ok`/`unreachable`/`timeout`/`auth`，不输出地址、桶名或路径。启动时同样做一次探测并打印脱敏日志。
+**就绪与启动**（沿用 v1.1 10.1）：`/readyz` 的 `checks.webdav` 改名为 `checks.storage`，取值仍是固定的 `ok`/`unreachable`/`timeout`/`auth`，响应不含地址、桶名、路径；探测 2 秒期限、5 秒缓存不变。启动时探测失败**只打警告、继续监听**（与现状一致）；配置本身无效则启动失败。服务端日志不得出现访问密钥与签名。
 
 ---
 
-## 4. 本地目录后端（G1）
+## 4. 本地目录后端
 
-* 对象 `/xml/a.xml` 存为 `<root>/xml/a.xml`，`<root>` 即 `local.path`。
-* **目录越界防护**：对象名必须是规范化的绝对路径且只包含 `/xml/`、`/assets/` 两个顶层目录之一；含 `..`、空段、`\`、NUL 的名字拒绝。文件系统访问使用 Go 标准库的 `os.Root`（项目已在 CLI 里使用），因此指向根目录之外的符号链接不会被跟随。
-* **原子写入**：先写入同目录下的临时文件（以 `.tmp-` 开头），`fsync` 后 `rename` 到最终名，再 `fsync` 所在目录；写入中途失败或进程被杀，最终名要么不存在、要么是完整内容，绝不出现半个文件。`List` 不返回 `.tmp-*`；`gc` 可以清理超过 1 小时的遗留 `.tmp-*`。
-* 同名对象的内容寻址路径已经保证相同名字内容相同，覆盖写入安全。
-* 文件权限 `0600`，目录 `0700`。容器镜像以 UID/GID `65532` 运行，卷需要对该用户可写。
-* 磁盘已满、权限不足等 I/O 错误按 5xx 返回并写日志，不吞掉。
-* 对象文件名里不嵌入原始路径以外的信息，不引入额外元数据文件。
+* 对象 `/xml/a.xml` 存为 `<root>/xml/a.xml`；`<root>` 即 `local.path`。**只有服务启动会自动创建根目录**（权限 `0700`）；`verify-storage`、`gc`、`reindex`（含 `--dry-run`）遇到根目录不存在要报错，不创建，避免路径拼错后对着空目录报「一切正常」。
+* **越界防护**：对象名必须是规范化的绝对路径，且在 `/xml/`、`/assets/` 之下；含 `..`、空段、`\`、NUL 的名字拒绝。文件访问使用 Go 标准库 `os.Root`，指向根目录之外的符号链接不会被跟随。
+* **原子写入**：写入同目录下以 `.tmp-` 开头的临时文件，`fsync` 文件、关闭、`rename` 到最终名；写入失败时删除临时文件。`List` 不返回 `.tmp-*`。不做目录 `fsync`（Windows 不支持），也不做遗留临时文件的自动回收（进程被强杀可能留下，停服后手工删除即可）。
+* 文件权限 `0600`，目录 `0700`。容器镜像以 UID/GID `65532` 运行，挂载的卷要对该用户可写。
+* `Probe`：根目录存在且可写（创建并删除一个临时文件）。
 
 ---
 
-## 5. S3 兼容后端（G2）
+## 5. S3 兼容后端
 
-* **客户端库**：使用成熟的开源 S3 客户端，不手写签名与协议。候选：`minio-go`（轻量，对各类 S3 兼容服务宽容）与 `aws-sdk-go-v2`。实现前必须读取该库当前版本的文档与源码核对三点，并把结论写进提交说明：① 能用 `CGO_ENABLED=0` 构建；② 与 R2 兼容（`aws-sdk-go-v2` 的新版本默认会为上传计算 CRC32 校验和，部分 S3 兼容服务不支持，用它就必须把校验和策略设为「仅在必要时」，见 [AWS 文档](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/s3-checksums.html)）；③ 维护活跃、许可证允许。
-* **对象键**：`<prefix>` + 对象名去掉前导 `/`，例如前缀 `aumbry/` 下 `/xml/a.xml` 的键是 `aumbry/xml/a.xml`。
-* **读写**：`Put` 用已知长度的单次上传；`Open` 先确认对象存在（得到 `ErrNotFound` 的时机见第 3 章）再流式返回响应体；`Exists` 用对象元数据查询；`Delete` 用单对象删除。
-* **`List`**：按前缀加分隔符 `/` 列举并取完所有分页；只返回 Aumbry 自己前缀之下、`dir` 直接下的对象。多个前缀共用一个桶时互不可见。
-* **超时**：拨号 5 秒、响应头 30 秒，大对象流式传输不设整体超时；全部请求受 `ctx` 约束。上传的是内容寻址的对象，可重复写入而无副作用，因此允许客户端库内置的有限次重试，但总时间受 `ctx` 限制。
-* **错误映射**：认证失败（访问密钥错误、签名不匹配、被拒绝）→ `ErrAuth`；桶不存在或网络不可达 → `ErrUnreachable`；超时 → `ErrTimeout`。错误文本写入日志前去掉密钥与签名。
-* **TLS 与地址**：`https://` 端点用系统根证书校验；`http://` 允许，用于内网与本地自建服务。
-* **R2 说明**（写进文档，不做实测）：`storage = "r2"` 内部用账户 ID 拼出端点 `https://<account-id>.r2.cloudflarestorage.com`、区域 `auto`，之后与 `s3` 走同一份代码；API 令牌需要对该桶的读写权限；Aumbry 用到的操作（单对象读写删、按前缀列举、元数据查询）都在 R2 的 S3 兼容范围内，但本版没有在真实 R2 上验证，以 [Cloudflare 的 S3 兼容文档](https://developers.cloudflare.com/r2/api/s3/api/)为准。
-
----
-
-## 6. 运维命令（G4）
-
-* `backup`：仍只备份 SQLite 快照，行为不变。文档按后端说明如何做配对备份：`local` 在数据库快照**之后**复制对象目录（对象内容寻址且不可变，晚复制得到的是超集）；`s3` 靠存储服务自身的版本控制、复制或 `rclone`；`webdav` 同现状。
-* `verify-storage`、`gc`、`reindex`：通过 `Store` 访问，对三种后端行为一致；`gc` 与 `reindex` 的离线锁、`--dry-run` 语义不变。
-* `gc` 清理 `local` 后端遗留的 `.tmp-*`（见第 4 章）。
-* 恢复后验证（`verify-storage`，再打开一篇含图报告）的要求不变。
+* **客户端库**：用成熟的开源 S3 客户端，不手写签名与协议。候选 `minio-go` 与 `aws-sdk-go-v2`；实现者读取所选库当前版本的文档与源码，确认三点并写进最终报告：① 能 `CGO_ENABLED=0` 构建；② 与 R2 兼容（`aws-sdk-go-v2` 新版本默认为上传计算 CRC32 校验和，部分 S3 兼容服务不支持，用它就要把校验和策略设为「仅在必要时」，见 [AWS 文档](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/s3-checksums.html)）；③ 维护活跃、许可证允许。
+* **对象键**：对象名去掉前导 `/`，例如 `/xml/a.xml` 对应键 `xml/a.xml`。
+* **`Open`**：直接发一次流式 GET，在返回流之前判断错误：`NoSuchKey`/404 → `ErrNotFound`。不要用「先 HEAD 再 GET」，也不要用会延迟请求的高层接口（`minio-go` 的 `Client.GetObject` 会延迟到第一次读取，需用 `Core.GetObject` 或等价的立即请求）。
+* **权限**：AWS 上缺少 `s3:ListBucket` 时，对不存在的对象 GET/HEAD 返回 403 而非 404；文档要写明所需权限（读、写、删、列举），并把权限错误映射为 `ErrAuth`，只有确认对象缺失才映射为 `ErrNotFound`。
+* `Put` 用已知长度的单次上传；`Exists` 用元数据查询；`Delete` 用单对象删除；`List` 按前缀 `xml/`、`assets/` 与分隔符 `/` 列举并取完所有分页。
+* **超时**：沿用现有的拨号 5 秒、响应头 30 秒，大对象流式传输不设整体超时；允许 SDK 内置的有限次重试（内容寻址的对象可重复写入）。错误映射：认证失败 → `ErrAuth`；超时 → `ErrTimeout`；桶不存在、网络不可达 → `ErrUnreachable`。
+* **R2**（文档里写，不做实测）：`storage = "r2"` 由账户 ID 拼出端点、区域 `auto`；API 令牌需要对该桶的读写权限；Aumbry 用到的操作都在 R2 的 S3 兼容范围内，但本版没有在真实 R2 上验证，以 [Cloudflare 文档](https://developers.cloudflare.com/r2/api/s3/api/)为准。
 
 ---
 
-## 7. 文档与示例
+## 6. 运维命令
 
-### 7.1 文档（中英双语，默认英文，按 technical-writing 写，用 deai 检查）
+`verify-storage`、`gc`、`reindex` 都通过 `Store` 访问，对各后端行为一致，离线锁与 `--dry-run` 语义不变。
 
-* `docs/{en,zh-CN}/configuration.md` 与 `deployment.md`：新增「选择存储后端」一节，分别写 `local`、`webdav`、`s3`（含 R2、MinIO 的完整示例）的配置、需要的权限、容器部署时的卷与 UID `65532` 权限、各后端的备份做法。
-* `README.md`、`README.zh-CN.md`：把「需要一个可访问的 WebDAV 服务」改为「选择一种存储后端」，快速上手以 `local` 为例。
-* `config.example.toml`、`.env.example`、`docker-compose.yml`、`docker-compose.toml.yml`、`examples/deploy/*`：默认示例改成 `local`（对象放在已有的 `/data` 卷里），WebDAV 与 S3 作为备选写在注释或独立示例里；反向代理示例里的 `AUMBRY_STORAGE` 等必需项补齐。
-* `skills/aumbry` 里提到 WebDAV 的地方改为存储后端的通用说法（先 `rg` 确认有没有）。
-
-### 7.2 就绪探针与日志
-
-见第 3 章。文档里的 `/readyz` 示例响应同步改成 `checks.storage`。
-
-### 7.3 更换后端
-
-不提供迁移命令。更换后端时：停服务，用 `rclone` 把旧后端的 `xml/` 与 `assets/` 两个目录复制到新后端（本地目录、S3 桶或前缀），改配置，启动前运行 `verify-storage`。写进部署文档的「更换存储后端」一节。
+**备份（需要写进文档，纠正 v1.1 的说法）**：`backup` 仍只备份 SQLite 快照。数据库快照之后更新条目会删除被替换的旧 XML，所以**不能**「先快照、再复制对象目录」。完整备份的做法：停止服务（或停止写入并暂停 `gc`），保存 SQLite 快照以及对象存储的对应内容（`local` 复制目录，`s3`/`webdav` 用存储服务自带的复制或 `rclone`），恢复后运行 `verify-storage`，再打开一篇含图报告确认。
 
 ---
 
-## 8. 非功能
+## 7. 文档与示例（只改必须改的）
 
-* `CGO_ENABLED=0` 不变；新依赖只引入 S3 客户端一个库。
-* 单实例约束不变。
-* 日志与 `check-config` 不输出密钥；`readyz` 不输出地址、桶名、路径。
-* 沿用「有成熟开源库就用库」：S3 协议用库，本地文件访问用标准库 `os.Root`，不手写任何协议或签名。
+### 7.1 要改的文件
 
----
+* `config.example.toml`、`.env.example`、`examples/deploy/*/.env.example`：默认示例为 `local`，WebDAV 相关项改为备选并注明需要 `AUMBRY_STORAGE=webdav`。`docker-compose*.yml` 已经挂载 `/data` 卷，默认 `local` 下不需要改动。
+* `docs/{en,zh-CN}/configuration.md`：配置表与每种后端的示例（含 R2 与 MinIO）、S3 所需权限；`docs/{en,zh-CN}/deployment.md`：`/readyz` 示例改为 `checks.storage`、第 6 章的备份说明、`local` 在容器里的卷权限（UID `65532`）、更换后端的一句话（见 7.2）；`docs/{en,zh-CN}/cli.md` 与 `README.md`、`README.zh-CN.md`、`skills/aumbry/references/troubleshooting.md` 里提到 WebDAV 的地方改为存储后端的通用说法（先用 `rg` 限定在这些路径下确认）。
+* 中英文档内容一致；R2 示例标明「依据官方文档核对，未在真实 R2 上验证」。
 
-## 9. 里程碑
+### 7.2 更换后端
 
-| 里程碑 | 内容 | 依赖 |
-| :--- | :--- | :--- |
-| **M1** | `Store` 接口调整（`Put` 加 `size`、`ctx` 约束）；`storage` 配置键与校验；本地目录后端；`/readyz` 改名；启动探测；运维命令适配；`config.example.toml`、compose、README 的 `local` 示例；文档的 `local` 与 `webdav` 部分 | – |
-| **M2** | S3 兼容后端；三种后端共用的存储一致性测试；S3 的文档（含 R2、MinIO）；`gc` 清理 `.tmp-*` | M1 |
+不提供迁移命令。停服务，用 `rclone` 把旧后端的 `xml/` 与 `assets/` 复制到新后端，改配置，先运行 `verify-storage` 再启动。
 
 ---
 
-## 10. 验收标准
+## 8. 验收标准（不涉及 docker 与真实浏览器）
 
-以下验收不涉及 docker 与真实浏览器。S3 的一致性测试使用进程内的 S3 兼容测试服务（实现时选定成熟的开源测试库；若找不到，改为用本机的 `rclone serve s3` 并在测试里按环境变量跳过，说明原因）。
+S3 的测试使用进程内的 S3 兼容测试服务（实现时选定一个成熟的开源 Go 测试库，如 `gofakes3`；说明选择理由），`go test ./...` 默认不依赖外部服务。
 
-**G1 本地目录**
-1. 仅设置 `AUMBRY_STORAGE=local` 与 v1.1 已有的必填项，服务启动；推送一篇含图片的报告后，正文与图片都能读回；文件分别落在 `<data_dir>/objects/xml/` 与 `objects/assets/`，文件权限 `0600`、目录 `0700`。
-2. 越界防护：对象名 `/xml/../../x`、含 NUL、含 `\` 的写入与读取全部被拒；根目录内指向根目录外的符号链接不被跟随（单元测试）。
-3. 原子写入：在写入中途注入失败，最终名下不出现不完整文件；`List` 不返回 `.tmp-*`；`gc` 清理超过 1 小时的遗留临时文件。
-4. `local.path` 为相对路径 → 配置校验失败并指出键名；根目录不可写 → 启动失败并给出脱敏日志，`/readyz` 返回 503。
-
-**G2 S3 兼容**
-5. 共用一致性测试（`Put`/`Open`/`Exists`/`Delete`/`List`/`Probe`）对 `local`、`s3`（进程内服务）全部通过，WebDAV 沿用现有测试：覆盖重复写入同名对象、`Delete` 不存在的对象、`List` 的非递归语义、超过 1000 个对象时的分页、`Open` 不存在的对象立即返回 `ErrNotFound`。
-6. S3 端到端：推送含图片的报告、更新、删除；`verify-storage` 退出码 0；人为删除一个图片对象后 `verify-storage` 列出缺失项且退出码非 0；`gc --dry-run` 列出孤儿对象；`reindex` 正常。
-7. 前缀隔离：同一个桶、两个不同前缀，两个实例的 `List`、`gc`、`verify-storage` 互不可见。
-8. 超时与取消：测试服务延迟响应超过 30 秒时，`POST /api/v1/ingest` 以 5xx 返回而不是一直阻塞；`ctx` 被取消时 `Put`、`Open`、`List` 立即返回。
-9. 错误映射：错误的访问密钥 → `ErrAuth`，`/readyz` 的 `checks.storage` 为 `auth`；端点不可达 → `unreachable`；日志与响应里都不出现访问密钥、签名或端点地址。
-
-**G4 配置与运维**
-10. 缺少 `storage` → 启动失败；缺少所选后端的必填项 → 一次性列出全部缺失项，同时给出 TOML 键和 env 名；未选中的后端的键被设置 → 一条警告，不报错。
-11. `check-config` 对 `s3.secret_access_key`、`s3.access_key_id`、`r2.secret_access_key`、`r2.access_key_id` 掩码，仅保留末 4 位；`storage = "r2"` 时缺少 `r2.account_id` 或它不是 32 位十六进制 → 校验失败；`r2` 生效后的端点是 `https://<account_id>.r2.cloudflarestorage.com`、区域是 `auto`（单元测试断言解析结果，不连网）；`s3.endpoint` 带路径或用户信息 → 校验失败；`s3.prefix` 含 `..` → 校验失败。
-12. `/readyz` 在三种后端下都返回 `checks.storage`，正常为 `ok`；不再出现 `checks.webdav`；响应不含地址、桶名或路径。
-13. `CGO_ENABLED=0 go build ./...`、`go vet`、`go test`、`golangci-lint`（CI 同版本）全部通过。
-
-**文档**
-14. 中英文的 `configuration.md`、`deployment.md`、README 都描述三种后端；R2（`storage = "r2"`）与 MinIO（`s3`）有完整示例；R2 示例标明「依据官方文档核对，未在真实 R2 上验证」；有「更换存储后端」一节；`config.example.toml` 通过 `check-config`（退出码 0）。
-15. 文档用 deai `--mode check` 检查（中英分别），`markdown-it` 渲染后没有残留的 `**`。
+1. **local 端到端**：仅默认配置（不设 `storage`）启动，推送含图片的报告后正文与图片可读回；对象落在 `<data_dir>/objects/xml/` 与 `objects/assets/`；文件 `0600`、目录 `0700`。
+2. **local 安全**：对象名 `/xml/../../x`、含 NUL、含 `\` 的读写被拒；根目录内指向根目录外的符号链接不被跟随；写入中途失败不留下不完整的最终文件；`List` 不返回 `.tmp-*`；`verify-storage`/`gc --dry-run` 对不存在的根目录报错且不创建它。
+3. **共用一致性测试**：对 `local` 与进程内 `s3`（WebDAV 沿用现有测试）覆盖 `Put`（含覆盖同名）、`Open`、`Exists`、`Delete`（不存在不报错）、`List`（非递归；用小页长构造出分页，如每页 2 个、放 5 个对象；不存在的目录返回空）、`Probe`，以及 `Open` 不存在时立即返回 `ErrNotFound`。
+4. **s3 端到端**：推送含图报告、更新、删除；`verify-storage` 退出码 0；删掉一个图片对象后它被列出且退出码非 0；`gc --dry-run` 列出孤儿；`reindex` 正常。
+5. **s3 超时、取消与错误映射**：用短超时注入测试（沿用 `internal/storage/storage_test.go` 与 `internal/api/middleware_test.go` 的方式）验证慢响应导致 ingest 以 5xx 返回，并断言默认常量仍是 5 秒/30 秒；`ctx` 取消后请求返回；访问密钥错误 → `/readyz` 的 `checks.storage` 为 `auth`，端点不可达 → `unreachable`；`/readyz` 响应与日志中不含访问密钥或签名，响应中不含地址、桶名、路径。
+6. **配置与就绪**：`storage` 未设置且设置了 `webdav`/`s3`/`r2` 任一项 → 启动失败并提示；所选后端缺少必填项 → 一次性列出全部缺失项（含 TOML 键与 env 名）；`check-config` 对 `access_key_id` 与 `secret_access_key`（`s3` 与 `r2`）掩码到末 4 位；`r2.account_id` 非 32 位十六进制 → 失败；`storage = "r2"` 解析出的端点与区域由单元测试直接断言，不连网；`s3.endpoint` 带路径 → 失败；`config.example.toml` 通过 `check-config`（退出码 0）；`/readyz` 在各后端下都输出 `checks.storage`，不再有 `checks.webdav`。
+7. **工程检查**：`CGO_ENABLED=0 go build ./...`、`go vet ./...`、`go test ./...`、`golangci-lint`（v2.15.0，与 CI 同版本）、`gofumpt`、`goimports` 全部通过；本需求不动前端，不跑前端检查。
 
 ---
 
-## 11. 决策记录与未决问题
+## 9. 决策记录
 
-### 11.1 已定决策
-
-* **R2 提供便捷类型 `r2`**：只填账户 ID 即可，内部与 `s3` 共用同一份实现；其他司法辖区端点与其他 S3 兼容服务仍用 `s3` 手写端点。
-* **`storage` 必填**：宁可让漏配的人启动失败，也不要悄悄指向一个空的新存储。
-* **只支持静态密钥**：不引入凭证链，减少依赖与行为差异。
-* **`checks.webdav` 改名为 `checks.storage`**：探针不再只检查 WebDAV；项目没有存量用户，不保留旧字段。
-* **WebDAV 的 `[webdav]` 表与 `AUMBRY_WEBDAV_*` 名字不变**：它们不是兼容层，只是现有后端的正常配置。
-* **不提供后端迁移命令**：用 `rclone` 复制两个目录即可，见 7.3。
-
-### 11.2 未决问题（实现前由使用者确认）
-
-1. 配置键名：`storage` 加 `[local]`/`[s3]` 两张表与 `AUMBRY_S3_*` 环境变量，这个命名是否可以。
-2. S3 客户端库在 `minio-go` 与 `aws-sdk-go-v2` 之间的选择，由实现者按第 5 章的三点核对后决定，并说明理由。
-3. 是否需要支持 AWS 的 IAM 角色等动态凭证。当前决定不要。
+* **`storage` 默认 `local`**，但「没设 `storage` 却配了其它后端」会启动失败，避免漏配后悄悄使用空目录。
+* **`r2` 作为便捷类型保留**（使用者要求）：只填账户 ID，内部与 `s3` 同一份实现；欧盟等端点与其他 S3 兼容服务用 `s3`。
+* **没有 `prefix`**：每套数据库独占桶或目录，避免 `gc` 跨库误删。
+* **`Put` 改 `io.ReadSeeker`**，不新增 `size` 参数。
+* **不做 `.tmp-*` 自动回收，也不做目录 `fsync`**。
+* **`checks.webdav` 改名为 `checks.storage`**；`[webdav]` 表与 `AUMBRY_WEBDAV_*` 名字不变。
+* **S3 客户端库**在 `minio-go` 与 `aws-sdk-go-v2` 之间由实现者按第 5 章三点核对后选定。
+* **里程碑**：一次完成，不分阶段。
