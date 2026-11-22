@@ -2,7 +2,7 @@ import { createHighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 import githubDark from 'shiki/themes/github-dark.mjs'
 import githubLight from 'shiki/themes/github-light.mjs'
-import type { CodeToHastOptions } from 'shiki/core'
+import type { CodeToHastOptions, ShikiTransformer } from 'shiki/core'
 
 // Top-level await: only the lazily loaded reader chunk imports this module.
 export const highlighter = await createHighlighterCore({
@@ -35,3 +35,11 @@ export const dualTheme = {
   themes: { light: 'github-light', dark: 'github-dark' },
   defaultColor: false,
 } satisfies Partial<CodeToHastOptions>
+
+/** Puts the language on <pre data-lang> (the Markdown export reads it back as the fence info string). */
+export const langAttribute: ShikiTransformer = {
+  name: 'aumbry-lang',
+  pre(node) {
+    node.properties['data-lang'] = this.options.lang
+  },
+}

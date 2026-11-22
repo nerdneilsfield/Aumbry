@@ -7,7 +7,7 @@ import texmath from 'markdown-it-texmath'
 import katex from 'katex'
 import DOMPurify from 'dompurify'
 import { dedent } from 'ts-dedent'
-import { dualTheme, highlighter, loadedLangs } from '@/lib/highlighter'
+import { dualTheme, highlighter, langAttribute, loadedLangs } from '@/lib/highlighter'
 import { safeUrl } from '@/lib/url'
 import 'katex/dist/katex.min.css'
 
@@ -17,9 +17,11 @@ const md = new MarkdownIt({
   linkify: true,
   breaks: false,
   highlight: (code, lang) =>
-    loadedLangs.has(lang) ? highlighter.codeToHtml(code, { lang, ...dualTheme }) : '',
+    loadedLangs.has(lang) ? highlighter.codeToHtml(code, { lang, ...dualTheme, transformers: [langAttribute] }) : '',
 })
-md.use(texmath, { engine: katex, delimiters: 'dollars', katexOptions: { throwOnError: false } })
+// The typeset formula carries its TeX source in data-tex (Markdown export reads it back; the KaTeX DOM cannot be turned into TeX).
+const katexWithSource = { renderToString: (tex: string, options: object) => `<span data-tex="${md.utils.escapeHtml(tex)}">${katex.renderToString(tex, options)}</span>` }
+md.use(texmath, { engine: katexWithSource, delimiters: 'dollars', katexOptions: { throwOnError: false } })
 md.use(footnote)
 md.use(taskLists, { enabled: false })
 md.use(sub)

@@ -186,3 +186,55 @@ html.dark .shiki span {
 .prose :where(table) {
   @apply text-sm;
 }
+
+/* Print (PRD 9.3): white paper, black text, no chrome. useTheme switches the page to the light theme while printing, so the
+   gray scale and shiki's light colours are already in place; what is left here is layout. Expanding collapse / tab / stage
+   content is not CSS: those blocks are force-mounted while printing (composables/usePrint.ts). */
+@page {
+  margin: 14mm;
+}
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    min-height: 0;
+  }
+  /* keep the tinted callouts, table stripes and chart colours that carry meaning */
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  /* nothing scrolls on paper: code wraps, wide tables and figures shrink to the page */
+  pre,
+  .code-block pre.shiki {
+    overflow: visible !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere;
+  }
+  .code-block pre.shiki code {
+    width: auto;
+  }
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+  img {
+    max-width: 100%;
+  }
+  /* an image, diagram, code block, table row or quote is not split across two pages */
+  img,
+  svg,
+  figure,
+  pre,
+  blockquote,
+  tr,
+  .katex-display {
+    break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+  }
+}

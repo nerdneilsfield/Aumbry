@@ -22,9 +22,12 @@ defineProps<{
       <span v-if="date" class="inline-flex items-center gap-1.5"><CalendarDays class="size-4" />{{ date }}</span>
       <span v-if="sourceAgent" class="inline-flex items-center gap-1.5"><Bot class="size-4" />{{ sourceAgent }}</span>
       <span v-for="t in tags" :key="t" class="chip">{{ t }}</span>
-      <a v-if="httpUrl(canonicalUrl)" :href="httpUrl(canonicalUrl)" target="_blank" rel="noopener noreferrer" class="btn sm:ml-auto">
-        <ExternalLink class="size-4" />原文链接
-      </a>
+      <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
+        <slot name="actions" />
+        <a v-if="httpUrl(canonicalUrl)" :href="httpUrl(canonicalUrl)" target="_blank" rel="noopener noreferrer" class="btn print:hidden">
+          <ExternalLink class="size-4" />原文链接
+        </a>
+      </div>
     </div>
     <ReadingControls class="mt-4 border-t border-gray-700 pt-4" />
   </header>

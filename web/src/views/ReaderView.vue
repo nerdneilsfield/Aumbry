@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useTitle } from '@vueuse/core'
@@ -11,6 +11,7 @@ import StatePage from '@/components/StatePage.vue'
 import XmlRenderer from '@/components/renderer/XmlRenderer.vue'
 import MetaBar from '@/components/reader/MetaBar.vue'
 import TocPanel from '@/components/reader/TocPanel.vue'
+import DocumentActions from '@/components/reader/DocumentActions.vue'
 import { useScrollSpy } from '@/composables/useScrollSpy'
 
 const route = useRoute()
@@ -37,6 +38,7 @@ const toc = computed(() => (doc.value && 'toc' in doc.value ? doc.value.toc : []
 const rendered = computed(() => (!err.value && item.value && doc.value && !('error' in doc.value) ? doc.value : undefined))
 
 const { active, jump } = useScrollSpy(toc, rendered)
+const article = useTemplateRef<HTMLElement>('article')
 </script>
 
 <template>
@@ -53,6 +55,12 @@ const { active, jump } = useScrollSpy(toc, rendered)
 
   <div v-else>
     <MetaBar :title="item.title" :summary="item.summary" :date="item.date" :source-agent="item.source_agent" :tags="item.tags" :canonical-url="item.canonical_url">
+      <template v-if="rendered" #actions>
+        <DocumentActions
+          :content="article"
+          :meta="{ title: item.title, summary: item.summary, date: item.date, sourceAgent: item.source_agent, tags: item.tags, canonicalUrl: item.canonical_url }"
+        />
+      </template>
       <template v-if="item.dirs.length" #crumbs>
         <nav class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-400">
           <FolderOpen class="size-4" />
@@ -63,8 +71,8 @@ const { active, jump } = useScrollSpy(toc, rendered)
       </template>
     </MetaBar>
 
-    <div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_14rem]">
-      <article class="min-w-0">
+    <div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_14rem] print:block">
+      <article ref="article" class="min-w-0">
         <p v-if="doc && 'error' in doc" class="card border-red-500/40 p-4 text-sm text-red-300">{{ doc.error }}</p>
         <XmlRenderer v-else-if="doc" :key="id" :body="doc.body" :storage-key="id" />
       </article>

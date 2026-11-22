@@ -26,6 +26,11 @@ declare module 'markdown-it-sub' {
   export default sub
 }
 
+declare module '@joplin/turndown-plugin-gfm' {
+  import type TurndownService from 'turndown'
+  export const gfm: TurndownService.Plugin
+}
+
 declare module 'markdown-it-sup' {
   import type { PluginSimple } from 'markdown-it'
   const sup: PluginSimple

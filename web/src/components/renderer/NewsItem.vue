@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { useMediaQuery } from '@vueuse/core'
+import { useExpanded } from '@/composables/usePrint'
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
 import { ArrowRight, ChevronRight, ExternalLink, Flame, Newspaper, TriangleAlert } from 'lucide-vue-next'
 import { attr, children } from '@/lib/xml'
@@ -30,8 +30,8 @@ const summary = computed(() =>
 const detail = computed(() => children(props.node).find((c) => c.tagName === 'detail')?.textContent?.trim() ?? '')
 
 const userOpen = ref(false)
-const printing = useMediaQuery('print')
-const open = computed({ get: () => userOpen.value || printing.value, set: (v) => (userOpen.value = v) })
+const expanded = useExpanded()
+const open = computed({ get: () => userOpen.value || expanded.value, set: (v) => (userOpen.value = v) })
 </script>
 
 <template>

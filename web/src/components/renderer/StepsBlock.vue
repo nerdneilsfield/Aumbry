@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, useTemplateRef } from 'vue'
-import { onKeyStroke, useMediaQuery } from '@vueuse/core'
+import { onKeyStroke } from '@vueuse/core'
+import { useExpanded } from '@/composables/usePrint'
 import { StepperIndicator, StepperItem, StepperRoot, StepperSeparator, StepperTitle, StepperTrigger } from 'reka-ui'
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { attr, children } from '@/lib/xml'
@@ -9,13 +10,13 @@ import XmlNode from './XmlNode.vue'
 
 const props = defineProps<{ node: Element }>()
 const { activeSteps } = useAnchors()
-// Printing mounts every step; otherwise only the active one is in the DOM.
-const printing = useMediaQuery('print')
+// Printing / export mounts every step; otherwise only the active one is in the DOM.
+const expanded = useExpanded()
 const steps = computed(() => children(props.node).filter((c) => c.tagName === 'step'))
 const interactive = computed(() => attr(props.node, 'interactive') === 'true' && steps.value.length > 1)
 
 // Interactive player: one step at a time. The active step lives in the shared anchor state so that
-// #eq-* / #fig-* links into a hidden step can switch to it. Only the active step is mounted (all of them while printing).
+// #eq-* / #fig-* links into a hidden step can switch to it. Only the active step is mounted (all of them while expanded).
 const step = computed({
   get: () => Math.min((activeSteps.get(props.node) ?? 0) + 1, steps.value.length),
   set: (n: number) => activeSteps.set(props.node, Math.min(Math.max(n, 1), steps.value.length) - 1),
@@ -37,7 +38,7 @@ onKeyStroke('ArrowLeft', arrow(-1), { target: player })
   <ol v-if="!interactive" class="not-prose list-none p-0">
     <li v-for="(s, i) in steps" :key="i" class="relative flex gap-4 pb-6 last:pb-0">
       <span v-if="i < steps.length - 1" class="absolute bottom-0 left-4 top-9 w-px -translate-x-1/2 bg-gray-700" aria-hidden="true" />
-      <span class="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border border-blue-400/60 bg-blue-500/15 text-sm font-bold text-blue-300 tabular-nums">{{ i + 1 }}</span>
+      <span data-export-skip class="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border border-blue-400/60 bg-blue-500/15 text-sm font-bold text-blue-300 tabular-nums">{{ i + 1 }}</span>
       <div class="min-w-0 flex-1 space-y-3 pt-0.5">
         <h3 class="text-base font-semibold leading-8 text-gray-50">{{ attr(s, 'title') }}</h3>
         <XmlNode v-for="(n, j) in children(s)" :key="j" :node="n" />
@@ -67,9 +68,9 @@ onKeyStroke('ArrowLeft', arrow(-1), { target: player })
 
     <div class="p-4 sm:p-5">
       <template v-for="(s, i) in steps" :key="i">
-        <div v-if="i + 1 === step || printing" class="space-y-3" :data-step-panel="i + 1">
+        <div v-if="i + 1 === step || expanded" class="space-y-3" :data-step-panel="i + 1">
         <h3 class="flex items-baseline gap-2 text-base font-semibold text-gray-50">
-          <span class="rounded-md bg-blue-500/15 px-1.5 py-0.5 font-mono text-xs text-blue-300">{{ i + 1 }}/{{ steps.length }}</span>{{ attr(s, 'title') }}
+          <span data-export-skip class="rounded-md bg-blue-500/15 px-1.5 py-0.5 font-mono text-xs text-blue-300">{{ i + 1 }}/{{ steps.length }}</span>{{ attr(s, 'title') }}
         </h3>
         <XmlNode v-for="(n, j) in children(s)" :key="j" :node="n" />
         </div>

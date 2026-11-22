@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useMediaQuery } from '@vueuse/core'
+import { useExpanded } from '@/composables/usePrint'
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
 import { ChevronRight, CircleSlash, Search, SquareCheck, SquareX, TriangleAlert } from 'lucide-vue-next'
 import { attr, children } from '@/lib/xml'
@@ -26,10 +26,10 @@ const crit = computed(() => {
 const totals = computed(() => ({ hits: queries.value.reduce((n, q) => n + q.hits, 0), kept: queries.value.reduce((n, q) => n + q.kept, 0) }))
 const issues = computed(() => searchLogIssues(props.node))
 
-// default-collapsed audit card; printing shows it open
+// default-collapsed audit card; expanded shows it open
 const userOpen = ref(false)
-const printing = useMediaQuery('print')
-const open = computed({ get: () => userOpen.value || printing.value, set: (v) => (userOpen.value = v) })
+const expanded = useExpanded()
+const open = computed({ get: () => userOpen.value || expanded.value, set: (v) => (userOpen.value = v) })
 </script>
 
 <template>
@@ -40,7 +40,7 @@ const open = computed({ get: () => userOpen.value || printing.value, set: (v) =>
       <span class="font-medium text-gray-100">检索记录</span>
       <span v-if="attr(node, 'date')" class="font-mono text-xs text-gray-400">{{ attr(node, 'date') }}</span>
       <span class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-400" data-search-counts>
-        <span>{{ queries.length }} 条检索式</span><span>命中 {{ totals.hits }} · 保留 {{ totals.kept }}</span><span>排除 {{ excluded.length }}</span><span>空白 {{ gaps.length }}</span>
+        <span>{{ queries.length }} 条检索式</span><span>各查询合计：命中 {{ totals.hits }} · 纳入 {{ totals.kept }}</span><span>排除 {{ excluded.length }}</span><span>空白 {{ gaps.length }}</span>
       </span>
       <TriangleAlert v-if="issues.length" class="size-4 shrink-0 text-amber-300" aria-label="检索记录有问题" />
     </CollapsibleTrigger>
@@ -68,7 +68,7 @@ const open = computed({ get: () => userOpen.value || printing.value, set: (v) =>
       <div v-if="queries.length" class="overflow-x-auto rounded-lg border border-gray-700">
         <table class="w-full border-collapse text-left text-xs">
           <thead class="bg-gray-900/60 text-gray-300">
-            <tr><th class="px-3 py-2">来源</th><th class="px-3 py-2">日期</th><th class="px-3 py-2">检索式</th><th class="px-3 py-2 text-right">命中</th><th class="px-3 py-2 text-right">保留</th></tr>
+            <tr><th class="px-3 py-2">来源</th><th class="px-3 py-2">日期</th><th class="px-3 py-2">检索式</th><th class="px-3 py-2 text-right">命中</th><th class="px-3 py-2 text-right">纳入</th></tr>
           </thead>
           <tbody class="divide-y divide-gray-700/70">
             <tr v-for="(q, i) in queries" :key="i">

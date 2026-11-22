@@ -15,11 +15,18 @@ export const quizMulti = (q: Element) => quizCorrect(q).length > 1
 export const quizSignature = (q: Element) =>
   JSON.stringify([quizQuestion(q), quizOptions(q).map((o) => o.textContent?.trim() ?? ''), quizCorrect(q)])
 
-/** SHA-256 (Web Crypto) of the signature, hex. '' when Web Crypto is unavailable (then stored answers are trusted as they are). */
+/**
+ * SHA-256 of the signature, hex. Web Crypto where it exists; `crypto.subtle` is missing in non-secure contexts (plain http on a
+ * host other than localhost), where @noble/hashes (pure JS, loaded on demand) computes the same digest. Either way the
+ * fingerprint is real: a changed quiz never inherits an old answer.
+ */
 export async function quizFingerprint(q: Element): Promise<string> {
-  if (!globalThis.crypto?.subtle) return ''
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(quizSignature(q)))
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+  const data = new TextEncoder().encode(quizSignature(q))
+  if (globalThis.crypto?.subtle) return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', data)))
+  const { sha256 } = await import('@noble/hashes/sha2.js')
+  return toHex(sha256(data))
 }
+
+const toHex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 
 export const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))

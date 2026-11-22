@@ -21,6 +21,8 @@ const start = computed(() => {
 // shiki escapes the code itself; the HTML is shiki's own output.
 const html = computed(() => highlightCode(code.value, lang.value, diff.value, attr(props.node, 'highlight')))
 const commit = computed(() => attr(props.node, 'commit').slice(0, 12))
+// the Markdown export names the block after its file (and line range)
+const exportTitle = computed(() => (attr(props.node, 'file') ? attr(props.node, 'file') + (lines.value ? ` (L${lines.value})` : '') : undefined))
 
 const { copy, copied } = useClipboard({ copiedDuring: 1500, legacy: true })
 
@@ -37,9 +39,9 @@ const eqOk = computed(() => !!eqId.value && canTarget(`#eq-${eqId.value}`))
 </script>
 
 <template>
-  <figure class="not-prose">
+  <figure class="not-prose" :data-export-title="exportTitle">
     <div class="overflow-hidden rounded-xl border border-gray-700">
-      <div class="flex min-h-10 items-center gap-2 border-b border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-gray-400">
+      <div data-export-skip class="flex min-h-10 items-center gap-2 border-b border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-gray-400">
         <FileCode2 class="size-4 shrink-0" aria-hidden="true" />
         <span v-if="attr(node, 'file')" class="min-w-0 truncate font-mono text-gray-200">{{ attr(node, 'file') }}</span>
         <span v-if="lines" class="shrink-0 font-mono">L{{ lines }}</span>
@@ -58,7 +60,7 @@ const eqOk = computed(() => !!eqId.value && canTarget(`#eq-${eqId.value}`))
           <span v-if="diff" class="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono uppercase tracking-wide text-amber-300">diff</span>
           <button
             type="button"
-            class="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-700 hover:text-gray-100"
+            class="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-700 hover:text-gray-100 print:hidden"
             :aria-label="copied ? '已复制' : '复制代码'"
             :title="copied ? '已复制' : '复制代码'"
             @click="copy(code)"
