@@ -79,7 +79,7 @@ CLI 命令行参数（--dir、--profile） > 环境变量（AUMBRY_SERVER、AUMB
 
 ### `aumbry validate`
 
-完全离线校验 Aumbry XML（`version="1.0"` 或 `"1.1"`）。`<figure src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。
+完全离线校验 Aumbry XML（`version="1.1"`）。`<figure src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -306,7 +306,7 @@ aumbry list --key demo:report --limit 20
 
 ### `aumbry unpublish`
 
-清空指定条目的全部目录挂载（`DELETE /api/v1/agent/items/{id}/mounts`），使其退回草稿状态（访客读取返回 `403`），条目 ID、元数据与 WebDAV XML 正文保留。仅允许创建该条目的 token 执行（其他 token 及 v1.0 遗留的无归属记录条目返回 HTTP `403 not_owner`）。
+清空指定条目的全部目录挂载（`DELETE /api/v1/agent/items/{id}/mounts`），使其退回草稿状态（访客读取返回 `403`），条目 ID、元数据与 WebDAV XML 正文保留。仅允许创建该条目的 token 执行（其他 token 及没有归属记录的条目返回 HTTP `403 not_owner`）。
 
 ```sh
 aumbry unpublish MDUnpJpiAjMo

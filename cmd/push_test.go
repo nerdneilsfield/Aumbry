@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -159,7 +158,7 @@ func TestPushLocalFailuresSkipNetwork(t *testing.T) {
 	}
 }
 
-func TestPushV11FlagsAndPreflight(t *testing.T) {
+func TestPushDraftAndCreateOnly(t *testing.T) {
 	t.Run("flag conflicts fail without touching network", func(t *testing.T) {
 		isolate(t)
 		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -177,24 +176,6 @@ func TestPushV11FlagsAndPreflight(t *testing.T) {
 		}
 		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--create-only"); err == nil || !strings.Contains(err.Error(), "--key") {
 			t.Errorf("--create-only without --key: got err=%v", err)
-		}
-	})
-
-	t.Run("draft ignores default_dirs and preflights agent/dirs against v1.0 404", func(t *testing.T) {
-		isolate(t)
-		v10 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/v1/agent/dirs" {
-				t.Fatalf("unexpected v1.0 call to %s before preflight failure", r.URL.Path)
-			}
-			http.Error(w, `{"error":"not_found"}`, http.StatusNotFound)
-		}))
-		defer v10.Close()
-		mustRun(t, "config", "set", "--server", v10.URL, "--token", "tok", "--dir", "DEF1")
-		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--draft"); err == nil || !strings.Contains(err.Error(), "404") {
-			t.Fatalf("expected 404 preflight error on v1.0 server, got %v", err)
-		}
-		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--create-only", "--key", "k:1"); err == nil || !strings.Contains(err.Error(), "404") {
-			t.Fatalf("expected 404 preflight error for create-only, got %v", err)
 		}
 	})
 
@@ -233,7 +214,7 @@ func TestPushV11FlagsAndPreflight(t *testing.T) {
 		}
 	})
 
-	t.Run("409 already_published and 422 UNSUPPORTED_VERSION hints", func(t *testing.T) {
+	t.Run("409 already_published hint", func(t *testing.T) {
 		isolate(t)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -249,25 +230,6 @@ func TestPushV11FlagsAndPreflight(t *testing.T) {
 		t.Setenv("AUMBRY_TOKEN", "tok")
 		if _, err := runCLI(t, "push", "../examples/minimal-report.xml", "--draft", "--key", "k:pub"); err == nil || !strings.Contains(err.Error(), "unpublish") {
 			t.Fatalf("already_published error = %v", err)
-		}
-
-		v10Reject := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			_, _ = w.Write([]byte(`{"valid":false,"errors":[{"code":"UNSUPPORTED_VERSION","field":"document.version","message":"version must be 1.0"}]}`))
-		}))
-		defer v10Reject.Close()
-		t.Setenv("AUMBRY_SERVER", v10Reject.URL)
-
-		var outBuf, errBuf bytes.Buffer
-		root := NewRootCmd()
-		root.SetOut(&outBuf)
-		root.SetErr(&errBuf)
-		root.SetArgs([]string{"push", "../examples/minimal-report.xml"})
-		err := root.Execute()
-		var failed *ValidationFailedError
-		if !errors.As(err, &failed) || !strings.Contains(errBuf.String(), "upgrade") {
-			t.Fatalf("err=%v stderr=%q stdout=%q", err, errBuf.String(), outBuf.String())
 		}
 	})
 }

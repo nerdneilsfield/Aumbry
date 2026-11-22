@@ -49,17 +49,9 @@ var protocol = sync.OnceValue(func() *schematron.Schema {
 })
 
 const (
-	figureXPathV10 = "/document/body/section/figure | /document/body/section/collapse/figure"
-	figureXPathV11 = "//figure[@src]"
-	urlXPath       = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document[@version='1.1']/body//*[self::ref or self::quote or self::news-item][@url]"
+	figureXPath = "//figure[@src]"
+	urlXPath    = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document/body//*[self::ref or self::quote or self::news-item][@url]"
 )
-
-func (d *Document) figureXPath() string {
-	if d.Version == "1.1" {
-		return figureXPathV11
-	}
-	return figureXPathV10
-}
 
 var imageExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".svg"}
 
@@ -108,7 +100,7 @@ func Parse(input []byte, opts Options) (*Document, []ValidationError) {
 	d := &Document{input: input, tree: tree}
 	d.readMeta()
 	issues := protocolIssues(tree)
-	issues = append(issues, d.checkV11()...)
+	issues = append(issues, d.checkBlocks()...)
 	issues = append(issues, d.checkURLs()...)
 	issues = append(issues, d.checkFigures(opts)...)
 	slices.SortStableFunc(issues, func(a, b ValidationError) int { return cmp.Compare(a.Line, b.Line) })
@@ -158,7 +150,7 @@ func (d *Document) checkURLs() []ValidationError {
 			continue
 		}
 		attrs := []string{"url"}
-		if d.Version == "1.1" && el.Name() == "paper-card" {
+		if el.Name() == "paper-card" {
 			attrs = []string{"url", "code-url"}
 		}
 		for _, attr := range attrs {
@@ -194,7 +186,7 @@ func (d *Document) checkFigures(opts Options) []ValidationError {
 	}
 	var issues []ValidationError
 	seen := map[string]bool{}
-	for _, n := range find(d.tree, d.figureXPath()) {
+	for _, n := range find(d.tree, figureXPath) {
 		src, _ := n.(*helium.Element).GetAttribute("src")
 		if strings.TrimSpace(src) == "" {
 			continue // reported by protocol.sch

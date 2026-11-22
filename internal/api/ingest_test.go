@@ -169,7 +169,7 @@ func TestIngestRejections(t *testing.T) {
 
 	t.Run("invalid xml answers 422 with the validation result", func(t *testing.T) {
 		for name, xml := range map[string]string{
-			"malformed":     `<document version="1.0"><meta>`,
+			"malformed":     `<document version="1.1"><meta>`,
 			"missing title": strings.Replace(xmlDoc(docOpts{title: "t"}), "<title>t</title>", "", 1),
 			"missing asset": xmlDoc(docOpts{title: "t", figures: []string{"./nope.png"}}),
 			"bad type":      strings.Replace(xmlDoc(docOpts{title: "t"}), "<type>report</type>", "<type>memo</type>", 1),
@@ -304,17 +304,17 @@ func TestContentIsServedSandboxed(t *testing.T) {
 	}
 }
 
-func TestV11IngestFigureRewriteAndV10Gating(t *testing.T) {
+func TestIngestFigureRewriteAndVersionCheck(t *testing.T) {
 	e := newEnv(t)
 	admin := e.admin()
-	dir := admin.createDir("", "V11", "")
+	dir := admin.createDir("", "Figs", "")
 
 	sum := sha256.Sum256([]byte(testSVG))
 	wantAssetURL := "/api/v1/assets/" + hex.EncodeToString(sum[:])
 
 	// #31: <figure> inside <step>, <tab>, and <figure-group> all rewrite on ingest.
-	v11XML := `<document version="1.1">
-  <meta><title>V11 Figs</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta>
+	figuresXML := `<document version="1.1">
+  <meta><title>Figs</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta>
   <body>
     <steps><step title="S1"><figure src="./s.svg"/></step></steps>
     <tabs><tab title="T1"><figure src="./t.svg"/></tab><tab title="T2"><md>ok</md></tab></tabs>
@@ -322,7 +322,7 @@ func TestV11IngestFigureRewriteAndV10Gating(t *testing.T) {
   </body>
 </document>`
 	resp := admin.ingest(ingestReq{
-		xml: v11XML,
+		xml: figuresXML,
 		assets: []figure{
 			{src: "./s.svg", name: "s.svg", data: []byte(testSVG)},
 			{src: "./t.svg", name: "t.svg", data: []byte(testSVG)},
@@ -332,7 +332,7 @@ func TestV11IngestFigureRewriteAndV10Gating(t *testing.T) {
 		dirs: []string{dir},
 	})
 	if resp.status != http.StatusCreated {
-		t.Fatalf("ingest v1.1 figures: %d %s", resp.status, resp.body)
+		t.Fatalf("ingest figures: %d %s", resp.status, resp.body)
 	}
 	id := resp.json()["id"].(string)
 	content := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body)
@@ -340,19 +340,16 @@ func TestV11IngestFigureRewriteAndV10Gating(t *testing.T) {
 		t.Fatalf("expected 4 rewritten %s paths, got %d\n%s", wantAssetURL, gotCount, content)
 	}
 
-	// #79 runnable part: re-uploading v1.0 document using <figure alt="..."> returns 422 TAG_REQUIRES_1_1 with hint.
-	badV10 := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><section title="S"><figure src="a.svg" alt="Alt"/></section></body></document>`
-	rej := admin.ingest(ingestReq{
-		xml:    badV10,
-		assets: []figure{{src: "a.svg", name: "a.svg", data: []byte(testSVG)}},
-	})
+	// Only version="1.1" is accepted: 422 UNSUPPORTED_VERSION with a hint.
+	oldVersion := strings.Replace(xmlDoc(docOpts{title: "T"}), `version="1.1"`, `version="1.0"`, 1)
+	rej := admin.ingest(ingestReq{xml: oldVersion})
 	if rej.status != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422 on v1.0 with <figure alt>, got %d %s", rej.status, rej.body)
+		t.Fatalf("expected 422 on version 1.0, got %d %s", rej.status, rej.body)
 	}
 	errs := rej.json()["errors"].([]any)
 	first := errs[0].(map[string]any)
-	if first["code"] != "TAG_REQUIRES_1_1" || first["hint"] == nil || first["hint"] == "" {
-		t.Fatalf("expected TAG_REQUIRES_1_1 with hint, got %v", first)
+	if first["code"] != "UNSUPPORTED_VERSION" || first["hint"] == nil || first["hint"] == "" {
+		t.Fatalf("expected UNSUPPORTED_VERSION with hint, got %v", first)
 	}
 }
 
@@ -512,22 +509,22 @@ func TestIngestExternalKeyValidationDraftCreateOnlyAndCreatedBy(t *testing.T) {
 		t.Fatalf("created_by overwritten on update: %q != %q", createdByAfter, createdBy)
 	}
 
-	// #56 unit level: legacy NULL created_by remains NULL after update via external_key.
+	// #56 unit level: NULL created_by remains NULL after update via external_key.
 	if _, err := e.db.Exec(`INSERT INTO items
 		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
-		VALUES ('legacy000099', 'legacy:staynull', 'report', 'Legacy', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/l.xml', 'legacy', NULL)`); err != nil {
+		VALUES ('noowner00003', 'noowner:stay', 'report', 'Ownerless', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/l.xml', 'ownerless', NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	updLegacy := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Updated"}), key: "legacy:staynull"})
-	if updLegacy.status != http.StatusOK {
-		t.Fatalf("update legacy = %d %s", updLegacy.status, updLegacy.body)
+	updOwnerless := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Ownerless Updated"}), key: "noowner:stay"})
+	if updOwnerless.status != http.StatusOK {
+		t.Fatalf("update ownerless = %d %s", updOwnerless.status, updOwnerless.body)
 	}
-	var legacyOwner sql.NullString
-	if err := e.db.Get(&legacyOwner, `SELECT created_by FROM items WHERE id = 'legacy000099'`); err != nil {
+	var noOwner sql.NullString
+	if err := e.db.Get(&noOwner, `SELECT created_by FROM items WHERE id = 'noowner00003'`); err != nil {
 		t.Fatal(err)
 	}
-	if legacyOwner.Valid {
-		t.Fatalf("legacy created_by became %q, want NULL", legacyOwner.String)
+	if noOwner.Valid {
+		t.Fatalf("created_by became %q, want NULL", noOwner.String)
 	}
 }
 
@@ -593,40 +590,18 @@ func TestCreateOnlyChecksExistingKeyBeforeStorage(t *testing.T) {
 	}
 }
 
-func TestIngestLegacyExternalKeyCompatibility(t *testing.T) {
+func TestIngestExternalKeyRulesApplyToUpdates(t *testing.T) {
 	e := newEnv(t)
 	admin := e.admin()
 
-	longLegacyKey := strings.Repeat("v", 201)
-	ctrlLegacyKey := "legacy\x07key"
-	if _, err := e.db.Exec(`INSERT INTO items
-		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
-		VALUES ('legacylong01', ?, 'report', 'Legacy Long', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/legacylong01.xml', 'legacy'),
-		       ('legacyctrl01', ?, 'report', 'Legacy Ctrl', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/legacyctrl01.xml', 'legacy')`,
-		longLegacyKey, ctrlLegacyKey); err != nil {
-		t.Fatal(err)
-	}
-	e.store.files["/xml/legacylong01.xml"] = []byte(xmlDoc(docOpts{title: "Legacy Long"}))
-	e.store.files["/xml/legacyctrl01.xml"] = []byte(xmlDoc(docOpts{title: "Legacy Ctrl"}))
-
-	// Updating by an already-existing legacy >200-rune external_key must succeed.
-	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Long Updated"}), key: longLegacyKey}); resp.status != http.StatusOK || resp.json()["id"] != "legacylong01" {
-		t.Fatalf("update existing >200 legacy key = %d %s, want 200", resp.status, resp.body)
-	}
-	// Updating by an already-existing legacy control-char external_key must succeed.
-	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Ctrl Updated"}), key: ctrlLegacyKey}); resp.status != http.StatusOK || resp.json()["id"] != "legacyctrl01" {
-		t.Fatalf("update existing control-char legacy key = %d %s, want 200", resp.status, resp.body)
-	}
-	// Updating by item_id while keeping the same legacy key must succeed.
-	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Keep Same Key"}), itemID: "legacylong01", key: longLegacyKey}); resp.status != http.StatusOK {
-		t.Fatalf("update item_id with same legacy key = %d %s, want 200", resp.status, resp.body)
-	}
-	// Updating by item_id to a NEW >200-rune key must still be rejected.
-	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Change To Bad Key"}), itemID: "legacylong01", key: strings.Repeat("w", 201)}); resp.status != http.StatusBadRequest || resp.json()["error"] != "invalid_request" {
-		t.Fatalf("change to >200 key = %d %s, want 400 invalid_request", resp.status, resp.body)
-	}
-	// Brand-new >200-rune key must still be rejected.
-	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "New Bad Key"}), key: strings.Repeat("w", 201)}); resp.status != http.StatusBadRequest || resp.json()["error"] != "invalid_request" {
-		t.Fatalf("new >200 key = %d %s, want 400 invalid_request", resp.status, resp.body)
+	id := admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Keyed"}), key: "keyed:1"})
+	for name, key := range map[string]string{
+		"too long":     strings.Repeat("w", 201),
+		"control char": "bad\x07key",
+	} {
+		resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Rekeyed"}), itemID: id, key: key})
+		if resp.status != http.StatusBadRequest || resp.json()["error"] != "invalid_request" {
+			t.Errorf("update with %s key = %d %s, want 400 invalid_request", name, resp.status, resp.body)
+		}
 	}
 }

@@ -122,7 +122,8 @@ func parseOptionalBoolField(form *multipart.Form, name string) (bool, error) {
 	}
 }
 
-func extractExternalKeyField(form *multipart.Form) (string, error) {
+// externalKeyField returns the trimmed external_key form field: 1 to 200 characters without control characters.
+func externalKeyField(form *multipart.Form) (string, error) {
 	vals, present := form.Value["external_key"]
 	if !present {
 		return "", nil
@@ -134,20 +135,15 @@ func extractExternalKeyField(form *multipart.Form) (string, error) {
 	if trimmed == "" {
 		return "", errors.New("external_key must not be blank")
 	}
-	return trimmed, nil
-}
-
-func validateNewExternalKey(trimmed string) error {
-	n := utf8.RuneCountInString(trimmed)
-	if n < 1 || n > 200 {
-		return errors.New("external_key must be 1 to 200 characters after trimming")
+	if utf8.RuneCountInString(trimmed) > 200 {
+		return "", errors.New("external_key must be 1 to 200 characters after trimming")
 	}
 	for _, r := range trimmed {
 		if unicode.IsControl(r) {
-			return errors.New("external_key must not contain control characters")
+			return "", errors.New("external_key must not contain control characters")
 		}
 	}
-	return nil
+	return trimmed, nil
 }
 
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +179,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	externalKey, err := extractExternalKeyField(form)
+	externalKey, err := externalKeyField(form)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -261,40 +257,22 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 			internalError(w, r, err)
 			return
 		}
-		// New keys must satisfy v1.1 validation; SQLite's UNIQUE constraint still adjudicates concurrent creates.
-		if err = validateNewExternalKey(externalKey); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
 	case itemID != "":
-		var currentKey sql.NullString
-		err = s.db.GetContext(ctx, &currentKey, `SELECT external_key FROM items WHERE id = ?`, itemID)
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
-			return
-		}
+		var exists bool
+		err = s.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM items WHERE id = ?)`, itemID)
 		if err != nil {
 			internalError(w, r, err)
 			return
 		}
-		// Existing legacy v1.0 keys remain valid when kept unchanged; setting or changing a key requires v1.1 validation.
-		if externalKey != "" && (!currentKey.Valid || currentKey.String != externalKey) {
-			if err = validateNewExternalKey(externalKey); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-				return
-			}
+		if !exists {
+			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
+			return
 		}
 	case externalKey != "":
 		err = s.db.GetContext(ctx, &itemID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			internalError(w, r, err)
 			return
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			if err = validateNewExternalKey(externalKey); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-				return
-			}
 		}
 	}
 	if itemID == "" {

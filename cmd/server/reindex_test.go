@@ -14,7 +14,7 @@ import (
 
 func reindexXML(title, text string) string {
 	// The figure src is the rewritten form kept in storage, which upload validation would reject.
-	return `<document version="1.0"><meta><title>` + title + `</title><type>report</type><date>2026-11-20</date>` +
+	return `<document version="1.1"><meta><title>` + title + `</title><type>report</type><date>2026-11-20</date>` +
 		`<summary>sum</summary><source-agent>a</source-agent><tags><tag>tagone</tag></tags></meta><body>` +
 		`<section title="Sec"><md><![CDATA[` + text + `]]></md>` +
 		`<figure src="/api/v1/assets/` + strings.Repeat("a", 64) + `"/></section></body></document>`

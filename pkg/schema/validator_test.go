@@ -11,7 +11,7 @@ import (
 const metaBlock = `<meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta>`
 
 func doc(body string) string {
-	return `<document version="1.0">` + metaBlock + `<body>` + body + `</body></document>`
+	return `<document version="1.1">` + metaBlock + `<body>` + body + `</body></document>`
 }
 
 func codes(issues []ValidationError) []string {
@@ -34,14 +34,16 @@ func TestParseRules(t *testing.T) {
 		{"html entity is not XML", doc(`<section title="a"><md>&nbsp;</md></section>`), []string{"INVALID_XML"}},
 		{"doctype", `<!DOCTYPE document [<!ENTITY x "y">]>` + doc(`<section title="a"><md>&x;</md></section>`), []string{"INVALID_XML"}},
 		{"wrong root", `<report/>`, []string{"INVALID_ROOT"}},
-		{"bad version", strings.Replace(doc(``), `"1.0"`, `"2.0"`, 1), []string{"UNSUPPORTED_VERSION"}},
+		{"version 1.0 is unsupported", strings.Replace(doc(``), `"1.1"`, `"1.0"`, 1), []string{"UNSUPPORTED_VERSION"}},
+		{"unknown version", strings.Replace(doc(``), `"1.1"`, `"2.0"`, 1), []string{"UNSUPPORTED_VERSION"}},
+		{"missing version", strings.Replace(doc(``), ` version="1.1"`, ``, 1), []string{"UNSUPPORTED_VERSION"}},
 		{
 			"bad type and date",
-			`<document version="1.0"><meta><title>T</title><type>note</type><date>20-11-2026</date><summary>S</summary><source-agent>a</source-agent></meta><body/></document>`,
+			`<document version="1.1"><meta><title>T</title><type>note</type><date>20-11-2026</date><summary>S</summary><source-agent>a</source-agent></meta><body/></document>`,
 			[]string{"INVALID_TYPE", "INVALID_DATE"},
 		},
 		{
-			"missing meta fields", `<document version="1.0"><meta><title>T</title></meta><body/></document>`,
+			"missing meta fields", `<document version="1.1"><meta><title>T</title></meta><body/></document>`,
 			[]string{"REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD", "REQUIRED_FIELD"},
 		},
 		{"second body is never rendered", strings.Replace(doc(``), `</document>`, `<body/></document>`, 1), []string{"DUPLICATE_BODY"}},
@@ -52,7 +54,7 @@ func TestParseRules(t *testing.T) {
 		{"javascript url", doc(`<section title="a"><paper-card title="p" url="javascript:alert(1)"/></section>`), []string{"INVALID_URL"}},
 		{"bad related id", doc(`<section title="a"><paper-card title="p" url="https://x.org" related-id="short"/></section>`), []string{"INVALID_ID"}},
 		{"callout type", doc(`<section title="a"><callout type="danger">x</callout></section>`), []string{"INVALID_ATTR"}},
-		{"collapse allows only md and figure", doc(`<section title="a"><collapse title="c"><callout type="info">x</callout></collapse></section>`), []string{"UNKNOWN_TAG"}},
+		{"collapse rejects non-leaf blocks", doc(`<section title="a"><collapse title="c"><paper-card title="p" url="https://x.org"/></collapse></section>`), []string{"UNKNOWN_TAG"}},
 		{"sources need an entry", doc(`<sources/>`), []string{"MISSING_SOURCE"}},
 		{"source url", doc(`<sources><source title="t" url="ftp://x"/></sources>`), []string{"INVALID_URL"}},
 		{
@@ -78,7 +80,7 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestMissingAssetReportsLine(t *testing.T) {
-	input := "<document version=\"1.0\">" + metaBlock + "\n<body>\n<section title=\"a\">\n<figure src=\"./imgs/a.png\"/>\n</section></body></document>"
+	input := "<document version=\"1.1\">" + metaBlock + "\n<body>\n<section title=\"a\">\n<figure src=\"./imgs/a.png\"/>\n</section></body></document>"
 	_, issues := Parse([]byte(input), Options{HasAsset: func(string) bool { return false }})
 	if len(issues) != 1 || issues[0].Code != "MISSING_ASSET" || issues[0].Line != 4 {
 		t.Fatalf("issues = %+v, want one MISSING_ASSET on line 4", issues)
@@ -139,7 +141,7 @@ func TestRewriteAssetsIsRepeatableAndKeepsDeclaration(t *testing.T) {
 }
 
 func TestIssuesCarryCodeFieldAndLine(t *testing.T) {
-	input := "<document version=\"1.0\">" + metaBlock + "\n<body>\n<section title=\"a\">\n" +
+	input := "<document version=\"1.1\">" + metaBlock + "\n<body>\n<section title=\"a\">\n" +
 		"<compare-table><columns><col>a</col><col>b</col><col>c</col><col>d</col></columns>\n" +
 		"<row><cell>1</cell><cell>2</cell><cell>3</cell></row></compare-table>\n" +
 		"<paper-card title=\"p\" url=\"HTTP://x.org\"/><paper-card title=\"p\" url=\"http://\"/>\n</section></body></document>"
@@ -154,7 +156,7 @@ func TestIssuesCarryCodeFieldAndLine(t *testing.T) {
 }
 
 func TestMetaAndAssetsOrder(t *testing.T) {
-	input := `<document version="1.0"><meta><title> T </title><type>post</type><date>2026-02-28</date><summary>S</summary>` +
+	input := `<document version="1.1"><meta><title> T </title><type>post</type><date>2026-02-28</date><summary>S</summary>` +
 		`<source-agent>a</source-agent><canonical-url>https://x.org/p</canonical-url><tags><tag>go</tag><tag>xml</tag></tags>` +
 		`<related-ids><id>abcdefghij_-</id></related-ids></meta><body><section title="a">` +
 		`<figure src="b.png"/><collapse title="c"><figure src="./a/../a.SVG"/></collapse><figure src="b.png"/></section></body></document>`
@@ -199,61 +201,11 @@ func TestPlainText(t *testing.T) {
 	}
 }
 
-func doc11(body string) string {
-	return `<document version="1.1">` + metaBlock + `<body>` + body + `</body></document>`
-}
-
-func TestV11GatingAndGeneralizedXPath(t *testing.T) {
+func TestGeneralizedFigureAndURLXPaths(t *testing.T) {
 	always := Options{HasAsset: func(string) bool { return true }}
 
-	t.Run("v1.0 rejects v1.1 tags with single TAG_REQUIRES_1_1 and no UNKNOWN_TAG", func(t *testing.T) {
-		for _, body := range []string{
-			`<claim level="claim">x</claim>`,
-			`<section title="a"><claim level="claim">x</claim></section>`,
-			`<section title="a"><collapse title="c"><claim level="claim">x</claim></collapse></section>`,
-			`<section title="a"><stages id="s"><stage id="s1" title="one"><md>x</md></stage></stages></section>`,
-			`<section title="a"><tldr><point>p</point></tldr></section>`,
-		} {
-			_, issues := Parse([]byte(doc(body)), always)
-			if got := codes(issues); !slices.Equal(got, []string{"TAG_REQUIRES_1_1"}) {
-				t.Fatalf("body %s: codes = %v, want [TAG_REQUIRES_1_1]\n%+v", body, got, issues)
-			}
-			if issues[0].Hint == "" {
-				t.Fatalf("body %s: expected non-empty Hint on TAG_REQUIRES_1_1", body)
-			}
-		}
-	})
-
-	t.Run("v1.0 still rejects v1.0 container violations with UNKNOWN_TAG", func(t *testing.T) {
-		_, issues := Parse([]byte(doc(`<md>hello</md>`)), always)
-		if got := codes(issues); !slices.Equal(got, []string{"UNKNOWN_TAG"}) {
-			t.Fatalf("codes = %v, want [UNKNOWN_TAG]\n%+v", got, issues)
-		}
-	})
-
-	t.Run("v1.0 explicitly gates new v1.1 attributes", func(t *testing.T) {
-		cases := []string{
-			`<section id="sec1" title="a"/>`,
-			`<section title="a"><figure id="f1" src="a.png"/></section>`,
-			`<section title="a"><figure alt="alt" src="a.png"/></section>`,
-			`<section title="a"><compare-table><columns><col>a</col></columns><row><cell tag="evidence">1</cell></row></compare-table></section>`,
-			`<section title="a"><paper-card title="p" url="https://x.org" venue="ICML"/></section>`,
-			`<section title="a"><paper-card title="p" url="https://x.org" doi="10.1000/1"/></section>`,
-			`<section title="a"><paper-card title="p" url="https://x.org" code-url="https://github.com/x/y"/></section>`,
-			`<section title="a"><paper-card title="p" url="https://x.org" read-depth="full"/></section>`,
-			`<section title="a"><repo-card name="r" url="https://github.com/x/y" license="MIT"/></section>`,
-			`<section title="a"><repo-card name="r" url="https://github.com/x/y" commit="abc123"/></section>`,
-		}
-		for _, body := range cases {
-			_, issues := Parse([]byte(doc(body)), always)
-			if got := codes(issues); !slices.Equal(got, []string{"TAG_REQUIRES_1_1"}) {
-				t.Fatalf("body %s: codes = %v, want [TAG_REQUIRES_1_1]\n%+v", body, got, issues)
-			}
-		}
-	})
-
-	t.Run("v1.1 accepts generalized figure and url xpaths", func(t *testing.T) {
-		input := doc11(
+	t.Run("figures and URLs are found in every container", func(t *testing.T) {
+		input := doc(
 			`<md>hi</md>` +
 				`<steps><step title="s1"><figure src="./s.png"/></step></steps>` +
 				`<tabs><tab title="t1"><figure src="./t.png"/></tab><tab title="t2"><md>x</md></tab></tabs>` +
@@ -262,9 +214,6 @@ func TestV11GatingAndGeneralizedXPath(t *testing.T) {
 		d, issues := Parse([]byte(input), always)
 		if len(issues) != 0 {
 			t.Fatalf("unexpected issues: %+v", issues)
-		}
-		if d.Version != "1.1" {
-			t.Fatalf("Version = %q, want 1.1", d.Version)
 		}
 		wantAssets := []string{"s.png", "t.png", "g1.png", "g2.png"}
 		if !slices.Equal(d.Assets, wantAssets) {
@@ -285,7 +234,7 @@ func TestV11GatingAndGeneralizedXPath(t *testing.T) {
 			}
 		}
 
-		badURLs := doc11(
+		badURLs := doc(
 			`<paper-card title="p" url="https://x.org" code-url="javascript:1"/>` +
 				`<references><ref id="r1" title="r" url="ftp://x.org"/></references>` +
 				`<quote url="javascript:2">text</quote>` +
@@ -321,7 +270,7 @@ func TestValidateFileRejectsSymlinkEscape(t *testing.T) {
 	}
 
 	escapeDoc := filepath.Join(docDir, "escape.xml")
-	if err := os.WriteFile(escapeDoc, []byte(doc11(`<figure src="./imgs/leak.png"/>`)), 0o644); err != nil {
+	if err := os.WriteFile(escapeDoc, []byte(doc(`<figure src="./imgs/leak.png"/>`)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	res, err := ValidateFile(escapeDoc)
@@ -333,7 +282,7 @@ func TestValidateFileRejectsSymlinkEscape(t *testing.T) {
 	}
 
 	inDirDoc := filepath.Join(docDir, "ok.xml")
-	if err = os.WriteFile(inDirDoc, []byte(doc11(`<figure src="./imgs/ok.png"/>`)), 0o644); err != nil {
+	if err = os.WriteFile(inDirDoc, []byte(doc(`<figure src="./imgs/ok.png"/>`)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	res, err = ValidateFile(inDirDoc)
@@ -342,24 +291,6 @@ func TestValidateFileRejectsSymlinkEscape(t *testing.T) {
 	}
 	if !res.Valid {
 		t.Fatalf("ValidateFile rejected in-dir symlink: %+v", res.Errors)
-	}
-}
-
-func TestV10FigureXPathPreservesLegacyScope(t *testing.T) {
-	input := doc(`<section title="S"><compare-table><columns><col>A</col></columns><row><cell><figure src="https://example.com/ext.png"/></cell></row></compare-table><figure src="./local.png"/></section>`)
-	d, issues := Parse([]byte(input), Options{HasAsset: func(p string) bool { return p == "local.png" }})
-	if len(issues) != 0 {
-		t.Fatalf("Parse v1.0 failed: %+v", issues)
-	}
-	if !slices.Equal(d.Assets, []string{"local.png"}) {
-		t.Fatalf("d.Assets = %v, want [local.png]", d.Assets)
-	}
-	out, err := d.RewriteAssets(map[string]string{"local.png": "/api/v1/assets/1"})
-	if err != nil {
-		t.Fatalf("RewriteAssets v1.0 failed: %v", err)
-	}
-	if !strings.Contains(string(out), `src="https://example.com/ext.png"`) || !strings.Contains(string(out), `src="/api/v1/assets/1"`) {
-		t.Fatalf("unexpected rewritten v1.0 XML:\n%s", out)
 	}
 }
 

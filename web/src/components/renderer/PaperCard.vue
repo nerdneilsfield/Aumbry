@@ -11,7 +11,7 @@ const url = computed(() => httpUrl(attr(props.node, 'url')))
 const relatedId = computed(() => attr(props.node, 'related-id'))
 const meta = computed(() => [attr(props.node, 'authors'), attr(props.node, 'venue'), attr(props.node, 'date')].filter(Boolean))
 const codeUrl = computed(() => httpUrl(attr(props.node, 'code-url')))
-// v1.1: doi is not a URL; validated against the PRD pattern and linked through doi.org.
+// doi is not a URL; validated against the PRD pattern and linked through doi.org.
 const doi = computed(() => (/^10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+$/.test(attr(props.node, 'doi')) ? attr(props.node, 'doi') : ''))
 const depth = computed(() => ({ full: '全文精读', abstract: '仅读摘要', snippet: '仅读片段' })[attr(props.node, 'read-depth')])
 </script>

@@ -94,13 +94,13 @@ func TestAgentListItemsScopingAndOwnership(t *testing.T) {
 		key:   "repo:foo/bar",
 		draft: true,
 	})
-	// Direct legacy NULL item
+	// Direct item with NULL created_by
 	if _, err := e.db.Exec(`INSERT INTO items
 		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
-		VALUES ('legacyitem01', 'legacy:k', 'post', 'Legacy Gamma', '2026-11-19', 'leg sum', '[]', 'a', '', '[]', '/xml/leg.xml', 'leg body', NULL)`); err != nil {
+		VALUES ('noowner00001', 'noowner:k', 'post', 'Ownerless Gamma', '2026-11-19', 'leg sum', '[]', 'a', '', '[]', '/xml/leg.xml', 'leg body', NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	_ = admin.do("PUT", "/api/v1/admin/items/legacyitem01/mounts", map[string]any{"dirs": []string{dir2}})
+	_ = admin.do("PUT", "/api/v1/admin/items/noowner00001/mounts", map[string]any{"dirs": []string{dir2}})
 
 	// #38: key exact match returns ID & dirs and never XML content.
 	respKey := e.agentDo(http.MethodGet, "/api/v1/agent/items?key=paper:2611.01234", apiToken)
@@ -139,11 +139,11 @@ func TestAgentListItemsScopingAndOwnership(t *testing.T) {
 		t.Errorf("q=foo/bar as Token B = %+v, want idB owned=true", out.Items)
 	}
 
-	// dir filter + legacy item ownership check.
+	// dir filter + ownerless item check.
 	respDir := e.agentDo(http.MethodGet, "/api/v1/agent/items?dir="+dir2, apiToken)
 	_ = json.Unmarshal(respDir.body, &out)
-	if len(out.Items) != 1 || out.Items[0].ID != "legacyitem01" || out.Items[0].Owned {
-		t.Errorf("dir filter legacy = %+v, want legacyitem01 owned=false", out.Items)
+	if len(out.Items) != 1 || out.Items[0].ID != "noowner00001" || out.Items[0].Owned {
+		t.Errorf("dir filter ownerless = %+v, want noowner00001 owned=false", out.Items)
 	}
 }
 
@@ -156,10 +156,10 @@ func TestAgentUnpublishDeleteAndOwnershipEnforcement(t *testing.T) {
 	idA := admin.ingestOK(ingestReq{token: apiToken, xml: xmlDoc(docOpts{title: "Owned A", md: "tokenaunique"}), key: "k:a", dirs: []string{dir}})
 	if _, err := e.db.Exec(`INSERT INTO items
 		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
-		VALUES ('legacy000001', 'k:leg', 'report', 'Legacy', '2026-11-20', 's', '[]', 'a', '', '[]', '/xml/leg.xml', 'legacytext', NULL)`); err != nil {
+		VALUES ('noowner00002', 'k:leg', 'report', 'Ownerless', '2026-11-20', 's', '[]', 'a', '', '[]', '/xml/leg.xml', 'ownerlesstext', NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	_ = admin.do("PUT", "/api/v1/admin/items/legacy000001/mounts", map[string]any{"dirs": []string{dir}})
+	_ = admin.do("PUT", "/api/v1/admin/items/noowner00002/mounts", map[string]any{"dirs": []string{dir}})
 
 	// Token B cannot unpublish or delete Token A's item -> 403 not_owner; content & mounts intact.
 	if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/"+idA+"/mounts", "other"); resp.status != http.StatusForbidden || resp.json()["error"] != "not_owner" {
@@ -172,17 +172,17 @@ func TestAgentUnpublishDeleteAndOwnershipEnforcement(t *testing.T) {
 		t.Fatalf("item A vanished after rejected Token B actions: %d", st)
 	}
 
-	// Legacy NULL created_by rejects every token with 403 not_owner, but admin delete works.
+	// NULL created_by rejects every token with 403 not_owner, but admin delete works.
 	for _, tok := range []string{apiToken, "other"} {
-		if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/legacy000001/mounts", tok); resp.status != http.StatusForbidden || resp.json()["error"] != "not_owner" {
-			t.Errorf("legacy unpublish tok=%q = %d %s, want 403 not_owner", tok, resp.status, resp.body)
+		if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/noowner00002/mounts", tok); resp.status != http.StatusForbidden || resp.json()["error"] != "not_owner" {
+			t.Errorf("ownerless unpublish tok=%q = %d %s, want 403 not_owner", tok, resp.status, resp.body)
 		}
-		if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/legacy000001", tok); resp.status != http.StatusForbidden || resp.json()["error"] != "not_owner" {
-			t.Errorf("legacy delete tok=%q = %d %s, want 403 not_owner", tok, resp.status, resp.body)
+		if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/noowner00002", tok); resp.status != http.StatusForbidden || resp.json()["error"] != "not_owner" {
+			t.Errorf("ownerless delete tok=%q = %d %s, want 403 not_owner", tok, resp.status, resp.body)
 		}
 	}
-	if resp := admin.do("DELETE", "/api/v1/admin/items/legacy000001", nil); resp.status != http.StatusNoContent {
-		t.Fatalf("admin delete legacy = %d %s, want 204", resp.status, resp.body)
+	if resp := admin.do("DELETE", "/api/v1/admin/items/noowner00002", nil); resp.status != http.StatusNoContent {
+		t.Fatalf("admin delete ownerless = %d %s, want 204", resp.status, resp.body)
 	}
 
 	// Token A unpublish -> visitor 403, admin 200, ID preserved.

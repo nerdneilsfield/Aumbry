@@ -1,5 +1,5 @@
 # Env-based deployment (single instance only — do not scale > 1).
-# Keeps the v1.0 `docker compose up --build` workflow using .env (copy .env.example to .env).
+# Reads settings from .env (copy .env.example to .env), then run `docker compose up --build`.
 # For TOML-based configuration instead of .env, use: docker compose -f docker-compose.toml.yml up --build
 
 services:
