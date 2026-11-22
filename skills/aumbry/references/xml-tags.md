@@ -84,13 +84,13 @@
 | `<repo-card>` | 1.0 | body, section, stage | `name*`, `url*`, `stars`, `lang`, `license (1.1)`, `commit (1.1)` | Open-source repository summary card. |
 | `<compare-table>` | 1.0 | body, section, stage | `caption` | Structured comparison table. |
 | `<columns>` | 1.0 | compare-table | - | children: 1..n — Column header container. |
-| `<col>` | 1.0 | columns | - | Table column header. |
+| `<col>` | 1.0 | columns | - | Table column header (leaf element in 1.1; disallows child elements). |
 | `<row>` | 1.0 | compare-table | - | Table row matching column count. |
-| `<cell>` | 1.0 | row | `tag (1.1)=[claim|evidence|inference|na|unreported|approx]` | Table cell. |
+| `<cell>` | 1.0 | row | `tag (1.1)=[claim|evidence|inference|na|unreported|approx]` | Table cell (leaf element in 1.1; disallows child elements). |
 | `<callout>` | 1.0 | body, section, stage, collapse, tab, step | `type*=[info|warn|insight]`, `title` | Highlighted callout box. |
 | `<collapse>` | 1.0 | body, section, stage | `title*` | Collapsible block (v1.0: md/figure; v1.1: leaf blocks + search-log). |
 | `<sources>` | 1.0 | body, section, stage | - | children: 1..n — External link list. |
-| `<source>` | 1.0 | sources | `title*`, `url*` | External source link. |
+| `<source>` | 1.0 | sources | `title*`, `url*` | External source link (leaf element in 1.1; disallows child elements). |
 | `<claim>` | 1.1 | body, section, stage, collapse, tab, step | `level (1.1)*=[claim|evidence|inference|unverified]`, `source (1.1)` | Annotated assertion/evidence/inference/unverified block. |
 | `<equation>` | 1.1 | body, section, stage, collapse, tab, step | `id (1.1)`, `number (1.1)`, `caption (1.1)` | <= 4096 B — Display LaTeX equation (non-empty, <= 4 KB; body excluded from search). |
 | `<mermaid>` | 1.1 | body, section, stage, collapse, tab, step | `caption (1.1)` | doc max: 10; <= 20480 B — Mermaid diagram source (non-empty, <= 20 KB, max 10 per document; source excluded from search). |
@@ -124,7 +124,7 @@
 | `<stage>` | 1.1 | stages | `id (1.1)*`, `title (1.1)*`, `level (1.1)` | doc max: 40 — Single progressive stage (max 40 total across document). |
 | `<quiz>` | 1.1 | body, section, stage | `id (1.1)*` | Inline interactive self-check quiz (options and correctness excluded from search). |
 | `<question>` | 1.1 | quiz | - | Exactly 1 non-empty plain-text question inside <quiz> (indexed). |
-| `<option>` | 1.1 | quiz, next-steps | `correct (1.1)=[true|false]`, `target (1.1)` | Quiz answer choice (2-8 per quiz; >=1 correct="true"; excluded from search) OR navigation button inside <next-steps> (1-5 per block; excluded from search). |
+| `<option>` | 1.1 | quiz, next-steps | `correct (1.1)=[true|false]`, `target (1.1)` | Quiz answer choice (2-8 per quiz; >=1 correct="true"; excluded from search) OR non-empty navigation button inside <next-steps> (1-5 per block; excluded from search). |
 | `<explain>` | 1.1 | quiz | - | Optional explanation shown after quiz submission (0-1 per quiz; indexed). |
 | `<next-steps>` | 1.1 | body, section, stage | - | children: 1..5 — In-document action buttons targeting anchored sections/stages/figures/equations/quizzes/refs. |
 | `<tldr>` | 1.1 | body, section, stage | `title (1.1)`, `placement (1.1)=[top|bottom]` | children: 1..n — Key takeaways card (direct child of body/section/stage only; at most 1 per container). |
@@ -227,7 +227,7 @@
 | `INVALID_ID` | 1.0 | invalid 12-char item id (<meta>/<related-ids>/<id>, paper-card@related-id, news-item@detail-id) or invalid anchor id (^[a-z0-9-]{1,32}$) |
 | `UNKNOWN_TAG` | 1.0 | unexpected element inside a container or inside a leaf block |
 | `MISSING_ATTR` | 1.0 | required attribute missing or blank |
-| `INVALID_ATTR` | 1.0 | invalid enum attribute value or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count) |
+| `INVALID_ATTR` | 1.0 | invalid enum attribute value, empty <next-steps>/<option> text, or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count) |
 | `INVALID_URL` | 1.0 | URL is not an absolute http(s) URL (canonical-url, paper-card@url|code-url, repo-card@url, source@url, ref@url, quote@url, news-item@url) |
 | `INVALID_ASSET_PATH` | 1.0 | <figure src> is not a clean relative path inside document directory |
 | `INVALID_ASSET_TYPE` | 1.0 | <figure src> extension is not .png, .jpg, .jpeg, .webp, or .svg |

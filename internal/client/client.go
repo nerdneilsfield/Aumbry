@@ -13,6 +13,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ type PushRequest struct {
 	Server      string
 	Token       string
 	XML         []byte
+	AssetDir    string // optional document root; when set, assets are opened via os.OpenRoot(AssetDir)
 	Assets      []Asset
 	Dirs        []string
 	ItemID      string
@@ -315,21 +317,51 @@ func writeForm(form *multipart.Writer, req PushRequest) error {
 	if err := writeFile(form, "xml", "document.xml", "application/xml", bytes.NewReader(req.XML)); err != nil {
 		return err
 	}
+	var assetRoot *os.Root
+	if req.AssetDir != "" && len(req.Assets) > 0 {
+		var err error
+		assetRoot, err = os.OpenRoot(req.AssetDir)
+		if err != nil {
+			return fmt.Errorf("open asset directory %s: %w", req.AssetDir, err)
+		}
+		defer func() { _ = assetRoot.Close() }()
+	}
 	for _, asset := range req.Assets {
-		if err := writeAsset(form, asset); err != nil {
+		if err := writeAsset(form, assetRoot, asset); err != nil {
 			return err
 		}
 	}
 	return form.Close()
 }
 
-func writeAsset(form *multipart.Writer, asset Asset) error {
-	file, err := os.Open(asset.Path)
-	if err != nil {
-		return fmt.Errorf("open figure %s: %w", asset.Src, err)
+func writeAsset(form *multipart.Writer, root *os.Root, asset Asset) error {
+	var file *os.File
+	var err error
+	if root != nil {
+		file, err = root.Open(filepath.FromSlash(asset.Src))
+		if err != nil {
+			return fmt.Errorf("open figure %s: %w", asset.Src, err)
+		}
+		info, statErr := file.Stat()
+		if statErr != nil {
+			_ = file.Close()
+			return fmt.Errorf("stat figure %s: %w", asset.Src, statErr)
+		}
+		if !info.Mode().IsRegular() {
+			_ = file.Close()
+			return fmt.Errorf("open figure %s: not a regular file", asset.Src)
+		}
+	} else {
+		file, err = os.Open(asset.Path)
+		if err != nil {
+			return fmt.Errorf("open figure %s: %w", asset.Src, err)
+		}
 	}
 	defer func() { _ = file.Close() }()
-	name := filepath.Base(asset.Path)
+	name := path.Base(asset.Src)
+	if name == "" || name == "." || name == "/" {
+		name = filepath.Base(asset.Path)
+	}
 	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
 	if contentType == "" {
 		contentType = "application/octet-stream"

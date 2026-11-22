@@ -45,9 +45,17 @@ var protocol = sync.OnceValue(func() *schematron.Schema {
 })
 
 const (
-	figureXPath = "//figure[@src]"
-	urlXPath    = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document[@version='1.1']/body//*[self::ref or self::quote or self::news-item][@url]"
+	figureXPathV10 = "/document/body/section/figure | /document/body/section/collapse/figure"
+	figureXPathV11 = "//figure[@src]"
+	urlXPath       = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document[@version='1.1']/body//*[self::ref or self::quote or self::news-item][@url]"
 )
+
+func (d *Document) figureXPath() string {
+	if d.Version == "1.1" {
+		return figureXPathV11
+	}
+	return figureXPathV10
+}
 
 var imageExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".svg"}
 
@@ -74,11 +82,15 @@ func ValidateFile(file string) (ValidationResult, error) {
 	return ValidationResult{Valid: len(issues) == 0, File: file, Errors: issues}, nil
 }
 
-// DirAssetChecker resolves figure paths against dir on the local filesystem.
+// DirAssetChecker resolves figure paths against dir on the local filesystem, confining symlinks via os.OpenRoot.
 func DirAssetChecker(dir string) func(string) bool {
-	root := os.DirFS(dir)
 	return func(normalized string) bool {
-		info, err := fs.Stat(root, normalized)
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = root.Close() }()
+		info, err := root.Stat(filepath.FromSlash(normalized))
 		return err == nil && info.Mode().IsRegular()
 	}
 }
@@ -175,7 +187,7 @@ func validateHTTPURL(line int, field, raw string) *ValidationError {
 func (d *Document) checkFigures(opts Options) []ValidationError {
 	var issues []ValidationError
 	seen := map[string]bool{}
-	for _, n := range find(d.tree, figureXPath) {
+	for _, n := range find(d.tree, d.figureXPath()) {
 		src, _ := n.(*helium.Element).GetAttribute("src")
 		if strings.TrimSpace(src) == "" {
 			continue // reported by protocol.sch

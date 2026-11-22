@@ -80,7 +80,7 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 	if issue != nil {
 		return nil, errors.New(issue.Message)
 	}
-	for _, n := range find(tree, figureXPath) {
+	for _, n := range find(tree, d.figureXPath()) {
 		fig := n.(*helium.Element)
 		src, _ := fig.GetAttribute("src")
 		normalized, _ := NormalizeAssetPath(src)
