@@ -167,12 +167,6 @@ func newEnvWithOptions(t *testing.T, opts RouterOptions, logger *slog.Logger) *e
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newEnvOnDB(t, database, opts, logger)
-}
-
-// newEnvOnDB builds the test server on an already opened database.
-func newEnvOnDB(t *testing.T, database *sqlx.DB, opts RouterOptions, logger *slog.Logger) *env {
-	t.Helper()
 	t.Cleanup(func() { _ = database.Close() })
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.MinCost)
 	if err != nil {
