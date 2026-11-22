@@ -46,3 +46,4 @@ Thumbs.db
 
 # Counterweight plugin state
 .cw/
+web/dist-poc/

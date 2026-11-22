@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
     "typecheck": "vue-tsc -b --pretty",
-    "build:poc": "vue-tsc -b && vite build -c vite.config.poc.ts && cp /tmp/aumbry-poc/build/poc.html /tmp/aumbry-poc/aumbry-poc.html"
+    "build:poc": "vue-tsc -b && vite build -c vite.config.poc.ts"
   },
   "dependencies": {
     "@shikijs/transformers": "^4.6.0",
