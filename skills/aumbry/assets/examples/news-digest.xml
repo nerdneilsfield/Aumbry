@@ -1,19 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document version="1.1">
   <meta>
-    <title>2026-11-20 AI 与具身研究简报</title>
+    <title>2026-W47 AI 与具身研究周报</title>
     <type>report</type>
     <date>2026-11-20</date>
-    <summary>按主题分组的日报/简报示例：含全文与分主题 tldr、news-item（含内联 detail 与 detail-id）、metrics 与 timeline。</summary>
+    <summary>周报示例：每天一个 section 并各带 tldr，整篇再有一个全文 tldr；日报写法相同，只是把“按天分”换成“按主题分”。</summary>
     <source-agent>news-digest-agent</source-agent>
     <tags>
-      <tag>Daily Digest</tag>
+      <tag>Weekly Digest</tag>
       <tag>World Model</tag>
     </tags>
+    <related-ids>
+      <!-- 占位，实际使用时替换为 aumbry list/push 返回的真实 id（当周各日报的条目 id） -->
+      <id>Dq3kP8xLm2Wz</id>
+    </related-ids>
   </meta>
   <body>
-    <tldr title="今日简报要点">
-      <point>两项面向实时世界模型的开源推理内核今日发布，端到端延迟继续下探。</point>
+    <tldr title="本周要点">
+      <point>两项面向实时世界模型的开源推理内核本周发布，端到端延迟继续下探。</point>
       <point>某头部闭源视觉基座发布长时序基准，细节见独立深度条目。</point>
     </tldr>
 
@@ -22,11 +26,22 @@
       <metric label="高优先级快讯" value="2" unit="条" trend="up"/>
     </metrics>
 
-    <section title="模型与推理进展">
+    <section title="11-19 周四">
       <tldr>
-        <point>聚焦流匹配推理内核与开源权重动向。</point>
+        <point>DriveFlow 在 arXiv 补充了新版实验，为次日开源发布做铺垫。</point>
       </tldr>
 
+      <news-item title="DriveFlow 提交新版补充实验" source="arXiv" url="https://example.org/driveflow-arxiv" published="2026-11-19" importance="normal">
+        补充了多相机 KV Cache 合并与 FP8 量化的消融结果。
+      </news-item>
+    </section>
+
+    <section title="11-20 周五">
+      <tldr>
+        <point>DriveFlow v0.2 开源，OpenBench 新增夜间雨雾子集。</point>
+      </tldr>
+
+      <!-- detail-id 为占位，实际使用时替换为 aumbry list/push 返回的真实 id（先推详情稿再推本周报） -->
       <news-item title="DriveFlow v0.2 发布 TensorRT-LLM 世界模型算子" source="OpenDrive Blog" url="https://github.com/open-drive/driveflow" published="2026-11-20T09:30:00Z" importance="high" detail-id="V1StGXR8_Z5j">
         新版本通过融合时空注意力算子将 H100 单帧延迟再降 18%，完整拆解见独立详情稿。
       </news-item>
@@ -37,16 +52,14 @@
       </news-item>
     </section>
 
-    <section title="今日关键节点时间线">
-      <timeline>
-        <event date="2026-11-19" title="预印本上线">DriveFlow 提交新版补充实验至 arXiv。</event>
-        <event date="2026-11-20" title="开源算子发布">GitHub Release v0.2 合并流匹配采样核。</event>
-      </timeline>
+    <timeline>
+      <event date="2026-11-19" title="预印本上线">DriveFlow 提交新版补充实验至 arXiv。</event>
+      <event date="2026-11-20" title="开源算子发布">GitHub Release v0.2 合并流匹配采样核。</event>
+    </timeline>
 
-      <sources>
-        <source title="DriveFlow Release" url="https://github.com/open-drive/driveflow"/>
-        <source title="OpenBench 更新公告" url="https://example.org/openbench"/>
-      </sources>
-    </section>
+    <sources>
+      <source title="DriveFlow Release" url="https://github.com/open-drive/driveflow"/>
+      <source title="OpenBench 更新公告" url="https://example.org/openbench"/>
+    </sources>
   </body>
 </document>

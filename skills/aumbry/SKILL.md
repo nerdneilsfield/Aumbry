@@ -31,9 +31,12 @@ description: Use when publishing, structuring, validating, or managing research 
 1. **按内容选块**：章节与积木全由实际内容决定，不用的块直接删去（搭配参考见 [scenarios.md](references/scenarios.md)）。
 2. **`<meta>` 规范**：`<source-agent>` 填实际产出 agent/技能名（不确定填当前 agent 名或 `aumbry-agent`）；单主题精读/短评/复现/详情用 `post`，周期汇编/日报/简报用 `report`；`<summary>` 填 1–2 句概览并与全文 `<tldr>` 一致；`<tags>` 与 `<canonical-url>` 无依据则留空，禁编 URL。
 3. **分层 `<tldr>`**：仅当文档 >= 3 部分或明显较长时配全文及分节 `<tldr>`（只总结已有内容）；一页短文、第 1 轮单 `<stage>` 或精简文档省略。
-4. **新闻简报**：`<news-item>` 带 `source` 与 `published`；先推独立详情条目取得 `id` 再填 `detail-id`；未证实消息标 `claim level="unverified"`。
-5. **复现与实验**：目标值与容差写在实测前；缺值标 `unreported`，图读估值标 `approx`，多种子方差放 `<chart>` `series[].err`（`pie`/`scatter` 禁用）；结论用 `复现 / 未复现 / 无法量化 / 环境差异`。
-6. **互动测验**：`<quiz>` 至少 1 个 `correct="true"`（可多选），答案对读者可见，勿放敏感信息，题干优先考察理解。
+4. **新闻简报**：`<news-item>` 带 `source` 与 `published`；先推独立详情条目取得 `id` 再填 `detail-id`；未证实消息标 `claim level="unverified"`，或在正文写“据称”，不写成事实。
+5. **复现与实验**：目标值与容差写在实测前；缺值标 `unreported`，图读估值标 `approx`，多种子方差放 `<chart>` `series[].err`（`pie`/`scatter` 禁用）；结论用 `复现 / 未复现 / 无法量化 / 环境差异`；环境与指标定义都已排除前，不写“论文有误”。
+6. **互动测验**：`<quiz>` 至少 1 个 `correct="true"`（可多选），答案对读者可见，勿放敏感信息，题干考察应用而非复述。
+7. **论文证据标注**：论文位置（`§3.2`、`Fig. 4`、`Eq. (5)`、`Table 2`）写进 `<claim source="…">`；`level` 区分 `claim`（作者主张）、`evidence`（论文证据）、`inference`（分析推断）、`unverified`（待核验）。论文未报告的信息写成 `unverified` 的 claim，不留空。
+
+以上规则只管“内容 skill 产出后如何落到 Aumbry”，不改写 `qi-read-paper`、`paper-compare` 等 skill 的流程，也不依赖它们是否安装。
 
 ## 意图 → 常用积木速查
 
