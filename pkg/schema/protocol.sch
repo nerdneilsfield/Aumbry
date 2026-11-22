@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Aumbry XML protocol v1.0 / v1.1 (docs/prd_spec_v1.1/prd.md section 6) as an ISO Schematron schema.
+  Aumbry XML protocol v1.1 (docs/prd_spec_v1.1/prd.md section 6) as an ISO Schematron schema.
   Every assert/report message is "CODE|field|human readable text[|optional hint]"; the validator splits it
   into ValidationError.Code, .Field, .Message and .Hint. The line comes from the offending node.
   Checks requiring JSON Schema, filesystem, net/url, rune counting or shared id namespaces live in Go.
@@ -14,7 +14,7 @@
 
   <pattern id="document">
     <rule context="/document">
-      <assert test="@version = ('1.0', '1.1')">UNSUPPORTED_VERSION|document.version|version must be "1.0" or "1.1"</assert>
+      <assert test="@version = '1.1'">UNSUPPORTED_VERSION|document.version|version must be "1.1"|set &lt;document version="1.1"&gt;; no other version is supported</assert>
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|document|&lt;document&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
       <assert test="meta">MISSING_META|document.meta|&lt;meta&gt; is required</assert>
       <assert test="body">MISSING_BODY|document.body|&lt;body&gt; is required</assert>
@@ -48,88 +48,35 @@
     </rule>
   </pattern>
 
-  <!-- Gate v1.1-only elements inside v1.0 documents without emitting duplicate UNKNOWN_TAG errors. -->
-  <pattern id="v10-gating">
-    <rule context="/document[@version='1.0']/body//*[local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail') and not(ancestor::*[local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail')])]">
-      <report test="true()">TAG_REQUIRES_1_1|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</report>
-    </rule>
-  </pattern>
-
-  <!-- Gate v1.1-only attributes added to existing v1.0 elements inside v1.0 documents. -->
-  <pattern id="v10-attr-gating">
-    <rule context="/document[@version='1.0']/body//section">
-      <assert test="not(@id)">TAG_REQUIRES_1_1|section.id|attribute "id" on &lt;section&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-    </rule>
-    <rule context="/document[@version='1.0']/body//figure">
-      <assert test="not(@id)">TAG_REQUIRES_1_1|figure.id|attribute "id" on &lt;figure&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-      <assert test="not(@alt)">TAG_REQUIRES_1_1|figure.alt|attribute "alt" on &lt;figure&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-    </rule>
-    <rule context="/document[@version='1.0']/body//compare-table/row/cell">
-      <assert test="not(@tag)">TAG_REQUIRES_1_1|cell.tag|attribute "tag" on &lt;cell&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-    </rule>
-    <rule context="/document[@version='1.0']/body//paper-card">
-      <assert test="not(@venue)">TAG_REQUIRES_1_1|paper-card.venue|attribute "venue" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-      <assert test="not(@doi)">TAG_REQUIRES_1_1|paper-card.doi|attribute "doi" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-      <assert test="not(@code-url)">TAG_REQUIRES_1_1|paper-card.code-url|attribute "code-url" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-      <assert test="not(@read-depth)">TAG_REQUIRES_1_1|paper-card.read-depth|attribute "read-depth" on &lt;paper-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-    </rule>
-    <rule context="/document[@version='1.0']/body//repo-card">
-      <assert test="not(@license)">TAG_REQUIRES_1_1|repo-card.license|attribute "license" on &lt;repo-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-      <assert test="not(@commit)">TAG_REQUIRES_1_1|repo-card.commit|attribute "commit" on &lt;repo-card&gt; requires document version="1.1"|set &lt;document version="1.1"&gt;</assert>
-    </rule>
-  </pattern>
-
-  <pattern id="v10-containers">
-    <rule context="/document[@version='1.0']/body">
-      <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|body|&lt;body&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
-    </rule>
-    <rule context="/document[@version='1.0']/body/*[not(self::section or self::sources) and not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
-      <report test="true()">UNKNOWN_TAG|body|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;body&gt;</report>
-    </rule>
-    <rule context="/document[@version='1.0']/body/section | /document[@version='1.0']/body/section/collapse">
-      <assert test="normalize-space(@title) != ''">MISSING_ATTR|<value-of select="name()"/>.title|&lt;<value-of select="name()"/>&gt; requires the "title" attribute</assert>
+  <pattern id="containers">
+    <rule context="/document/body | /document/body//stages/stage">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
-    <rule context="/document[@version='1.0']/body/section/*[not(self::md or self::figure or self::paper-card or self::repo-card or self::compare-table or self::callout or self::collapse or self::sources) and not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
-      <report test="true()">UNKNOWN_TAG|section|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;section&gt;</report>
-    </rule>
-    <rule context="/document[@version='1.0']/body/section/collapse/*[not(self::md or self::figure) and not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
-      <report test="true()">UNKNOWN_TAG|collapse|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;collapse&gt;</report>
-    </rule>
-  </pattern>
-
-  <pattern id="v11-containers">
-    <rule context="/document[@version='1.1']/body | /document[@version='1.1']/body//stages/stage">
-      <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
-    </rule>
-    <rule context="/document[@version='1.1']/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document[@version='1.1']/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+    <rule context="/document/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
     </rule>
-    <rule context="/document[@version='1.1']/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+    <rule context="/document/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|stage|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;stage&gt;</report>
     </rule>
-    <rule context="/document[@version='1.1']/body//collapse/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'search-log', 'tldr'))]">
+    <rule context="/document/body//collapse/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'search-log', 'tldr'))]">
       <report test="true()">UNKNOWN_TAG|collapse|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;collapse&gt;</report>
     </rule>
-    <rule context="/document[@version='1.1']/body//tab/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))] | /document[@version='1.1']/body//step/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))]">
+    <rule context="/document/body//tab/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))] | /document/body//step/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
     </rule>
   </pattern>
 
   <!-- Separate pattern on purpose: within one pattern a node fires only the first rule whose context matches it,
        so a <collapse>/<section> nested in a leaf-only container would never reach the child rules above. -->
-  <pattern id="v11-titled-containers">
-    <rule context="/document[@version='1.1']/body//section | /document[@version='1.1']/body//collapse | /document[@version='1.1']/body//tabs/tab | /document[@version='1.1']/body//steps/step">
+  <pattern id="titled-containers">
+    <rule context="/document/body//section | /document/body//collapse | /document/body//tabs/tab | /document/body//steps/step">
       <assert test="normalize-space(@title) != ''">MISSING_ATTR|<value-of select="name()"/>.title|&lt;<value-of select="name()"/>&gt; requires the "title" attribute</assert>
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
   </pattern>
 
   <pattern id="leaves">
-    <rule context="/document[@version='1.0']/body//section/*[self::md or self::figure or self::paper-card or self::repo-card or self::callout]/*[not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))] | /document[@version='1.0']/body//collapse/*[self::md or self::figure]/*[not(local-name() = ('claim', 'equation', 'mermaid', 'chart', 'metrics', 'metric', 'steps', 'step', 'tabs', 'tab', 'timeline', 'event', 'glossary', 'term', 'references', 'ref', 'figure-group', 'code-block', 'quote', 'checklist', 'check', 'search-log', 'criteria', 'include', 'exclude', 'query', 'excluded', 'gap', 'stop', 'stages', 'stage', 'quiz', 'question', 'option', 'explain', 'next-steps', 'tldr', 'point', 'verdict', 'news-item', 'detail'))]">
-      <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name(..)"/>&gt; cannot contain child elements</report>
-    </rule>
-    <rule context="/document[@version='1.1']/body//*[self::md or self::figure or self::paper-card or self::repo-card or self::callout or self::claim or self::equation or self::mermaid or self::chart or self::code-block or self::quote or self::source or self::cell or self::col]/*">
+    <rule context="/document/body//*[self::md or self::figure or self::paper-card or self::repo-card or self::callout or self::claim or self::equation or self::mermaid or self::chart or self::code-block or self::quote or self::source or self::cell or self::col]/*">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name(..)"/>&gt; cannot contain child elements</report>
     </rule>
   </pattern>

@@ -15,7 +15,7 @@ type pendingTarget struct {
 	value string
 }
 
-type v11State struct {
+type blockState struct {
 	issues []ValidationError
 
 	mermaidCount int
@@ -31,15 +31,12 @@ type v11State struct {
 	pendingEqRefs  []pendingTarget
 }
 
-func (d *Document) checkV11() []ValidationError {
-	if d.Version != "1.1" {
-		return nil
-	}
+func (d *Document) checkBlocks() []ValidationError {
 	body := firstChildNamed(d.tree.DocumentElement(), "body")
 	if body == nil {
 		return nil
 	}
-	st := &v11State{
+	st := &blockState{
 		seenIDs:   make(map[string]bool),
 		anchors:   make(map[string]bool),
 		equations: make(map[string]bool),
@@ -49,7 +46,7 @@ func (d *Document) checkV11() []ValidationError {
 	return st.issues
 }
 
-func (s *v11State) addIssue(line int, code, field, msg, hint string) {
+func (s *blockState) addIssue(line int, code, field, msg, hint string) {
 	s.issues = append(s.issues, ValidationError{
 		Line:    line,
 		Code:    code,
@@ -59,7 +56,7 @@ func (s *v11State) addIssue(line int, code, field, msg, hint string) {
 	})
 }
 
-func (s *v11State) registerID(line int, elem, id string) {
+func (s *blockState) registerID(line int, elem, id string) {
 	if !anchorIDRe.MatchString(id) {
 		s.addIssue(line, "INVALID_ID", elem+".id", fmt.Sprintf("id %q must match ^[a-z0-9-]{1,32}$", id), "use 1-32 lowercase letters, digits or hyphens")
 		return
@@ -77,7 +74,7 @@ func (s *v11State) registerID(line int, elem, id string) {
 	}
 }
 
-func (s *v11State) walk(el *helium.Element, sectionDepth int, inStage bool) {
+func (s *blockState) walk(el *helium.Element, sectionDepth int, inStage bool) {
 	tldrCount := 0
 	for _, child := range childElements(el) {
 		name := child.Name()
@@ -192,7 +189,7 @@ func (s *v11State) walk(el *helium.Element, sectionDepth int, inStage bool) {
 	}
 }
 
-func (s *v11State) checkPendingRefs() {
+func (s *blockState) checkPendingRefs() {
 	for _, pt := range s.pendingTargets {
 		if !targetRe.MatchString(pt.value) || !s.anchors[pt.value] {
 			s.addIssue(pt.line, "INVALID_TARGET", pt.field, fmt.Sprintf("target %q does not match an existing anchor id in this document", pt.value), "use a prefix anchor like #s-..., #stages-..., #stage-..., #quiz-..., #fig-..., #eq-... or #ref-...")
@@ -205,7 +202,7 @@ func (s *v11State) checkPendingRefs() {
 	}
 }
 
-func (s *v11State) checkDOI(el *helium.Element, owner string) {
+func (s *blockState) checkDOI(el *helium.Element, owner string) {
 	doi, has := el.GetAttribute("doi")
 	if !has {
 		return
@@ -215,7 +212,7 @@ func (s *v11State) checkDOI(el *helium.Element, owner string) {
 	}
 }
 
-func (s *v11State) checkEquation(el *helium.Element) {
+func (s *blockState) checkEquation(el *helium.Element) {
 	trimmed := strings.TrimSpace(string(el.Content()))
 	if len(trimmed) == 0 {
 		s.addIssue(el.Line(), "INVALID_EQUATION", "equation", "<equation> must not be empty", "")
@@ -226,7 +223,7 @@ func (s *v11State) checkEquation(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkMermaid(el *helium.Element) {
+func (s *blockState) checkMermaid(el *helium.Element) {
 	trimmed := strings.TrimSpace(string(el.Content()))
 	if len(trimmed) == 0 {
 		s.addIssue(el.Line(), "INVALID_MERMAID", "mermaid", "<mermaid> must not be empty", "")
@@ -237,7 +234,7 @@ func (s *v11State) checkMermaid(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkCodeBlock(el *helium.Element) {
+func (s *blockState) checkCodeBlock(el *helium.Element) {
 	trimmed := strings.TrimSpace(string(el.Content()))
 	if len(trimmed) == 0 {
 		s.addIssue(el.Line(), "INVALID_CODE_BLOCK", "code-block", "<code-block> must not be empty", "wrap source code in <![CDATA[ ... ]]>")
@@ -285,7 +282,7 @@ func isValidHighlightSpec(raw string) bool {
 	return true
 }
 
-func (s *v11State) checkMetrics(el *helium.Element) {
+func (s *blockState) checkMetrics(el *helium.Element) {
 	s.rejectDirectText(el, "metrics")
 	count := 0
 	for _, child := range childElements(el) {
@@ -314,7 +311,7 @@ func (s *v11State) checkMetrics(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkSteps(el *helium.Element) {
+func (s *blockState) checkSteps(el *helium.Element) {
 	s.rejectDirectText(el, "steps")
 	if inter, has := el.GetAttribute("interactive"); has && !contains(boolStrings, inter) {
 		s.addIssue(el.Line(), "INVALID_ATTR", "steps.interactive", `interactive must be "true" or "false"`, "")
@@ -337,7 +334,7 @@ func (s *v11State) checkSteps(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkTabs(el *helium.Element) {
+func (s *blockState) checkTabs(el *helium.Element) {
 	s.rejectDirectText(el, "tabs")
 	seenTitles := make(map[string]bool)
 	count := 0
@@ -361,7 +358,7 @@ func (s *v11State) checkTabs(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkTimeline(el *helium.Element) {
+func (s *blockState) checkTimeline(el *helium.Element) {
 	s.rejectDirectText(el, "timeline")
 	count := 0
 	for _, child := range childElements(el) {
@@ -387,7 +384,7 @@ func (s *v11State) checkTimeline(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkGlossary(el *helium.Element) {
+func (s *blockState) checkGlossary(el *helium.Element) {
 	s.rejectDirectText(el, "glossary")
 	seenNames := make(map[string]bool)
 	count := 0
@@ -416,7 +413,7 @@ func (s *v11State) checkGlossary(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkReferences(el *helium.Element) {
+func (s *blockState) checkReferences(el *helium.Element) {
 	s.rejectDirectText(el, "references")
 	count := 0
 	for _, child := range childElements(el) {
@@ -447,7 +444,7 @@ func (s *v11State) checkReferences(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkFigureGroup(el *helium.Element) {
+func (s *blockState) checkFigureGroup(el *helium.Element) {
 	s.rejectDirectText(el, "figure-group")
 	cols, has := el.GetAttribute("cols")
 	if !has {
@@ -468,7 +465,7 @@ func (s *v11State) checkFigureGroup(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkChecklist(el *helium.Element) {
+func (s *blockState) checkChecklist(el *helium.Element) {
 	s.rejectDirectText(el, "checklist")
 	count := 0
 	for _, child := range childElements(el) {
@@ -490,7 +487,7 @@ func (s *v11State) checkChecklist(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkSearchLog(el *helium.Element) {
+func (s *blockState) checkSearchLog(el *helium.Element) {
 	s.rejectDirectText(el, "search-log")
 	if d, has := el.GetAttribute("date"); has && !isValidYMD(d) {
 		s.addIssue(el.Line(), "INVALID_DATE", "search-log.date", fmt.Sprintf("search-log date %q must use YYYY-MM-DD format", d), "")
@@ -555,7 +552,7 @@ func (s *v11State) checkSearchLog(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkStages(el *helium.Element) {
+func (s *blockState) checkStages(el *helium.Element) {
 	s.rejectDirectText(el, "stages")
 	id, hasID := el.GetAttribute("id")
 	if !hasID || strings.TrimSpace(id) == "" {
@@ -592,7 +589,7 @@ func (s *v11State) checkStages(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkQuiz(el *helium.Element) {
+func (s *blockState) checkQuiz(el *helium.Element) {
 	s.rejectDirectText(el, "quiz")
 	id, hasID := el.GetAttribute("id")
 	if !hasID || strings.TrimSpace(id) == "" {
@@ -651,7 +648,7 @@ func (s *v11State) checkQuiz(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkNextSteps(el *helium.Element) {
+func (s *blockState) checkNextSteps(el *helium.Element) {
 	s.rejectDirectText(el, "next-steps")
 	count := 0
 	for _, child := range childElements(el) {
@@ -679,7 +676,7 @@ func (s *v11State) checkNextSteps(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkTLDR(el *helium.Element) {
+func (s *blockState) checkTLDR(el *helium.Element) {
 	s.rejectDirectText(el, "tldr")
 	if placement, has := el.GetAttribute("placement"); has && !contains(tldrPlacements, placement) {
 		s.addIssue(el.Line(), "INVALID_TLDR", "tldr.placement", `tldr placement must be "top" or "bottom"`, "")
@@ -721,7 +718,7 @@ func (s *v11State) checkTLDR(el *helium.Element) {
 	}
 }
 
-func (s *v11State) checkNewsItem(el *helium.Element) {
+func (s *blockState) checkNewsItem(el *helium.Element) {
 	if title, _ := el.GetAttribute("title"); strings.TrimSpace(title) == "" {
 		s.addIssue(el.Line(), "INVALID_NEWS", "news-item.title", `<news-item> requires a non-empty "title" attribute`, `add title="..." to <news-item>`)
 	}
@@ -765,7 +762,7 @@ func (s *v11State) checkNewsItem(el *helium.Element) {
 	}
 }
 
-func (s *v11State) rejectDirectText(el *helium.Element, field string) {
+func (s *blockState) rejectDirectText(el *helium.Element, field string) {
 	for cur := el.FirstChild(); cur != nil; cur = cur.NextSibling() {
 		switch cur.Type() {
 		case helium.TextNode, helium.CDATASectionNode:

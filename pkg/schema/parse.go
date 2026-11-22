@@ -54,9 +54,6 @@ func parseTree(input []byte) (*helium.Document, *ValidationError) {
 }
 
 func (d *Document) readMeta() {
-	if root := d.tree.DocumentElement(); root != nil {
-		d.Version, _ = root.GetAttribute("version")
-	}
 	field := func(name string) string {
 		if values := texts(d.tree, "/document/meta/"+name+"[1]"); len(values) > 0 {
 			return values[0]
@@ -80,7 +77,7 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 	if issue != nil {
 		return nil, errors.New(issue.Message)
 	}
-	for _, n := range find(tree, d.figureXPath()) {
+	for _, n := range find(tree, figureXPath) {
 		fig := n.(*helium.Element)
 		src, _ := fig.GetAttribute("src")
 		normalized, _ := NormalizeAssetPath(src)
@@ -294,24 +291,16 @@ func detectMissingCDATAHint(input []byte, errLine int) string {
 }
 
 // PlainText returns the document text and searchable attributes for full-text indexing.
-// v1.0 documents retain the full-tree text projection; v1.1 documents exclude code, formula,
-// diagram, chart JSON, quiz options, and next-steps buttons while indexing v1.1 attributes.
+// The projection excludes code, formula, diagram, chart JSON, quiz options, and next-steps buttons.
 func (d *Document) PlainText() string {
 	var b strings.Builder
-	if d.Version == "1.1" {
-		if root := d.tree.DocumentElement(); root != nil {
-			appendV11IndexedText(&b, root)
-		}
-		return strings.Join(strings.Fields(b.String()), " ")
-	}
-	for _, n := range find(d.tree, "//@title | //@caption | //@name | //@authors | //text()") {
-		b.Write(n.Content())
-		b.WriteByte(' ')
+	if root := d.tree.DocumentElement(); root != nil {
+		appendIndexedText(&b, root)
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-func appendV11IndexedText(b *strings.Builder, el *helium.Element) {
+func appendIndexedText(b *strings.Builder, el *helium.Element) {
 	name := el.Name()
 	if name == "next-steps" || name == "option" {
 		return
@@ -355,7 +344,7 @@ func appendV11IndexedText(b *strings.Builder, el *helium.Element) {
 			b.WriteByte(' ')
 		case helium.ElementNode:
 			if child, ok := cur.(*helium.Element); ok {
-				appendV11IndexedText(b, child)
+				appendIndexedText(b, child)
 			}
 		}
 	}

@@ -180,15 +180,15 @@ func TestValidateHintAndSchemaCommand(t *testing.T) {
 		t.Fatalf("text hint missing: err=%v out=%s", err, outText)
 	}
 
-	// #16: <claim> in version="1.0" exits via ValidationFailedError with TAG_REQUIRES_1_1.
-	v10Claim := filepath.Join(dir, "claim10.xml")
-	xmlClaim := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><section title="S"><claim level="claim">x</claim></section></body></document>`
-	if err = os.WriteFile(v10Claim, []byte(xmlClaim), 0o600); err != nil {
+	// Only version="1.1" is accepted; anything else exits via ValidationFailedError with UNSUPPORTED_VERSION.
+	oldVersion := filepath.Join(dir, "version10.xml")
+	xmlOld := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><md>x</md></body></document>`
+	if err = os.WriteFile(oldVersion, []byte(xmlOld), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	outClaim, err := runCLI(t, "validate", v10Claim)
-	if !errors.As(err, &failed) || !strings.Contains(outClaim, `"TAG_REQUIRES_1_1"`) {
-		t.Fatalf("v1.0 claim validate: err=%v out=%s", err, outClaim)
+	outOld, err := runCLI(t, "validate", oldVersion)
+	if !errors.As(err, &failed) || !strings.Contains(outOld, `"UNSUPPORTED_VERSION"`) {
+		t.Fatalf("version 1.0 validate: err=%v out=%s", err, outOld)
 	}
 
 	// #25 + #69: aumbry schema --format json and md.
@@ -197,18 +197,15 @@ func TestValidateHintAndSchemaCommand(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &spec); err != nil {
 		t.Fatalf("unmarshal schema json: %v\n%s", err, jsonOut)
 	}
-	if _, ok := spec.Versions["1.0"]; !ok {
-		t.Fatal("schema json missing 1.0")
-	}
-	if _, ok := spec.Versions["1.1"]; !ok {
-		t.Fatal("schema json missing 1.1")
+	if spec.Version != "1.1" {
+		t.Fatalf("schema json version = %q, want 1.1", spec.Version)
 	}
 	if len(spec.Elements) == 0 || len(spec.ErrorCodes) == 0 {
 		t.Fatalf("schema json missing elements/error_codes: %+v", spec)
 	}
 
 	mdOut := mustRun(t, "schema")
-	if !strings.Contains(mdOut, "Version `1.0`") || !strings.Contains(mdOut, "Version `1.1`") || !strings.Contains(mdOut, "<tldr>") {
+	if !strings.Contains(mdOut, "<tldr>") {
 		t.Fatalf("schema md unexpected output:\n%s", mdOut)
 	}
 

@@ -84,42 +84,29 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 		}
 	}
 
-	// #69: Version diff 1.0 vs 1.1 is explicit (containers, parents/children, counts, exceptions, error codes).
-	v10, ok10 := parsed.Versions["1.0"]
-	v11, ok11 := parsed.Versions["1.1"]
-	if !ok10 || !ok11 {
-		t.Fatalf("Versions keys missing: %+v", parsed.Versions)
+	// #69: The structure rules cover every container, with explicit exceptions and document caps.
+	if parsed.Version != "1.1" {
+		t.Errorf("version = %q, want 1.1", parsed.Version)
 	}
-	if v10.SectionMaxDepth != 1 || v11.SectionMaxDepth != maxSectionDepth {
-		t.Errorf("section depth diff = 1.0:%d 1.1:%d", v10.SectionMaxDepth, v11.SectionMaxDepth)
+	rules := parsed.Structure
+	if rules.SectionMaxDepth != maxSectionDepth {
+		t.Errorf("section depth = %d, want %d", rules.SectionMaxDepth, maxSectionDepth)
 	}
-	if slices.Contains(v10.BodyChildren, "md") || !slices.Contains(v11.BodyChildren, "md") {
-		t.Errorf("body_children diff broken: v10=%v", v10.BodyChildren)
+	if !slices.Contains(rules.BodyChildren, "md") {
+		t.Errorf("body_children = %v, want md among them", rules.BodyChildren)
 	}
 	for _, container := range []string{"stages", "stage", "tabs", "tab", "steps", "step", "metrics", "figure-group", "search-log", "quiz", "next-steps", "tldr", "news-item"} {
-		if _, ok := v11.Containers[container]; !ok {
-			t.Errorf("v1.1 containers missing %q", container)
+		if _, ok := rules.Containers[container]; !ok {
+			t.Errorf("containers missing %q", container)
 		}
 	}
-	if len(v11.PositionExceptions) == 0 || len(v11.DocumentCaps) == 0 {
-		t.Errorf("expected v1.1 position exceptions and document caps")
+	if len(rules.PositionExceptions) == 0 || len(rules.DocumentCaps) == 0 {
+		t.Errorf("expected position exceptions and document caps")
 	}
 
 	// Verify Spec().MinimalExample passes validator cleanly.
 	if _, issues := Parse([]byte(parsed.MinimalExample), Options{}); len(issues) != 0 {
 		t.Fatalf("MinimalExample invalid: %+v", issues)
-	}
-
-	// Verify validator v1.0 gating covers every v1.1-only tag in Spec().Elements.
-	for _, el := range parsed.Elements {
-		if el.Since != "1.1" {
-			continue
-		}
-		xml := doc(`<section title="s"><` + el.Name + `/></section>`)
-		_, issues := Parse([]byte(xml), Options{})
-		if got := codes(issues); len(got) == 0 || !slices.Contains(got, "TAG_REQUIRES_1_1") || slices.Contains(got, "UNKNOWN_TAG") {
-			t.Errorf("v1.1 element %q in v1.0: got codes %v, want [TAG_REQUIRES_1_1] without UNKNOWN_TAG\nissues=%+v", el.Name, got, issues)
-		}
 	}
 
 	// Verify all anchor prefixes & #sec-N exclusion.
@@ -140,7 +127,7 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 	// Verify Markdown output shares the same rule table cleanly.
 	md := RenderSchemaMarkdown()
 	for _, needle := range []string{
-		"Version `1.0`", "Version `1.1`", "TAG_REQUIRES_1_1", "SECTION_TOO_DEEP",
+		"UNSUPPORTED_VERSION", "SECTION_TOO_DEEP",
 		"INVALID_CHART", "<search-log>", "<stages>", "<tldr>", "<news-item>", `version="1.1"`,
 	} {
 		if !strings.Contains(md, needle) {
@@ -149,11 +136,11 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 	}
 }
 
-// TestSpecContainerRulesMatchValidator checks every declared v1.1 parent/child pair of the block
+// TestSpecContainerRulesMatchValidator checks every declared parent/child pair of the block
 // containers against the real validator, so Spec() and protocol.sch cannot drift apart again.
 func TestSpecContainerRulesMatchValidator(t *testing.T) {
 	always := Options{HasAsset: func(string) bool { return true }}
-	containers := Spec().Versions["1.1"].Containers
+	containers := Spec().Structure.Containers
 
 	snippets := map[string]string{
 		"section":       `<section title="x"/>`,
@@ -197,7 +184,7 @@ func TestSpecContainerRulesMatchValidator(t *testing.T) {
 		"step": func(s string) string { return `<steps><step title="a">` + s + `</step></steps>` },
 	}
 
-	for _, block := range v11AllBlocks {
+	for _, block := range allBlocks {
 		if _, ok := snippets[block]; !ok {
 			t.Fatalf("test has no snippet for block tag %q; add one", block)
 		}
@@ -205,11 +192,11 @@ func TestSpecContainerRulesMatchValidator(t *testing.T) {
 	for container, wrap := range wrappers {
 		rule, ok := containers[container]
 		if !ok {
-			t.Fatalf("Spec() v1.1 has no container %q", container)
+			t.Fatalf("Spec() has no container %q", container)
 		}
-		for _, block := range v11AllBlocks {
+		for _, block := range allBlocks {
 			want := slices.Contains(rule.AllowedChildren, block)
-			input := doc11(`<section id="anchor" title="anchor"/>` + wrap(snippets[block]))
+			input := doc(`<section id="anchor" title="anchor"/>` + wrap(snippets[block]))
 			_, issues := Parse([]byte(input), always)
 			if want && len(issues) != 0 {
 				t.Errorf("Spec() allows <%s> inside <%s> but validator rejects it: %+v", block, container, issues)

@@ -12,7 +12,7 @@ import (
 )
 
 // TestProtocolPerfNear10MB benchmarks our split (Schematron + Go DOM walk) against a
-// Schematron ancestor::section rule on an ~9MB v1.1 document (PRD 6.9).
+// Schematron ancestor::section rule on an ~9MB document (PRD 6.9).
 func TestProtocolPerfNear10MB(t *testing.T) {
 	payload := strings.Repeat("x", 1500)
 	var b strings.Builder
@@ -42,20 +42,20 @@ func TestProtocolPerfNear10MB(t *testing.T) {
 	schIssues := protocolIssues(tree)
 	tSch := time.Since(tSchStart)
 
-	d := &Document{Version: "1.1", input: raw, tree: tree}
+	d := &Document{input: raw, tree: tree}
 	tGoStart := time.Now()
-	v11Issues := d.checkV11()
+	blockIssues := d.checkBlocks()
 	tGo := time.Since(tGoStart)
 
-	if len(schIssues) != 0 || len(v11Issues) != 0 {
-		t.Fatalf("unexpected issues: sch=%v v11=%v", schIssues, v11Issues)
+	if len(schIssues) != 0 || len(blockIssues) != 0 {
+		t.Fatalf("unexpected issues: sch=%v blocks=%v", schIssues, blockIssues)
 	}
 
 	// Compare with Schematron ancestor::section predicate on the same tree.
 	ancestorSch := `<?xml version="1.0" encoding="UTF-8"?>
 <schema xmlns="http://purl.oclc.org/dsdl/schematron" queryBinding="xpath3">
   <pattern id="depth">
-    <rule context="/document[@version='1.1']/body//section">
+    <rule context="/document/body//section">
       <assert test="count(ancestor::section) le 3">SECTION_TOO_DEEP|section|too deep</assert>
     </rule>
   </pattern>
@@ -72,6 +72,6 @@ func TestProtocolPerfNear10MB(t *testing.T) {
 	_ = schematron.NewValidator(compiled).Validate(context.Background(), tree)
 	tAnc := time.Since(tAncStart)
 
-	t.Logf("docSize=%.2fMB xmlParse=%s schematron=%s goV11=%s schematronAncestorOnly=%s",
+	t.Logf("docSize=%.2fMB xmlParse=%s schematron=%s goBlocks=%s schematronAncestorOnly=%s",
 		float64(len(raw))/(1024*1024), tParse, tSch, tGo, tAnc)
 }
