@@ -529,11 +529,7 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, o
 		}
 	}
 
-	if _, err = tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, in.id); err != nil {
-		return nil, "", err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO items_fts (item_id, title, summary, tags, plain_text) VALUES (?, ?, ?, ?, ?)`,
-		in.id, meta.Title, meta.Summary, strings.Join(meta.Tags, " "), plain); err != nil {
+	if err = db.ReplaceItemFTS(ctx, tx, in.id, meta.Title, meta.Summary, strings.Join(meta.Tags, " "), plain); err != nil {
 		return nil, "", err
 	}
 

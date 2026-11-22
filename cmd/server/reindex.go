@@ -21,7 +21,7 @@ func newReindexCmd(configPath *string) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "reindex",
-		Short: "Rebuild items.plain_text and items_fts from the stored XML (writing runs require the server to be stopped)",
+		Short: "Rebuild items.plain_text, items_fts and items_fts_cjk from the stored XML (writing runs require the server to be stopped)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			res, err := loadAndWarn(cmd, *configPath)
@@ -151,7 +151,7 @@ func projectItem(ctx context.Context, database *sqlx.DB, store storage.Store, id
 }
 
 // writeReindexBatch updates both projections in one transaction, mirroring ingest's saveItem:
-// the short-term LIKE search reads items.plain_text and the long-term search reads items_fts.
+// the single-character LIKE search reads items.plain_text; the other searches read the two FTS tables.
 func writeReindexBatch(ctx context.Context, database *sqlx.DB, batch []reindexEntry) error {
 	tx, err := database.BeginTxx(ctx, nil)
 	if err != nil {
@@ -162,12 +162,8 @@ func writeReindexBatch(ctx context.Context, database *sqlx.DB, batch []reindexEn
 		if _, err = tx.ExecContext(ctx, `UPDATE items SET plain_text = ? WHERE id = ?`, e.plain, e.id); err != nil {
 			return fmt.Errorf("update item %s: %w", e.id, err)
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, e.id); err != nil {
-			return fmt.Errorf("clear fts for item %s: %w", e.id, err)
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO items_fts (item_id, title, summary, tags, plain_text) VALUES (?, ?, ?, ?, ?)`,
-			e.id, e.title, e.summary, e.tags, e.plain); err != nil {
-			return fmt.Errorf("insert fts for item %s: %w", e.id, err)
+		if err = db.ReplaceItemFTS(ctx, tx, e.id, e.title, e.summary, e.tags, e.plain); err != nil {
+			return fmt.Errorf("rebuild fts for item %s: %w", e.id, err)
 		}
 	}
 	return tx.Commit()

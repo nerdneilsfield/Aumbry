@@ -229,11 +229,11 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 重建搜索索引（`reindex`）
 
-3 个字符及以上的检索词使用 SQLite 全文索引（`items_fts`），不足 3 个字符的检索词对 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入这两处。`reindex` 从 WebDAV 重新读取每个条目已存储的 XML，按当前版本的规则重新计算索引文本，并同时重写 `items.plain_text` 与 `items_fts`，使两条检索路径保持一致。
+2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从 WebDAV 重新读取每个条目已存储的 XML，按当前版本的规则重新计算索引文本，并同时重写这三处，使各条检索路径保持一致。
 
 出现下列情况之一时运行 `reindex`：
 
-- 升级到改变了索引文本范围的版本。此前入库的文档仍保留旧的索引文本，重建后才会按新规则生效。
+- 升级到改变了索引文本范围的版本。此前入库的文档仍保留旧的索引文本，重建后才会按新规则生效。`items_fts_cjk` 这类新表初始为空，在运行 `reindex` 之前，2 个字及以上的中文检索词在早先入库的文档里搜不到结果。
 - 检索结果与报告内容不一致，例如恢复数据库快照后，或手工修复过数据库后。
 
 正常的入库、删除和 `backup` 不需要它。

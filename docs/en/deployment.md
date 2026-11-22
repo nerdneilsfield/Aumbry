@@ -229,11 +229,11 @@ When an `ingest` request fails after uploading XML to WebDAV (or when legacy ass
 
 ### Rebuild the search index (`reindex`)
 
-Search terms of 3 or more characters use the SQLite full-text index (`items_fts`); shorter terms use substring matching on `items.plain_text`. Every `POST /api/v1/ingest` writes both in one transaction. `reindex` re-reads the stored XML of every item from WebDAV, recomputes the indexed text with the rules of the installed version, and rewrites both `items.plain_text` and `items_fts`, so the two search paths stay consistent.
+Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from WebDAV, recomputes the indexed text with the rules of the installed version, and rewrites all three, so the search paths stay consistent.
 
 Run `reindex` in either of these cases:
 
-- You upgraded to a version that changes which text is indexed. Documents ingested earlier keep the old index text until you rebuild it.
+- You upgraded to a version that changes which text is indexed. Documents ingested earlier keep the old index text until you rebuild it. A new table such as `items_fts_cjk` starts empty, so Chinese terms of 2 or more characters find nothing in earlier documents until you run `reindex`.
 - Search results disagree with the content of a report, for example after restoring a database snapshot or repairing the database by hand.
 
 Normal ingest, deletion, and `backup` do not require it.

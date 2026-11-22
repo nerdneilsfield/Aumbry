@@ -11,7 +11,7 @@ Aumbry 是一个面向 AI agent 与人工研究产出的自托管私有报告库
 
 - **单二进制部署与内嵌阅读器**：`aumbry-server` 内嵌 Web 阅读器与管理控制台，单个二进制直接提供 `/d/<id>`、`/r/<id>`、`/p/<id>` 与 `/admin` 页面。
 - **前后端共享的 XML 校验器**：`aumbry` CLI 与 `aumbry-server` 执行同一套 XML 校验规则（支持 `version="1.0"` 与 `"1.1"`），在上传前拦截未知标签、图表错误、超限代码块及越界符号链接图片。
-- **SQLite 元数据与全文检索**：目录关系、条目元数据与全文搜索索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
+- **SQLite 元数据与全文检索**：目录关系、条目元数据与全文搜索索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 2 个字及以上的中文词直接检索（单字也可以）、其他 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
 - **目录级密码继承与私有 WebDAV 代理分发**：未挂载目录的条目对访客返回 HTTP `403`；目录密码沿子树继承；WebDAV 中的 XML 与图片仅通过服务端代理输出，并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
 - **随库分发的 Agent Skill**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档一起提供，规范 agent 发现目录、离线校验、保存草稿及幂等更新流程。
 

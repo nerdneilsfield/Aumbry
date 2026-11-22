@@ -108,7 +108,7 @@ func TestSearch(t *testing.T) {
 			}
 		}
 		// Without MATCH there is no snippet.
-		short := admin.do("GET", q("/api/v1/dirs/"+dir+"/search", "世界"), nil).json()["results"].([]any)[0].(map[string]any)
+		short := admin.do("GET", q("/api/v1/dirs/"+dir+"/search", "世"), nil).json()["results"].([]any)[0].(map[string]any)
 		if short["snippet"] != "" {
 			t.Errorf("snippet for LIKE-only search = %v", short["snippet"])
 		}
@@ -289,15 +289,15 @@ func TestSearchV11Projection(t *testing.T) {
 		}
 	}
 
-	// #81 2-char Chinese LIKE search: hit in claim & detail, excluded in equation
+	// #81 2-char Chinese search (items_fts_cjk): hit in claim & detail, excluded in equation
 	if got := search("推理"); len(got) != 1 {
-		t.Errorf("2-char LIKE search(推理) = %v, want 1 match", got)
+		t.Errorf("2-char search(推理) = %v, want 1 match", got)
 	}
 	if got := search("简报"); len(got) != 1 {
-		t.Errorf("2-char LIKE search(简报) = %v, want 1 match", got)
+		t.Errorf("2-char search(简报) = %v, want 1 match", got)
 	}
 	if got := search("公式"); len(got) != 0 {
-		t.Errorf("2-char LIKE inside <equation> should miss: search(公式) = %v", got)
+		t.Errorf("2-char inside <equation> should miss: search(公式) = %v", got)
 	}
 
 	// #18 + #81 excluded fragments must return 0 matches

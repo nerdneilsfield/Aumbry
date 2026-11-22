@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/nerdneilsfield/aumbry/internal/db"
 )
 
 const idLength = 12
@@ -375,7 +377,7 @@ func (s *Server) adminDeleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, id); err != nil {
+	if err := db.DeleteItemFTS(ctx, tx, id); err != nil {
 		internalError(w, r, err)
 		return
 	}
