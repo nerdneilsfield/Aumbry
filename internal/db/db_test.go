@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -212,6 +213,39 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 	}
 	if count < preRows {
 		t.Fatalf("backup items count = %d, want >= %d", count, preRows)
+	}
+}
+
+func TestBackupModeAndFailureCleanup(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	live, err := Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = live.Close()
+
+	outDir := t.TempDir()
+	okPath := filepath.Join(outDir, "ok.db")
+	if err := Backup(ctx, dataDir, okPath); err != nil {
+		t.Fatalf("Backup() error = %v", err)
+	}
+	fi, err := os.Stat(okPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("backup mode = %#o, want 0600", got)
+	}
+
+	failPath := filepath.Join(outDir, "canceled.db")
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := Backup(canceledCtx, dataDir, failPath); err == nil {
+		t.Fatal("Backup(canceledCtx) succeeded, want error")
+	}
+	if _, statErr := os.Stat(failPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed backup left file behind at %s (stat err=%v)", failPath, statErr)
 	}
 }
 

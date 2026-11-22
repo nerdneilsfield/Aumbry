@@ -186,7 +186,7 @@ func Spec() ProtocolSpec {
 			{Code: "INVALID_ID", Since: "1.0", Trigger: "invalid 12-char item id (<meta>/<related-ids>/<id>, paper-card@related-id, news-item@detail-id) or invalid anchor id (^[a-z0-9-]{1,32}$)"},
 			{Code: "UNKNOWN_TAG", Since: "1.0", Trigger: "unexpected element inside a container or inside a leaf block"},
 			{Code: "MISSING_ATTR", Since: "1.0", Trigger: "required attribute missing or blank"},
-			{Code: "INVALID_ATTR", Since: "1.0", Trigger: "invalid enum attribute value or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count)"},
+			{Code: "INVALID_ATTR", Since: "1.0", Trigger: "invalid enum attribute value, empty <next-steps>/<option> text, or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count)"},
 			{Code: "INVALID_URL", Since: "1.0", Trigger: "URL is not an absolute http(s) URL (canonical-url, paper-card@url|code-url, repo-card@url, source@url, ref@url, quote@url, news-item@url)"},
 			{Code: "INVALID_ASSET_PATH", Since: "1.0", Trigger: "<figure src> is not a clean relative path inside document directory"},
 			{Code: "INVALID_ASSET_TYPE", Since: "1.0", Trigger: "<figure src> extension is not .png, .jpg, .jpeg, .webp, or .svg"},
@@ -330,10 +330,10 @@ func buildElementSpecs() []ElementSpec {
 			Attributes: []AttrSpec{{Name: "caption", Since: "1.0", Description: "Optional table caption"}},
 		},
 		{Name: "columns", Since: "1.0", Parents: []string{"compare-table"}, Children: []string{"col"}, MinChildren: 1, TextMode: "none", Description: "Column header container."},
-		{Name: "col", Since: "1.0", Parents: []string{"columns"}, TextMode: "text", Description: "Table column header."},
+		{Name: "col", Since: "1.0", Parents: []string{"columns"}, TextMode: "text", Description: "Table column header (leaf element in 1.1; disallows child elements)."},
 		{Name: "row", Since: "1.0", Parents: []string{"compare-table"}, Children: []string{"cell"}, TextMode: "none", Description: "Table row matching column count."},
 		{
-			Name: "cell", Since: "1.0", Parents: []string{"row"}, TextMode: "text", Description: "Table cell.",
+			Name: "cell", Since: "1.0", Parents: []string{"row"}, TextMode: "text", Description: "Table cell (leaf element in 1.1; disallows child elements).",
 			Attributes: []AttrSpec{{Name: "tag", Since: "1.1", Values: slices.Clone(cellTags), Description: "Semantic comparison badge"}},
 		},
 		{
@@ -352,7 +352,7 @@ func buildElementSpecs() []ElementSpec {
 		},
 		{Name: "sources", Since: "1.0", Parents: []string{"body", "section", "stage"}, Children: []string{"source"}, MinChildren: 1, TextMode: "none", Description: "External link list."},
 		{
-			Name: "source", Since: "1.0", Parents: []string{"sources"}, TextMode: "none", Description: "External source link.",
+			Name: "source", Since: "1.0", Parents: []string{"sources"}, TextMode: "none", Description: "External source link (leaf element in 1.1; disallows child elements).",
 			Attributes: []AttrSpec{
 				{Name: "title", Since: "1.0", Required: true, Description: "Source label"},
 				{Name: "url", Since: "1.0", Required: true, Description: "http(s) URL"},
@@ -541,7 +541,7 @@ func buildElementSpecs() []ElementSpec {
 		{Name: "question", Since: "1.1", Parents: []string{"quiz"}, TextMode: "text", Description: "Exactly 1 non-empty plain-text question inside <quiz> (indexed)."},
 		{
 			Name: "option", Since: "1.1", Parents: []string{"quiz", "next-steps"}, TextMode: "text",
-			Description: "Quiz answer choice (2-8 per quiz; >=1 correct=\"true\"; excluded from search) OR navigation button inside <next-steps> (1-5 per block; excluded from search).",
+			Description: "Quiz answer choice (2-8 per quiz; >=1 correct=\"true\"; excluded from search) OR non-empty navigation button inside <next-steps> (1-5 per block; excluded from search).",
 			Attributes: []AttrSpec{
 				{Name: "correct", Since: "1.1", Values: slices.Clone(boolStrings), Description: "Quiz correctness flag (valid inside <quiz>)"},
 				{Name: "target", Since: "1.1", Pattern: targetRe.String(), Description: "Prefixed in-page anchor target (required inside <next-steps>)"},

@@ -62,7 +62,7 @@ const rowClass = (k: string, right: boolean) => [
     </div>
 
     <p v-if="!valid" class="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm text-amber-300">
-      <TriangleAlert class="size-4 shrink-0" aria-hidden="true" />测验定义无效（INVALID_QUIZ：至少 2 个选项，且至少 1 个 correct="true"），已跳过。
+      <TriangleAlert class="size-4 shrink-0" aria-hidden="true" />测验定义无效（INVALID_QUIZ：需要合法 id、非空题干、至少 2 个选项且至少 1 个 correct="true"），已跳过。
     </p>
 
     <template v-else>

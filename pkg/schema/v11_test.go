@@ -392,6 +392,35 @@ func TestV11ValidationRules(t *testing.T) {
 			xml:       doc11(`<news-item title="N"><detail>` + strings.Repeat("a", 8193) + `</detail></news-item>`),
 			wantCodes: []string{"INVALID_NEWS"},
 		},
+
+		// G7: v1.1 <source>, <cell>, <col> disallow child elements.
+		{
+			name:      "v1.1 source child element rejected UNKNOWN_TAG",
+			xml:       doc11(`<sources><source title="t" url="https://x.org"><quiz/></source></sources>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "v1.1 cell child element rejected UNKNOWN_TAG",
+			xml:       doc11(`<compare-table><columns><col>A</col></columns><row><cell><quiz/></cell></row></compare-table>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "v1.1 col child element rejected UNKNOWN_TAG",
+			xml:       doc11(`<compare-table><columns><col><quiz/></col></columns><row><cell>1</cell></row></compare-table>`),
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+
+		// G9: <next-steps><option> requires non-empty label text.
+		{
+			name:      "next-steps empty option fails INVALID_ATTR",
+			xml:       doc11(`<section id="x" title="X"/><next-steps><option target="#s-x"/></next-steps>`),
+			wantCodes: []string{"INVALID_ATTR"},
+		},
+		{
+			name:      "next-steps whitespace-only option fails INVALID_ATTR",
+			xml:       doc11(`<section id="x" title="X"/><next-steps><option target="#s-x">   </option></next-steps>`),
+			wantCodes: []string{"INVALID_ATTR"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -59,6 +59,7 @@ export function buildChart(type: string, json: string, dark: boolean): ChartSpec
 
 /** Cross-field rules JSON Schema cannot express (PRD 6.3), reported with the JSON path of the offending field. */
 function crossCheck(type: ChartType, d: { categories?: string[]; series: { data: unknown[]; err?: number[] }[] }) {
+  if (type === 'pie' && d.series.length !== 1) return { path: 'series', message: `pie 图表必须恰好有 1 个 series（当前 ${d.series.length} 个）` }
   for (const [i, s] of d.series.entries()) {
     if (s.err && type !== 'bar' && type !== 'line') return { path: `series[${i}].err`, message: 'err（误差棒）只适用于 bar / line' }
     if (d.categories && s.data.length !== d.categories.length) return { path: `series[${i}].data`, message: `长度 ${s.data.length} 必须等于 categories 的长度 ${d.categories.length}` }

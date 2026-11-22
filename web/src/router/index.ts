@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { syncUrlParams } from '@/composables/useUrlParams'
 
 // Views are lazy so the heavy reader dependencies (shiki, katex) load only when needed.
 const router = createRouter({
@@ -12,6 +13,10 @@ const router = createRouter({
     { path: '/:rest(.*)*', name: 'not-found', component: () => import('../views/NotFoundView.vue') },
   ],
   scrollBehavior: (to, from) => (to.path === from.path ? undefined : { top: 0 }),
+})
+
+router.afterEach((_to, _from, failure) => {
+  if (!failure) syncUrlParams()
 })
 
 export default router

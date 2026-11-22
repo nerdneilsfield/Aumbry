@@ -1,25 +1,9 @@
-# Two standalone deployment examples (single instance only — do not scale > 1):
-#
-# 1) TOML-only (no .env required; create ./aumbry.toml from config.example.toml):
-#      docker compose --profile toml up --build
-#
-# 2) Env-only (copy .env.example to .env; no aumbry.toml required):
-#      docker compose --profile env up --build
+# Env-based deployment (single instance only — do not scale > 1).
+# Keeps the v1.0 `docker compose up --build` workflow using .env (copy .env.example to .env).
+# For TOML-based configuration instead of .env, use: docker compose -f docker-compose.toml.yml up --build
 
 services:
   aumbry:
-    profiles: ["toml"]
-    build: .
-    image: ghcr.io/nerdneilsfield/aumbry:latest
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./aumbry.toml:/etc/aumbry/config.toml:ro
-      - aumbry-data:/data
-    restart: unless-stopped
-
-  aumbry-env:
-    profiles: ["env"]
     build: .
     image: ghcr.io/nerdneilsfield/aumbry:latest
     # Values containing "$" (the admin bcrypt hash) must be single-quoted in .env.

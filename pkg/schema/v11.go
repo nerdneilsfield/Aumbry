@@ -660,8 +660,12 @@ func (s *v11State) checkNextSteps(el *helium.Element) {
 			continue
 		}
 		count++
-		if hasChildElements(child) {
+		hasChildren := hasChildElements(child)
+		if hasChildren {
 			s.addIssue(child.Line(), "UNKNOWN_TAG", "next-steps.option", "<option> inside <next-steps> cannot contain child elements", "")
+		}
+		if !hasChildren && strings.TrimSpace(string(child.Content())) == "" {
+			s.addIssue(child.Line(), "INVALID_ATTR", "next-steps.option", "<option> inside <next-steps> must not be empty", "add visible button label text inside <option>")
 		}
 		target, _ := child.GetAttribute("target")
 		s.pendingTargets = append(s.pendingTargets, pendingTarget{

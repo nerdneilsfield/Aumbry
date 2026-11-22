@@ -4,7 +4,7 @@ import { useTitle } from '@vueuse/core'
 import { ArrowLeft, FlaskConical, Layers, Library, Link2, TriangleAlert } from 'lucide-vue-next'
 import { parseMeta, parseXml } from '@/lib/xml'
 import { validateDoc } from '@/lib/validate'
-import { urlParams } from '@/composables/useUrlParams'
+import { clearSkimParam, urlParams } from '@/composables/useUrlParams'
 import { DETAIL_NAV } from '@/composables/useDetailNav'
 import XmlRenderer from '@/components/renderer/XmlRenderer.vue'
 import MetaBar from '@/components/reader/MetaBar.vue'
@@ -19,7 +19,8 @@ const current = ref(FIXTURES.find((f) => f.name === urlParams.doc)?.name ?? FIXT
 const trail = ref<string[]>([])
 
 watch(current, (name) => {
-  // a #stage… / #fig… hash belongs to the document that was on screen
+  // a #stage… / #fig… hash and any ?skim= override belong to the document that was on screen
+  clearSkimParam()
   history.replaceState(history.state, '', location.pathname + location.search)
   urlParams.doc = name
   window.scrollTo({ top: 0 })

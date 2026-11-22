@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"time"
@@ -115,11 +116,17 @@ func (w *WebDAV) Open(_ context.Context, name string) (io.ReadCloser, error) {
 
 // Exists reports whether name exists.
 func (w *WebDAV) Exists(_ context.Context, name string) (bool, error) {
-	_, err := w.client.Stat(name)
+	info, err := w.client.Stat(name)
 	if err = mapErr(err); errors.Is(err, ErrNotFound) {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	if !validFileInfo(info) {
+		return false, fmt.Errorf("%w: incomplete WebDAV Stat response for %s", ErrUnreachable, name)
+	}
+	return true, nil
 }
 
 // Delete removes name; a missing object is not an error.
@@ -149,8 +156,11 @@ func (w *WebDAV) List(_ context.Context, dir string) ([]string, error) {
 
 // Probe performs a bounded Stat("/") against the WebDAV root and classifies failures.
 func (w *WebDAV) Probe(_ context.Context) error {
-	_, err := w.probeClient.Stat("/")
+	info, err := w.probeClient.Stat("/")
 	if err == nil {
+		if !validFileInfo(info) {
+			return fmt.Errorf("%w: incomplete WebDAV Stat response for /", ErrUnreachable)
+		}
 		return nil
 	}
 	if gowebdav.IsErrCode(err, http.StatusUnauthorized) || gowebdav.IsErrCode(err, http.StatusForbidden) {
@@ -161,6 +171,18 @@ func (w *WebDAV) Probe(_ context.Context) error {
 		return fmt.Errorf("%w: %w", ErrTimeout, err)
 	}
 	return fmt.Errorf("%w: %w", ErrUnreachable, err)
+}
+
+// gowebdav.Stat returns a typed-nil (*gowebdav.File)(nil) with err == nil when a 207 response
+// omits a 200 propstat or fails XML decoding; reject that as an incomplete/unhealthy response.
+func validFileInfo(info os.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	if f, ok := info.(*gowebdav.File); ok {
+		return f != nil
+	}
+	return true
 }
 
 func mapErr(err error) error {

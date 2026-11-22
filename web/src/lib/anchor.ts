@@ -8,6 +8,38 @@
  * only (it is not a valid next-steps target), as is `#stage=N` (the Nth stage of the first group).
  */
 
+export const MAX_SECTION_DEPTH = 3
+export const MAX_STAGES_PER_GROUP = 8
+
+/** how many <section> ancestors (plus itself) a section has: 1 = top level; the protocol allows 3 */
+export const sectionDepth = (el: Element) => {
+  let d = 1
+  for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'section') d++
+  return d
+}
+
+const directKids = (el: Element, tag: string) => Array.from(el.children).filter((c) => c.tagName === tag)
+
+/** Non-duplicate structural issues of a <stages> group; shared by anchorMap, validate.ts and buildToc. */
+export function stagesStructuralIssues(node: Element): { code: string; message: string }[] {
+  const out: { code: string; message: string }[] = []
+  const add = (message: string) => out.push({ code: 'INVALID_STAGES', message })
+  if (!safeId(node.getAttribute('id'))) add('缺少 id（[a-z0-9-]{1,32}），阅读进度按它保存')
+  const parent = node.parentElement
+  if (parent?.closest('stage')) add('stages 不能放在 stage 里面（不能嵌套）')
+  else if (!['body', 'section'].includes(parent?.tagName ?? '')) add('stages 只能放在 body 或 section 里')
+  const stages = directKids(node, 'stage')
+  const n = stages.length
+  if (n < 1 || n > MAX_STAGES_PER_GROUP) add(`一组 stages 需要 1–${MAX_STAGES_PER_GROUP} 个 stage，现在 ${n} 个`)
+  stages.forEach((st, i) => {
+    if (!safeId(st.getAttribute('id'))) add(`第 ${i + 1} 个 stage 缺少有效 id（[a-z0-9-]{1,32}）`)
+    if (!(st.getAttribute('title') ?? '').trim()) add(`第 ${i + 1} 个 stage 缺少 title`)
+  })
+  const gated = node.getAttribute('gated')
+  if (gated !== null && gated !== 'true' && gated !== 'false') add(`gated 必须是 true 或 false，收到 "${gated.slice(0, 24)}"`)
+  return out
+}
+
 /** `id` values are limited to [a-z0-9-]{1,32} by the protocol; anything else never becomes a DOM id. */
 export const safeId = (raw: string | null | undefined) => (raw && /^[a-z0-9-]{1,32}$/.test(raw) ? raw : '')
 
@@ -29,7 +61,7 @@ export function domIdOf(el: Element): string {
   const tag = el.tagName
   if (tag === 'section') return sectionId(el)
   if (tag === 'stage') return stageDomId(el)
-  if (tag === 'quiz') return `quiz-${quizKey(el)}`
+  if (tag === 'quiz') return safeId(el.getAttribute('id')) ? `quiz-${quizKey(el)}` : ''
   if (!isKind(tag)) return ''
   const id = safeId(el.getAttribute('id'))
   return id ? `${PREFIX[tag]}-${id}` : ''
@@ -55,6 +87,8 @@ export interface AnchorMap {
   byDom: Map<string, AnchorInfo>
   /** elements whose id was already used by an earlier element of the shared namespace */
   dups: Map<Element, string>
+  /** whether el (or any ancestor) lives in an unrendered subtree (too-deep section, duplicate-id container, or invalid stages) */
+  isSkipped: (el: Element) => boolean
   /** the target of `#hash` (non-strict: also `#sec-N`) */
   find: (hash: string) => AnchorInfo | undefined
   /** next-steps targets: `^#[a-z0-9-]+$` resolving through the prefix table to an existing element (not `#sec-N`) */
@@ -69,7 +103,9 @@ export function anchorMap(body: Element): AnchorMap {
   if (hit) return hit
   const byDom = new Map<string, AnchorInfo>()
   const dups = new Map<Element, string>()
+  const skipped = new Set<Element>()
   const owner = new Map<string, Element>()
+  const renderedStages: Element[] = []
 
   const info = (el: Element, kind: AnchorKind, domId: string): AnchorInfo => {
     const stages: Element[] = kind === 'stage' ? [el] : []
@@ -93,22 +129,86 @@ export function anchorMap(body: Element): AnchorMap {
     return { el, kind, domId, stages, collapses, tabs, steps, unfold }
   }
 
-  for (const el of body.querySelectorAll('*')) {
-    const tag = el.tagName
-    if (!isKind(tag)) continue
-    const id = safeId(el.getAttribute('id'))
-    if (id) {
-      if (owner.has(id)) {
-        dups.set(el, id)
+  // Recursive walk mirroring what the renderer actually mounts: unrendered subtrees (section depth > 3,
+  // duplicate-id containers, structurally invalid or id-colliding <stages>) are skipped before claiming any ids.
+  const walk = (parent: Element, secDepth: number) => {
+    for (const el of Array.from(parent.children)) {
+      const tag = el.tagName
+      if (tag === 'section') {
+        const nextDepth = secDepth + 1
+        if (nextDepth > MAX_SECTION_DEPTH) {
+          skipped.add(el)
+          continue
+        }
+        const id = safeId(el.getAttribute('id'))
+        if (id) {
+          if (owner.has(id)) {
+            dups.set(el, id)
+            skipped.add(el)
+            continue
+          }
+          owner.set(id, el)
+        }
+        const domId = domIdOf(el)
+        if (domId) byDom.set(domId, info(el, 'section', domId))
+        if (id) byDom.set(`sec-${position(el, 'section')}`, info(el, 'section', domId))
+        walk(el, nextDepth)
         continue
       }
-      owner.set(id, el)
+      if (tag === 'stages') {
+        const stageKids = directKids(el, 'stage')
+        const groupIds = new Set<string>()
+        let hasDup = false
+        for (const node of [el, ...stageKids]) {
+          const id = safeId(node.getAttribute('id'))
+          if (!id) continue
+          if (owner.has(id) || groupIds.has(id)) {
+            dups.set(node, id)
+            hasDup = true
+          } else {
+            groupIds.add(id)
+          }
+        }
+        if (stagesStructuralIssues(el).length > 0 || hasDup) {
+          skipped.add(el)
+          continue
+        }
+        const gid = safeId(el.getAttribute('id'))
+        owner.set(gid, el)
+        const gDom = domIdOf(el)
+        if (gDom) byDom.set(gDom, info(el, 'stages', gDom))
+        renderedStages.push(el)
+        for (const st of stageKids) {
+          const sid = safeId(st.getAttribute('id'))
+          owner.set(sid, st)
+          const sDom = domIdOf(st)
+          if (sDom) byDom.set(sDom, info(st, 'stage', sDom))
+          walk(st, secDepth)
+        }
+        continue
+      }
+      if (tag === 'stage') {
+        // Standalone <stage> outside a <stages> container is never rendered.
+        skipped.add(el)
+        continue
+      }
+      if (isKind(tag)) {
+        const id = safeId(el.getAttribute('id'))
+        if (id) {
+          if (owner.has(id)) {
+            dups.set(el, id)
+            skipped.add(el)
+            continue
+          }
+          owner.set(id, el)
+        }
+        const domId = domIdOf(el)
+        if (domId) byDom.set(domId, info(el, tag, domId))
+      }
+      walk(el, secDepth)
     }
-    const domId = domIdOf(el)
-    if (domId) byDom.set(domId, info(el, tag, domId))
-    // sections are always reachable by position too (TOC / scroll)
-    if (tag === 'section' && id) byDom.set(`sec-${position(el, 'section')}`, info(el, tag, domId))
   }
+  walk(body, 0)
 
   const decode = (hash: string) => {
     const raw = hash.replace(/^#/, '')
@@ -121,12 +221,18 @@ export function anchorMap(body: Element): AnchorMap {
   const map: AnchorMap = {
     byDom,
     dups,
+    isSkipped: (el) => {
+      for (let p: Element | null = el; p && p !== body; p = p.parentElement) {
+        if (skipped.has(p)) return true
+      }
+      return false
+    },
     find: (hash) => {
       const id = decode(hash)
       const st = /^stage=(\d+)$/.exec(id)
       if (st) {
-        const first = body.querySelector('stages')
-        const el = first && Array.from(first.children).filter((c) => c.tagName === 'stage')[Number(st[1]) - 1]
+        const first = renderedStages[0]
+        const el = first && directKids(first, 'stage')[Number(st[1]) - 1]
         return el ? byDom.get(stageDomId(el)) : undefined
       }
       return byDom.get(id)

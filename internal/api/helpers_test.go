@@ -40,18 +40,27 @@ type memStore struct {
 	mu         sync.Mutex
 	files      map[string][]byte
 	probeErr   error
+	existsErr  error
+	putErr     error
 	probeCalls atomic.Int32
 	onProbe    func()
 	onPut      func()
+	onPutPath  func(name string)
 }
 
 func (m *memStore) Put(_ context.Context, name string, body io.Reader) error {
 	if m.onPut != nil {
 		m.onPut()
 	}
+	if m.onPutPath != nil {
+		m.onPutPath(name)
+	}
 	data, err := io.ReadAll(body)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err == nil && m.putErr != nil {
+		return m.putErr
+	}
 	m.files[name] = data
 	return err
 }
@@ -69,6 +78,9 @@ func (m *memStore) Open(_ context.Context, name string) (io.ReadCloser, error) {
 func (m *memStore) Exists(_ context.Context, name string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.existsErr != nil {
+		return false, m.existsErr
+	}
 	_, ok := m.files[name]
 	return ok, nil
 }

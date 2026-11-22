@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -167,6 +168,13 @@ type orphanAssetRow struct {
 	StoragePath string `db:"storage_path"`
 }
 
+var (
+	// Generated in internal/api/ingest.go: /xml/<12-char-id>-<64-hex>.xml
+	managedXMLPathRe = regexp.MustCompile(`^/xml/[A-Za-z0-9_-]{12}-[0-9a-f]{64}\.xml$`)
+	// Generated in internal/api/ingest.go: /assets/<64-hex>.<ext>
+	managedAssetPathRe = regexp.MustCompile(`^/assets/[0-9a-f]{64}\.(png|jpg|webp|svg)$`)
+)
+
 func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun bool, out io.Writer) error {
 	liveXML, err := selectPathSet(ctx, database, `SELECT xml_storage_path FROM items`)
 	if err != nil {
@@ -181,12 +189,6 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 		return fmt.Errorf("query known asset paths: %w", err)
 	}
 
-	var orphanDBAssets []orphanAssetRow
-	if err := database.SelectContext(ctx, &orphanDBAssets,
-		`SELECT a.hash, a.storage_path FROM assets a WHERE NOT EXISTS (SELECT 1 FROM item_assets ia WHERE ia.asset_hash = a.hash) ORDER BY a.hash`); err != nil {
-		return fmt.Errorf("query orphan asset rows: %w", err)
-	}
-
 	remoteXML, err := listPrefix(ctx, store, "/xml")
 	if err != nil {
 		return err
@@ -196,8 +198,14 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 		return err
 	}
 
-	orphanRemoteXML := diffPaths(remoteXML, liveXML)
-	orphanRemoteAssets := diffPaths(remoteAssets, liveAssets)
+	orphanRemoteXML := diffPaths(filterManagedPaths(remoteXML, managedXMLPathRe), liveXML)
+	orphanRemoteAssets := diffPaths(filterManagedPaths(remoteAssets, managedAssetPathRe), liveAssets)
+
+	var orphanDBAssets []orphanAssetRow
+	if err := database.SelectContext(ctx, &orphanDBAssets,
+		`SELECT a.hash, a.storage_path FROM assets a WHERE NOT EXISTS (SELECT 1 FROM item_assets ia WHERE ia.asset_hash = a.hash) ORDER BY a.hash`); err != nil {
+		return fmt.Errorf("query orphan asset rows: %w", err)
+	}
 
 	if dryRun {
 		remoteSet := make(map[string]bool, len(orphanRemoteAssets))
@@ -297,6 +305,16 @@ func listPrefix(ctx context.Context, store storage.Store, dir string) ([]string,
 		return nil, fmt.Errorf("list %s: %w", dir, err)
 	}
 	return paths, nil
+}
+
+func filterManagedPaths(paths []string, re *regexp.Regexp) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if re.MatchString(p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func diffPaths(remote []string, live map[string]bool) []string {

@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nerdneilsfield/aumbry/internal/client"
 )
 
 type captured struct {
@@ -268,4 +270,57 @@ func TestPushV11FlagsAndPreflight(t *testing.T) {
 			t.Fatalf("err=%v stderr=%q stdout=%q", err, errBuf.String(), outBuf.String())
 		}
 	})
+}
+
+func TestPushRejectsEscapingSymlinkAtValidationAndOpen(t *testing.T) {
+	isolate(t)
+	base := t.TempDir()
+	outside := filepath.Join(base, "secret.png")
+	if err := os.WriteFile(outside, []byte("secret-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docDir := filepath.Join(base, "doc")
+	imgDir := filepath.Join(docDir, "imgs")
+	if err := os.MkdirAll(imgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	leakPath := filepath.Join(imgDir, "leak.png")
+	if err := os.Symlink(outside, leakPath); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	xmlFile := filepath.Join(docDir, "doc.xml")
+	xmlBody := `<document version="1.1"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><figure src="./imgs/leak.png"/></body></document>`
+	if err := os.WriteFile(xmlFile, []byte(xmlBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	var seenBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		data, _ := io.ReadAll(r.Body)
+		seenBody += string(data)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	t.Setenv("AUMBRY_SERVER", srv.URL)
+	t.Setenv("AUMBRY_TOKEN", "tok")
+
+	out, err := runCLI(t, "push", xmlFile)
+	var failed *ValidationFailedError
+	if !errors.As(err, &failed) || !strings.Contains(out, "MISSING_ASSET") || called {
+		t.Fatalf("push accepted symlink escape or hit network: called=%v err=%v out=%s", called, err, out)
+	}
+
+	// Simulate post-validation TOCTOU symlink replacement directly at client.Push upload time.
+	_, pushErr := client.Push(t.Context(), client.PushRequest{
+		Server:   srv.URL,
+		Token:    "tok",
+		XML:      []byte(xmlBody),
+		AssetDir: docDir,
+		Assets:   []client.Asset{{Src: "imgs/leak.png", Path: leakPath}},
+	})
+	if pushErr == nil || strings.Contains(seenBody, "secret-bytes") {
+		t.Fatalf("client.Push uploaded escaping symlink: err=%v leaked=%v", pushErr, strings.Contains(seenBody, "secret-bytes"))
+	}
 }

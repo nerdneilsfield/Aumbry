@@ -1,7 +1,7 @@
 import { inlineText } from '@/lib/markdown'
-import { anchorMap, safeId, sectionId, stageDomId } from '@/lib/anchor'
+import { MAX_SECTION_DEPTH, anchorMap, safeId, sectionDepth, sectionId, stageDomId } from '@/lib/anchor'
 
-export { safeId, sectionId, stageDomId }
+export { MAX_SECTION_DEPTH, safeId, sectionDepth, sectionId, stageDomId }
 
 export interface TocEntry {
   id: string
@@ -15,14 +15,6 @@ export interface TocEntry {
   /** first point of the entry's own <tldr>, plain text ('' when it has none) */
   summary: string
 }
-
-/** how many <section> ancestors (plus itself) a section has: 1 = top level; the protocol allows 3 */
-export const sectionDepth = (el: Element) => {
-  let d = 1
-  for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'section') d++
-  return d
-}
-export const MAX_SECTION_DEPTH = 3
 
 /** text of the first <point> of the <tldr> that is a direct child of `el` */
 const firstPoint = (el: Element) => {
@@ -41,7 +33,7 @@ export function parseXml(text: string) {
   return { body, toc: buildToc(body) }
 }
 
-/** TOC in document order: stages (as group headers) and sections up to 3 levels. Nothing assumes a particular skeleton. */
+/** TOC in document order: rendered stages and sections up to 3 levels. Unrendered subtrees are skipped. */
 function buildToc(body: Element): TocEntry[] {
   const toc: TocEntry[] = []
   const nesting = (el: Element) => {
@@ -49,9 +41,9 @@ function buildToc(body: Element): TocEntry[] {
     for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'section' || p.tagName === 'stage') n++
     return n
   }
-  const dups = anchorMap(body).dups
+  const map = anchorMap(body)
   for (const el of body.querySelectorAll('section, stage')) {
-    if (dups.has(el)) continue
+    if (map.isSkipped(el)) continue
     const own = el.parentElement?.closest('stage')
     const group = own?.parentElement?.getAttribute('id') ?? ''
     const stageEl = el.tagName === 'stage' ? el : own

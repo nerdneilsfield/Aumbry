@@ -122,7 +122,7 @@ func parseOptionalBoolField(form *multipart.Form, name string) (bool, error) {
 	}
 }
 
-func parseExternalKeyField(form *multipart.Form) (string, error) {
+func extractExternalKeyField(form *multipart.Form) (string, error) {
 	vals, present := form.Value["external_key"]
 	if !present {
 		return "", nil
@@ -131,16 +131,23 @@ func parseExternalKeyField(form *multipart.Form) (string, error) {
 		return "", errors.New("duplicate external_key field")
 	}
 	trimmed := strings.TrimSpace(vals[0])
+	if trimmed == "" {
+		return "", errors.New("external_key must not be blank")
+	}
+	return trimmed, nil
+}
+
+func validateNewExternalKey(trimmed string) error {
 	n := utf8.RuneCountInString(trimmed)
 	if n < 1 || n > 200 {
-		return "", errors.New("external_key must be 1 to 200 characters after trimming")
+		return errors.New("external_key must be 1 to 200 characters after trimming")
 	}
 	for _, r := range trimmed {
 		if unicode.IsControl(r) {
-			return "", errors.New("external_key must not contain control characters")
+			return errors.New("external_key must not contain control characters")
 		}
 	}
-	return trimmed, nil
+	return nil
 }
 
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +183,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	externalKey, err := parseExternalKeyField(form)
+	externalKey, err := extractExternalKeyField(form)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -242,22 +249,50 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	created := false
 	switch {
 	case createOnly:
-		// Skip pre-check; uniqueness is adjudicated atomically by SQLite's UNIQUE constraint.
+		var existingID string
+		err := s.db.GetContext(ctx, &existingID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
+		if err == nil {
+			writeError(w, http.StatusConflict, "key_exists", "external_key already exists")
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			internalError(w, r, err)
+			return
+		}
+		// New keys must satisfy v1.1 validation; SQLite's UNIQUE constraint still adjudicates concurrent creates.
+		if err := validateNewExternalKey(externalKey); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 	case itemID != "":
-		exists, err := s.itemExists(ctx, itemID)
+		var currentKey sql.NullString
+		err := s.db.GetContext(ctx, &currentKey, `SELECT external_key FROM items WHERE id = ?`, itemID)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
+			return
+		}
 		if err != nil {
 			internalError(w, r, err)
 			return
 		}
-		if !exists {
-			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
-			return
+		// Existing legacy v1.0 keys remain valid when kept unchanged; setting or changing a key requires v1.1 validation.
+		if externalKey != "" && (!currentKey.Valid || currentKey.String != externalKey) {
+			if err := validateNewExternalKey(externalKey); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+				return
+			}
 		}
 	case externalKey != "":
 		err := s.db.GetContext(ctx, &itemID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			internalError(w, r, err)
 			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			if err := validateNewExternalKey(externalKey); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+				return
+			}
 		}
 	}
 	if itemID == "" {
@@ -359,10 +394,9 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		dirs:        dirs,
 	})
 	if err != nil {
-		// Drop the object this request wrote, but never one that already existed (it may be live).
-		if !present {
-			_ = s.store.Delete(ctx, xmlPath)
-		}
+		// Leave xmlPath in storage on failure so concurrent ingests sharing the same content-hashed path
+		// (e.g. a simultaneous publish succeeding while a concurrent --draft fails with 409) never lose
+		// their live object. Any unreferenced remnants are cleaned up by offline `aumbry-server gc`.
 		switch {
 		case errors.Is(err, errAlreadyPublished):
 			writeError(w, http.StatusConflict, "already_published",

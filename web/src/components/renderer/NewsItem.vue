@@ -54,9 +54,9 @@ const open = computed({ get: () => userOpen.value || printing.value, set: (v) =>
       </h3>
       <p v-if="summary" class="mt-1.5 text-[0.95rem] leading-relaxed text-gray-300"><MarkdownInline :text="summary" /></p>
 
-      <div v-if="detail || detailId" class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 print:hidden">
+      <div v-if="detail || detailId" class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
         <CollapsibleRoot v-if="detail" v-model:open="open" class="w-full" data-news-detail>
-          <CollapsibleTrigger class="inline-flex cursor-pointer items-center gap-1 text-sm font-medium text-blue-300 hover:text-blue-200">
+          <CollapsibleTrigger class="inline-flex cursor-pointer items-center gap-1 text-sm font-medium text-blue-300 hover:text-blue-200 print:hidden">
             <ChevronRight :class="['size-4 transition-transform', open && 'rotate-90']" aria-hidden="true" />{{ open ? '收起详情' : '展开详情' }}
           </CollapsibleTrigger>
           <CollapsibleContent class="mt-2 rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3 text-sm"><MarkdownBlock :text="detail" /></CollapsibleContent>
@@ -65,7 +65,7 @@ const open = computed({ get: () => userOpen.value || printing.value, set: (v) =>
           :is="detailNav ? 'button' : RouterLink"
           v-if="detailId"
           v-bind="detailNav ? { type: 'button', onClick: () => detailNav!(detailId) } : { to: `/p/${encodeURIComponent(detailId)}` }"
-          class="inline-flex cursor-pointer items-center gap-1 text-sm font-semibold text-blue-300 hover:text-blue-200"
+          class="inline-flex cursor-pointer items-center gap-1 text-sm font-semibold text-blue-300 hover:text-blue-200 print:hidden"
           :data-detail-id="detailId"
         >阅读详情<ArrowRight class="size-4" aria-hidden="true" /></component>
       </div>

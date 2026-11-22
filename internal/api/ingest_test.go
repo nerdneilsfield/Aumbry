@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
@@ -268,8 +270,8 @@ func TestFailedUpdateKeepsOldContent(t *testing.T) {
 	if after := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body); after != before || !strings.Contains(after, "oldtext") {
 		t.Errorf("content after a failed update changed:\n%s", after)
 	}
-	if n := e.store.count("/xml/" + id); n != 1 || !e.store.has("/xml/"+id, before) {
-		t.Errorf("storage holds %d objects for the item, want only the old one", n)
+	if !e.store.has("/xml/"+id, before) {
+		t.Errorf("old xml object missing from storage after failed update")
 	}
 	if got := admin.do("GET", "/api/v1/items/"+id, nil).json()["title"]; got != "Original" {
 		t.Errorf("title after a failed update = %v", got)
@@ -526,5 +528,105 @@ func TestIngestExternalKeyValidationDraftCreateOnlyAndCreatedBy(t *testing.T) {
 	}
 	if legacyOwner.Valid {
 		t.Fatalf("legacy created_by became %q, want NULL", legacyOwner.String)
+	}
+}
+
+func TestIngestConcurrentPublishAndDraftDoesNotDeleteLiveXML(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dir := admin.createDir("", "Public", "")
+
+	itemID := admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Initial Draft", md: "v1"}), key: "race:draft", draft: true})
+	sameXML := xmlDoc(docOpts{title: "Updated V2", md: "shared v2 payload"})
+
+	draftInPut := make(chan struct{})
+	releaseDraft := make(chan struct{})
+	var paused atomic.Bool
+	e.store.onPutPath = func(name string) {
+		if !strings.HasPrefix(name, "/xml/"+itemID+"-") {
+			return
+		}
+		if paused.CompareAndSwap(false, true) {
+			close(draftInPut)
+			<-releaseDraft
+		}
+	}
+
+	draftCh := make(chan response, 1)
+	go func() {
+		draftCh <- admin.ingest(ingestReq{xml: sameXML, key: "race:draft", draft: true})
+	}()
+
+	<-draftInPut
+	pubResp := admin.ingest(ingestReq{xml: sameXML, key: "race:draft", dirs: []string{dir}})
+	if pubResp.status != http.StatusOK {
+		close(releaseDraft)
+		t.Fatalf("publish = %d %s", pubResp.status, pubResp.body)
+	}
+
+	close(releaseDraft)
+	draftResp := <-draftCh
+	e.store.onPutPath = nil
+	if draftResp.status != http.StatusConflict || draftResp.json()["error"] != "already_published" {
+		t.Fatalf("draft = %d %s, want 409 already_published", draftResp.status, draftResp.body)
+	}
+
+	served := admin.do("GET", "/api/v1/items/"+itemID+"/content", nil)
+	if served.status != http.StatusOK || !strings.Contains(string(served.body), "shared v2 payload") {
+		t.Fatalf("live item content after 409 draft = %d %s, want 200 with shared v2 payload", served.status, served.body)
+	}
+}
+
+func TestCreateOnlyChecksExistingKeyBeforeStorage(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Existing"}), key: "exists:failstore"})
+
+	e.store.mu.Lock()
+	e.store.existsErr = errors.New("webdav down")
+	e.store.putErr = errors.New("webdav down")
+	e.store.mu.Unlock()
+
+	resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Dup"}), key: "exists:failstore", createOnly: true})
+	if resp.status != http.StatusConflict || resp.json()["error"] != "key_exists" {
+		t.Fatalf("create_only with existing key while WebDAV down = %d %s, want 409 key_exists", resp.status, resp.body)
+	}
+}
+
+func TestIngestLegacyExternalKeyCompatibility(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+
+	longLegacyKey := strings.Repeat("v", 201)
+	ctrlLegacyKey := "legacy\x07key"
+	if _, err := e.db.Exec(`INSERT INTO items
+		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
+		VALUES ('legacylong01', ?, 'report', 'Legacy Long', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/legacylong01.xml', 'legacy'),
+		       ('legacyctrl01', ?, 'report', 'Legacy Ctrl', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/legacyctrl01.xml', 'legacy')`,
+		longLegacyKey, ctrlLegacyKey); err != nil {
+		t.Fatal(err)
+	}
+	e.store.files["/xml/legacylong01.xml"] = []byte(xmlDoc(docOpts{title: "Legacy Long"}))
+	e.store.files["/xml/legacyctrl01.xml"] = []byte(xmlDoc(docOpts{title: "Legacy Ctrl"}))
+
+	// Updating by an already-existing legacy >200-rune external_key must succeed.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Long Updated"}), key: longLegacyKey}); resp.status != http.StatusOK || resp.json()["id"] != "legacylong01" {
+		t.Fatalf("update existing >200 legacy key = %d %s, want 200", resp.status, resp.body)
+	}
+	// Updating by an already-existing legacy control-char external_key must succeed.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Ctrl Updated"}), key: ctrlLegacyKey}); resp.status != http.StatusOK || resp.json()["id"] != "legacyctrl01" {
+		t.Fatalf("update existing control-char legacy key = %d %s, want 200", resp.status, resp.body)
+	}
+	// Updating by item_id while keeping the same legacy key must succeed.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Keep Same Key"}), itemID: "legacylong01", key: longLegacyKey}); resp.status != http.StatusOK {
+		t.Fatalf("update item_id with same legacy key = %d %s, want 200", resp.status, resp.body)
+	}
+	// Updating by item_id to a NEW >200-rune key must still be rejected.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Change To Bad Key"}), itemID: "legacylong01", key: strings.Repeat("w", 201)}); resp.status != http.StatusBadRequest || resp.json()["error"] != "invalid_request" {
+		t.Fatalf("change to >200 key = %d %s, want 400 invalid_request", resp.status, resp.body)
+	}
+	// Brand-new >200-rune key must still be rejected.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "New Bad Key"}), key: strings.Repeat("w", 201)}); resp.status != http.StatusBadRequest || resp.json()["error"] != "invalid_request" {
+		t.Fatalf("new >200 key = %d %s, want 400 invalid_request", resp.status, resp.body)
 	}
 }

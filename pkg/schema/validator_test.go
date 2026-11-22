@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -294,4 +296,69 @@ func TestV11GatingAndGeneralizedXPath(t *testing.T) {
 			t.Fatalf("bad URLs codes = %v\n%+v", got, issues)
 		}
 	})
+}
+
+func TestValidateFileRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside.png")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docDir := filepath.Join(base, "doc")
+	imgDir := filepath.Join(docDir, "imgs")
+	if err := os.MkdirAll(imgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realImg := filepath.Join(docDir, "real.png")
+	if err := os.WriteFile(realImg, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(imgDir, "leak.png")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	if err := os.Symlink(filepath.Join("..", "real.png"), filepath.Join(imgDir, "ok.png")); err != nil {
+		t.Fatal(err)
+	}
+
+	escapeDoc := filepath.Join(docDir, "escape.xml")
+	if err := os.WriteFile(escapeDoc, []byte(doc11(`<figure src="./imgs/leak.png"/>`)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ValidateFile(escapeDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Valid {
+		t.Fatalf("ValidateFile accepted symlink escaping document directory: %+v", res)
+	}
+
+	inDirDoc := filepath.Join(docDir, "ok.xml")
+	if err := os.WriteFile(inDirDoc, []byte(doc11(`<figure src="./imgs/ok.png"/>`)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = ValidateFile(inDirDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Valid {
+		t.Fatalf("ValidateFile rejected in-dir symlink: %+v", res.Errors)
+	}
+}
+
+func TestV10FigureXPathPreservesLegacyScope(t *testing.T) {
+	input := doc(`<section title="S"><compare-table><columns><col>A</col></columns><row><cell><figure src="https://example.com/ext.png"/></cell></row></compare-table><figure src="./local.png"/></section>`)
+	d, issues := Parse([]byte(input), Options{HasAsset: func(p string) bool { return p == "local.png" }})
+	if len(issues) != 0 {
+		t.Fatalf("Parse v1.0 failed: %+v", issues)
+	}
+	if !slices.Equal(d.Assets, []string{"local.png"}) {
+		t.Fatalf("d.Assets = %v, want [local.png]", d.Assets)
+	}
+	out, err := d.RewriteAssets(map[string]string{"local.png": "/api/v1/assets/1"})
+	if err != nil {
+		t.Fatalf("RewriteAssets v1.0 failed: %v", err)
+	}
+	if !strings.Contains(string(out), `src="https://example.com/ext.png"`) || !strings.Contains(string(out), `src="/api/v1/assets/1"`) {
+		t.Fatalf("unexpected rewritten v1.0 XML:\n%s", out)
+	}
 }

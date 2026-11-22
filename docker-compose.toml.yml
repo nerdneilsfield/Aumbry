@@ -1,0 +1,22 @@
+# TOML-only container deployment (single instance only — do not scale > 1).
+#
+# Prepare ./aumbry.toml from config.example.toml (keep data_dir = "/data") and grant read
+# permission to the container's nonroot user (UID/GID 65532) without making secrets world-readable:
+#   sudo chgrp 65532 aumbry.toml && chmod 640 aumbry.toml
+#
+# Start with:
+#   docker compose -f docker-compose.toml.yml up --build
+
+services:
+  aumbry:
+    build: .
+    image: ghcr.io/nerdneilsfield/aumbry:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./aumbry.toml:/etc/aumbry/config.toml:ro
+      - aumbry-data:/data
+    restart: unless-stopped
+
+volumes:
+  aumbry-data:

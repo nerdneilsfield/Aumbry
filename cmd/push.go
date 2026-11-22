@@ -84,6 +84,7 @@ func newPushCommand() *cobra.Command {
 				Server:      profile.Server,
 				Token:       profile.Token,
 				XML:         input,
+				AssetDir:    dir,
 				Assets:      assets,
 				Dirs:        dirs,
 				ItemID:      itemID,
