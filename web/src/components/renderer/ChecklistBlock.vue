@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Circle, CircleCheck, OctagonX, TriangleAlert } from 'lucide-vue-next'
 import { attr, children } from '@/lib/xml'
+import { mdLine } from '@/lib/mdText'
 
 const props = defineProps<{ node: Element }>()
 
@@ -20,10 +21,22 @@ const items = computed(() =>
       detail: attr(c, 'detail'),
     })),
 )
+
+// what the Markdown export writes: a task list, done ticked; blocked / risk stay unticked and keep their label; detail goes under the item
+const exportMd = computed(() =>
+  items.value.length === 0
+    ? undefined
+    : items.value
+        .map((it) => {
+          const label = it.status.label === '阻塞' || it.status.label === '风险' ? `[${it.status.label}] ` : ''
+          return [`- [${it.status.label === '完成' ? 'x' : ' '}] ${label}${mdLine(it.text)}`, it.detail && `  > ${mdLine(it.detail)}`].filter(Boolean).join('\n')
+        })
+        .join('\n'),
+)
 </script>
 
 <template>
-  <ul class="not-prose list-none divide-y divide-gray-700/70 overflow-hidden rounded-xl border border-gray-700 bg-gray-800/50 p-0">
+  <ul class="not-prose list-none divide-y divide-gray-700/70 overflow-hidden rounded-xl border border-gray-700 bg-gray-800/50 p-0" :data-export-md="exportMd">
     <li v-for="(it, i) in items" :key="i" class="flex items-start gap-3 px-4 py-3">
       <component :is="it.status.icon" :class="['mt-0.5 size-5 shrink-0', it.status.icon_cls]" aria-hidden="true" />
       <div class="min-w-0 flex-1">

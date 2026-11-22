@@ -7,7 +7,8 @@ import { fence } from '@/lib/fence'
  * caller (usePrint.withExpandedDocument), so locked stages, collapses, tabs, skim folds and steps are all in the DOM. The
  * conversion is DOM-driven: what the print stylesheet hides (`print:hidden`), buttons, icons and elements marked
  * `data-export-skip` are dropped, and the few blocks whose DOM cannot say what they mean carry it themselves:
- *  - `data-export-md`    the Markdown to write instead of the block (Mermaid / chart source, quiz with answers)
+ *  - `data-export-md`    the Markdown to write instead of the block (Mermaid / chart source, quiz with answers, metrics table,
+ *                        checklist, news detail link); it wins over the skip list, so a button can carry one
  *  - `data-export-badge` a label chip, written as `[label] ` before the text it labels
  *  - `data-export-title` a collapse or tab panel: written as a bold title line above its content
  *  - `pre[data-lang]`    the code language of a highlighted block
@@ -28,6 +29,10 @@ const isElement = (n: Node): n is Element => n.nodeType === 1
 function createService(): TurndownService {
   const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '*', hr: '---' })
   td.use(gfm)
+  // controls and decoration. A rule, not td.remove(): turndown tries its built-in rules (p, a, h2 ...) before its remove list.
+  // Added first, so it has the lowest priority among our rules (turndown: the rule added last wins): a button that declares its
+  // own `data-export-md` (the news "read detail" link) is written, not dropped.
+  td.addRule('skip', { filter: (n) => isElement(n) && n.matches(SKIP), replacement: () => '' })
   // blocks that write their own Markdown
   td.addRule('exportMd', {
     filter: (n) => isElement(n) && n.hasAttribute('data-export-md'),
@@ -55,8 +60,6 @@ function createService(): TurndownService {
     filter: (n) => n.nodeName === 'PRE' && (n as Element).classList.contains('shiki'),
     replacement: (_content, n) => `\n\n${fence((n as Element).getAttribute('data-lang') ?? '', n.textContent ?? '')}\n\n`,
   })
-  // controls and decoration. A rule, not td.remove(): turndown tries its built-in rules (p, a, h2 ...) before its remove list
-  td.addRule('skip', { filter: (n) => isElement(n) && n.matches(SKIP), replacement: () => '' })
   return td
 }
 
