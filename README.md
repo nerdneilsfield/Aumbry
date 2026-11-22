@@ -12,20 +12,20 @@ Aumbry is a self-hosted hub for publishing, organizing, and searching structured
 - **Single server binary with embedded web reader**: `aumbry-server` bundles the web reader and admin console in one binary, serving `/d/<id>`, `/r/<id>`, `/p/<id>`, and `/admin` directly.
 - **Shared XML protocol and offline validator**: The `aumbry` CLI and `aumbry-server` enforce the same XML schema rules (`version="1.1"`), rejecting unknown tags, invalid charts, oversized blocks, and symlink asset escapes before upload.
 - **SQLite metadata and full-text search**: Metadata, directory mounts, and the full-text search index live in `<data_dir>/aumbry.db` (SQLite WAL mode), supporting Chinese search from two characters up (single characters work too), full-text queries for other terms of 3+ characters, and substring matching for shorter terms.
-- **Directory-level access control and private object storage**: Unmounted items return HTTP `403` to visitors, directories inherit ancestor passwords across the tree, and XML/image objects stored on WebDAV are served only through authenticated server handlers with `Content-Security-Policy: default-src 'none'; sandbox`.
+- **Directory-level access control and private object storage**: Unmounted items return HTTP `403` to visitors, directories inherit ancestor passwords across the tree, and XML/image objects stored in the private object backend (`local` by default, or `webdav` / `s3` / `r2`) are served only through authenticated server handlers with `Content-Security-Policy: default-src 'none'; sandbox`.
 - **Bundled Agent Skill**: [skills/aumbry/](skills/aumbry/SKILL.md) ships inside the repository and release archives so coding and research agents can discover directories, validate reports offline, save drafts, and publish updates idempotently.
 
 ## Overview
 
 Aumbry separates authoring from hosting so research agents do not write directly to your database or expose files on a public bucket. An agent writes a structured XML report alongside local images, runs `aumbry validate` locally, and uploads the bundle to `POST /api/v1/ingest` using a Bearer token from `api_tokens`. Visitors receive links to individual directories (`/d/<dir-id>`) or items (`/r/<id>`, `/p/<id>`); the root page (`/`) displays no public index.
 
-Aumbry is open-source under the MIT license (`github.com/nerdneilsfield/aumbry`), with protocol `1.1` on `master`. It runs as a single-instance private research hub rather than a public multi-user wiki or a distributed cluster: one `aumbry-server` process owns a given `data_dir` and private WebDAV store.
+Aumbry is open-source under the MIT license (`github.com/nerdneilsfield/aumbry`), with protocol `1.1` on `master`. It runs as a single-instance private research hub rather than a public multi-user wiki or a distributed cluster: one `aumbry-server` process owns a given `data_dir` and object store.
 
 ## Installation
 
 Choose the prebuilt container image or build from source. Prebuilt CLI and server archives are also released for `linux`, `darwin`, and `windows` (`amd64` and `arm64`) through GoReleaser.
 
-**Container (`linux/amd64`, `linux/arm64`)** — requires Docker Engine and Docker Compose v2, plus a reachable WebDAV server:
+**Container (`linux/amd64`, `linux/arm64`)** — requires Docker Engine and Docker Compose v2 (uses `local` storage inside the `/data` volume by default, or connect `webdav` / `s3` / `r2`):
 
 ```sh
 docker pull ghcr.io/nerdneilsfield/aumbry:latest
@@ -61,7 +61,7 @@ This writes `./aumbry-server` and `./aumbry` into the repository root.
 
 This example starts Aumbry from a `.env` file with Docker Compose and validates the bundled sample report with the CLI.
 
-> **Prerequisite:** Provision a private WebDAV endpoint and prepare a bcrypt hash of your admin password using `htpasswd -nbBC 10 '' '<your-password>' | cut -d: -f2` before starting the server.
+> **Prerequisite:** Prepare a bcrypt hash of your admin password using `htpasswd -nbBC 10 '' '<your-password>' | cut -d: -f2` before starting the server. By default `storage` is `local` (storing objects in `/data/objects`); if you use `webdav`, `s3`, or `r2`, provision that endpoint or bucket first.
 
 1. Copy the environment template and fill in every required variable:
 
@@ -80,7 +80,7 @@ This example starts Aumbry from a `.env` file with Docker Compose and validates 
 
    (Traced from `docker-compose.yml` and `Dockerfile`; run on a host with Docker daemon access.)
 
-3. Verify liveness and readiness (wait until WebDAV and SQLite report `ok`):
+3. Verify liveness and readiness (wait until storage and SQLite report `ok`):
 
    ```sh
    curl -s http://127.0.0.1:8080/healthz
@@ -94,7 +94,7 @@ This example starts Aumbry from a `.env` file with Docker Compose and validates 
    ```
 
    ```json
-   {"checks":{"sqlite":"ok","webdav":"ok"},"status":"ok"}
+   {"checks":{"sqlite":"ok","storage":"ok"},"status":"ok"}
    ```
 
 4. Validate the bundled sample XML offline (works before setting up a server):
@@ -161,13 +161,15 @@ Server configuration loads from TOML (`--config` -> `AUMBRY_CONFIG` -> `./aumbry
 | :--- | :--- | :--- | :--- | :--- |
 | `listen_addr` | `AUMBRY_LISTEN_ADDR` | Yes (auto-default) | `":8080"` | HTTP bind address |
 | `data_dir` | `AUMBRY_DATA_DIR` | Yes | None | Directory holding `aumbry.db` (WAL) |
+| `storage` | `AUMBRY_STORAGE` | No | `"local"` | Storage backend: `local`, `webdav`, `s3`, or `r2` |
+| `local.path` | `AUMBRY_LOCAL_PATH` | No | `<data_dir>/objects` | Object root when `storage = "local"` |
 | `admin.user` | `AUMBRY_ADMIN_USER` | Yes | None | Admin login username |
 | `admin.password_hash` | `AUMBRY_ADMIN_PASSWORD_HASH` | Yes | None | Validated bcrypt password hash |
 | `api_tokens` | `AUMBRY_API_TOKENS` | Yes | None | Bearer tokens for CLI and agent API |
 | `cookie_secret` | `AUMBRY_COOKIE_SECRET` | Yes | None | Cookie signing secret (>= 32 bytes) |
-| `webdav.url` | `AUMBRY_WEBDAV_URL` | Yes | None | Private WebDAV root URL |
-| `webdav.user` | `AUMBRY_WEBDAV_USER` | Yes | None | WebDAV username |
-| `webdav.password` | `AUMBRY_WEBDAV_PASS` | Yes | None | WebDAV password |
+| `webdav.*` | `AUMBRY_WEBDAV_*` | When `storage = "webdav"` | None | Private WebDAV URL, user, password |
+| `s3.*` | `AUMBRY_S3_*` | When `storage = "s3"` | None | Endpoint, region, bucket, static keys, `path_style` |
+| `r2.*` | `AUMBRY_R2_*` | When `storage = "r2"` | None | Cloudflare R2 `account_id`, bucket, static keys |
 | `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | No | `[]` | Reverse proxy IPs/CIDRs for forwarding headers |
 
 For all validation rules, secret masking rules, and container UID `65532` file permission settings, see [Server configuration reference](docs/en/configuration.md).
@@ -187,7 +189,7 @@ The repository issue tracker and discussions live on GitHub (`github.com/nerdnei
 
 ## Security and operational notes
 
-- **Single instance only**: Aumbry serializes SQLite writes on a single connection and tracks login/unlock/write rate limits in process memory (`10 req/min` on unlock/login; `120 req/min` and max `4` concurrent `/ingest` uploads). Run one replica per `data_dir` and WebDAV store.
+- **Single instance only**: Aumbry serializes SQLite writes on a single connection and tracks login/unlock/write rate limits in process memory (`10 req/min` on unlock/login; `120 req/min` and max `4` concurrent `/ingest` uploads). Run one replica per `data_dir` and object store.
 - **Reverse proxies and cookies**: `trusted_proxies` is empty by default, ignoring `X-Forwarded-For` and `X-Forwarded-Proto`. Configure the proxy IP/CIDR so client IPs are resolved right-to-left and `Secure` session cookies (`aumbry_admin` 7 days, `aumbry_unlocked` 30 days, `HttpOnly`, `SameSite=Lax`) are issued over HTTPS.
 - **Online backup vs offline GC**: Snapshot SQLite with `aumbry-server backup --out <path>` (`VACUUM INTO`) rather than copying `aumbry.db` directly in WAL mode. Run destructive `aumbry-server gc` only after stopping `aumbry-server`; `gc` deletes only unreferenced Aumbry-named XML and asset objects.
 

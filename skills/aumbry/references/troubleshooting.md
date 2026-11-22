@@ -67,4 +67,4 @@
 | `413` | `too_large` | 总请求 >100 MiB、XML >10 MiB 或单图 >20 MiB；压缩图片或拆分正文 |
 | `422` | 校验拒绝 | 按返回的 JSON `errors` 修改 |
 | `429` | `too_many_requests` | `/ingest` 与 `/agent/*` 同 IP 每分钟上限 `120` 次且 `/ingest` 并发上限 `4`；退避重试 |
-| `502` | `storage_error` | 服务端私有 WebDAV 不可达或 30 s 响应头超时；检查 WebDAV 与服务端 `/readyz` |
+| `502` | `storage_error` | 服务端私有对象存储不可达或 30 s 响应头超时；检查存储后端配置与服务端 `/readyz` |

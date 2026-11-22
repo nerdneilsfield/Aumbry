@@ -4,18 +4,18 @@ English | [简体中文](../zh-CN/deployment.md)
 
 This guide covers deploying `aumbry-server` with Docker Compose or a host binary, configuring reverse proxies, checking service readiness, and running backup, storage verification, garbage collection, and search reindex commands.
 
-> **Caution — Single instance only:** Aumbry serializes SQLite writes on a single connection, holds an advisory file lock (`aumbry.lock`) in `data_dir`, and stores rate-limit counters in process memory. Do not run two `aumbry-server` processes against the same `data_dir` or private WebDAV root; concurrent processes cause lock conflicts and broken rate limiting.
+> **Caution — Single instance only:** Aumbry serializes SQLite writes on a single connection, holds an advisory file lock (`aumbry.lock`) in `data_dir`, and stores rate-limit counters in process memory. Do not run two `aumbry-server` processes against the same `data_dir` or object store; concurrent processes cause lock conflicts and broken rate limiting.
 
 ## Prerequisites
 
-- **WebDAV backend:** A private HTTP/HTTPS WebDAV server reachable from `aumbry-server`. Visitors do not connect to WebDAV directly; `aumbry-server` proxies all XML and image downloads.
+- **Object storage backend:** Uses a local directory (`storage = "local"`, default `<data_dir>/objects`) by default, requiring no external service. Alternatively configure a private WebDAV server (`webdav`), S3-compatible bucket (`s3`), or Cloudflare R2 bucket (`r2`); visitors do not connect to object storage directly because `aumbry-server` proxies all XML and image downloads.
 - **Container hosts:** Docker Engine and Docker Compose v2 (`ghcr.io/nerdneilsfield/aumbry:latest` supports `linux/amd64` and `linux/arm64`).
 - **Source builds:** Go `1.27.1+`, Node.js `22+`, and `npm`. GoReleaser also publishes prebuilt `aumbry` and `aumbry-server` archives for `linux`, `darwin`, and `windows` (`amd64`, `arm64`).
 - **Credentials:** An admin password bcrypt hash (`htpasswd -nbBC 10 '' '<your-password>' | cut -d: -f2`), one or more random API tokens, and a cookie secret of at least 32 bytes (`openssl rand -hex 32`).
 
 ## Deploy with Docker Compose
 
-Two standalone compose files ship in the repository root. Pick the `.env` workflow for default environment configuration or `docker-compose.toml.yml` if you prefer mounting `aumbry.toml`. Neither compose file deploys a WebDAV container.
+Two standalone compose files ship in the repository root. Pick the `.env` workflow for default environment configuration or `docker-compose.toml.yml` if you prefer mounting `aumbry.toml`. Neither compose file deploys an external storage container; with the default `local` backend, objects are stored inside the `/data` volume (`/data/objects`).
 
 ### Option A: `.env` workflow (default `docker-compose.yml`)
 
@@ -26,7 +26,7 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
    chmod 600 .env
    ```
 
-2. Edit `.env` and fill in `AUMBRY_ADMIN_PASSWORD_HASH`, `AUMBRY_API_TOKENS`, `AUMBRY_COOKIE_SECRET`, `AUMBRY_WEBDAV_URL`, `AUMBRY_WEBDAV_USER`, and `AUMBRY_WEBDAV_PASS`. Single-quote values containing `$` (such as `AUMBRY_ADMIN_PASSWORD_HASH='$2y$10$...'`) so `docker compose` does not interpret `$2y` as an environment variable. (`docker-compose.yml` pins `AUMBRY_DATA_DIR=/data` on the service.)
+2. Edit `.env` and fill in `AUMBRY_ADMIN_PASSWORD_HASH`, `AUMBRY_API_TOKENS`, and `AUMBRY_COOKIE_SECRET` (plus backend keys if you switch `AUMBRY_STORAGE` from `local` to `webdav`, `s3`, or `r2`). Single-quote values containing `$` (such as `AUMBRY_ADMIN_PASSWORD_HASH='$2y$10$...'`) so `docker compose` does not interpret `$2y` as an environment variable. (`docker-compose.yml` pins `AUMBRY_DATA_DIR=/data` on the service.)
 
 3. Validate the rendered compose configuration and start the service:
 
@@ -39,7 +39,7 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 
 ### Option B: TOML workflow (`docker-compose.toml.yml`)
 
-> **Warning — Secret permissions for container UID `65532`:** `aumbry-server` inside the container runs as `nonroot` (UID/GID `65532`). A host config file with mode `0600` owned by your user cannot be read by UID `65532`. Grant read access only to GID `65532` instead of `0644` so other local users on the host cannot read `cookie_secret` or WebDAV credentials.
+> **Warning — Secret and volume permissions for container UID `65532`:** `aumbry-server` inside the container runs as `nonroot` (UID/GID `65532`). A host config file with mode `0600` owned by your user cannot be read by UID `65532`. Grant read access only to GID `65532` instead of `0644` so other local users on the host cannot read `cookie_secret` or storage credentials. Likewise, when `storage = "local"`, any bind-mounted host directory for `/data` or `local.path` must be writable by UID/GID `65532` (directories are created as `0700` and object files as `0600`).
 
 1. Copy `config.example.toml` (`data_dir = "/data"` is already set for the container volume `/data`) and fill in all required keys:
 
@@ -81,7 +81,7 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
    chmod 600 aumbry.toml
    ```
 
-3. Validate the configuration without opening SQLite or connecting to WebDAV:
+3. Validate the configuration without opening SQLite or connecting to object storage:
 
    ```sh
    ./aumbry-server check-config --config ./aumbry.toml
@@ -91,7 +91,8 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 
    ```toml
    listen_addr = ':8080'
-   data_dir = '/data'
+   data_dir = './data'
+   storage = 'local'
    api_tokens = ['****abcd']
    cookie_secret = '****cdef'
    trusted_proxies = []
@@ -100,10 +101,8 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
    user = 'admin'
    password_hash = '****lhWy'
 
-   [webdav]
-   url = 'https://dav.example.com/aumbry'
-   user = 'aumbry'
-   password = '****9999'
+   [local]
+   path = 'data/objects'
    ```
 
    Any syntax error, unknown TOML key, malformed bcrypt hash, or missing required setting exits `1` before the server binds a port.
@@ -119,21 +118,21 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 ## Storage layout, limits, and security headers
 
 - **`data_dir` contents:** `aumbry-server` creates `data_dir` with mode `0700`, locks `aumbry.lock` to prevent concurrent instances, and initializes `aumbry.db` in SQLite WAL mode (applying schema migrations automatically on startup).
-- **WebDAV object layout and timeouts:** Item XML files live at `/xml/<12-char-id>-<64-hex>.xml`; uploaded images live at `/assets/<64-hex>.<ext>` (`.png`, `.jpg`, `.webp`, `.svg` detected by content MIME sniffing). WebDAV connections time out after `5 s` on TCP dial and `30 s` waiting for response headers.
+- **Object layout, permissions, and timeouts:** Item XML files live at `/xml/<12-char-id>-<64-hex>.xml`; uploaded images live at `/assets/<64-hex>.<ext>` (`.png`, `.jpg`, `.webp`, `.svg` detected by content MIME sniffing). Under `storage = "local"`, the server creates `local.path` (default `<data_dir>/objects`) on startup with directory mode `0700` and writes files atomically with mode `0600`. Remote backends (`webdav`, `s3`, `r2`) time out after `5 s` on TCP dial and `30 s` waiting for response headers, with no overall timeout on streaming downloads.
 - **Upload and rate bounds:** `POST /api/v1/ingest` enforces `100 MiB` total request body, `10 MiB` XML payload, `20 MiB` per figure, max `4` concurrent ingest requests, and `120 requests/min` per client IP across `/api/v1/ingest` and `/api/v1/agent/*`. Admin login and directory password unlock endpoints allow `10 requests/min` per client IP.
 - **Response headers:** Every HTTP response includes `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`. Raw XML and asset downloads also send `Cache-Control: private` and `Content-Security-Policy: default-src 'none'; sandbox`.
 
 ## Health and readiness endpoints
 
 - `GET /healthz`: lightweight liveness endpoint; returns HTTP `200` and `{"status":"ok"}`.
-- `GET /readyz`: concurrently probes SQLite and WebDAV (`PROPFIND /`) with a `2 s` timeout, deduplicating concurrent checks and caching WebDAV probe results for `5 s`. Returns HTTP `200` when both report `"ok"`, or HTTP `503` (`"status":"unavailable"`) when either reports `"auth"`, `"timeout"`, or `"unreachable"`:
+- `GET /readyz`: concurrently probes SQLite and the configured object storage backend (`local` temporary file write/delete probe, `webdav` `PROPFIND /`, `s3`/`r2` `HeadBucket`) with a `2 s` timeout, deduplicating concurrent checks and caching storage probe results for `5 s`. Returns HTTP `200` when both report `"ok"`, or HTTP `503` (`"status":"unavailable"`) when either reports `"auth"`, `"timeout"`, or `"unreachable"`. Responses exclude endpoint URLs, bucket names, local paths, access keys, and signatures:
 
   ```sh
   curl -s http://127.0.0.1:8080/readyz
   ```
 
   ```json
-  {"checks":{"sqlite":"ok","webdav":"ok"},"status":"ok"}
+  {"checks":{"sqlite":"ok","storage":"ok"},"status":"ok"}
   ```
 
 ## Reverse proxy and `trusted_proxies`
@@ -173,14 +172,14 @@ The files are `examples/deploy/traefik/docker-compose.yml` and `.env.example`. T
    chmod 600 .env
    ```
 
-3. Edit `.env`. Set `PUBLIC_HOST` (host name), `ACME_EMAIL` (Let's Encrypt account e-mail), and the Aumbry values (`AUMBRY_ADMIN_PASSWORD_HASH`, `AUMBRY_API_TOKENS`, `AUMBRY_COOKIE_SECRET`, `AUMBRY_WEBDAV_URL`, `AUMBRY_WEBDAV_USER`, `AUMBRY_WEBDAV_PASS`). Keep the single quotes around the bcrypt hash.
+3. Edit `.env`. Set `PUBLIC_HOST` (host name), `ACME_EMAIL` (Let's Encrypt account e-mail), and the Aumbry values (`AUMBRY_ADMIN_PASSWORD_HASH`, `AUMBRY_API_TOKENS`, `AUMBRY_COOKIE_SECRET`, plus any remote storage variables if overriding default `local`). Keep the single quotes around the bcrypt hash.
 4. Start the stack:
 
    ```sh
    docker compose up -d
    ```
 
-Traefik stores certificates in the `traefik-letsencrypt` volume. It probes `GET /readyz` every 10 s; while SQLite or WebDAV is unavailable, Traefik stops routing to Aumbry and answers `503` itself. To keep Aumbry's own responses during a WebDAV outage, change the healthcheck path label to `/healthz`. The example also raises the entrypoint `readTimeout` to `300s`, because the Traefik v3 default of `60s` covers reading the whole request body and would cut off slow uploads of up to 100 MiB. Traefik discards `X-Forwarded-*` headers that clients send, so Aumbry receives only the values Traefik sets.
+Traefik stores certificates in the `traefik-letsencrypt` volume. It probes `GET /readyz` every 10 s; while SQLite or object storage is unavailable, Traefik stops routing to Aumbry and answers `503` itself. To keep Aumbry's own responses during a storage backend outage, change the healthcheck path label to `/healthz`. The example also raises the entrypoint `readTimeout` to `300s`, because the Traefik v3 default of `60s` covers reading the whole request body and would cut off slow uploads of up to 100 MiB. Traefik discards `X-Forwarded-*` headers that clients send, so Aumbry receives only the values Traefik sets.
 
 ### Deploy with nginx
 
@@ -197,7 +196,7 @@ The files are `examples/deploy/nginx/docker-compose.yml`, `aumbry.conf`, and `.e
 
 After each certificate renewal, copy the new files into `certs/` and run `docker compose exec nginx nginx -s reload`.
 
-`aumbry.conf` sets `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. It sets `client_max_body_size 101m` because Aumbry rejects request bodies above 100 MiB (nginx counts `m` as MiB); with the larger nginx limit, an oversized push receives Aumbry's JSON `413` response instead of an nginx error page. `proxy_send_timeout` and `proxy_read_timeout` are `120s`. They apply between two successive writes or reads, and Aumbry sends no response until it has uploaded the objects of an ingest request to WebDAV.
+`aumbry.conf` sets `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. It sets `client_max_body_size 101m` because Aumbry rejects request bodies above 100 MiB (nginx counts `m` as MiB); with the larger nginx limit, an oversized push receives Aumbry's JSON `413` response instead of an nginx error page. `proxy_send_timeout` and `proxy_read_timeout` are `120s`. They apply between two successive writes or reads, and Aumbry sends no response until it has uploaded the objects of an ingest request to object storage.
 
 ### Deploy with Caddy
 
@@ -233,9 +232,9 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
    backup written to /var/backups/aumbry-20261122.db
    ```
 
-2. `backup` captures SQLite metadata and full-text search only; updating an item later deletes its superseded XML object from WebDAV. Pair every SQLite snapshot with a simultaneous WebDAV snapshot to achieve full point-in-time recovery.
+2. `backup` captures SQLite metadata and full-text search only; do **not** take a SQLite snapshot first and copy the object directory later while writes continue, because later item updates delete superseded XML objects. For a complete backup, stop `aumbry-server` (or stop writes and pause `gc`), capture the SQLite snapshot together with the matching object store state (copy the object directory for `local`, or use storage-side replication or `rclone` for `s3`/`r2`/`webdav`).
 
-3. After restoring a database snapshot and its paired WebDAV snapshot, verify the restore before serving traffic:
+3. After restoring a database snapshot and its paired object store snapshot, verify the restore before serving traffic:
 
    1. Run `verify-storage` (see below). It must exit `0`:
 
@@ -245,9 +244,9 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
 
    2. Start `aumbry-server`, sign in to the admin page, and open one report, preferably one that contains figures. Confirm that the report text renders and that at least one image displays. `verify-storage` only checks that objects exist; this step confirms that they are readable through the server.
 
-### Verify WebDAV objects (`verify-storage`)
+### Verify object storage (`verify-storage`)
 
-`verify-storage` checks that every item XML file and referenced image asset recorded in `aumbry.db` exists on WebDAV:
+`verify-storage` checks that every item XML file and referenced image asset recorded in `aumbry.db` exists in object storage (for `local`, the root directory must already exist and will not be created if missing; non-zero exit otherwise):
 
 ```sh
 aumbry-server verify-storage --config ./aumbry.toml
@@ -261,7 +260,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### Garbage collect orphan objects (`gc`)
 
-When an `ingest` request fails after uploading XML to WebDAV (or when an update leaves old assets unreferenced), unreferenced objects remain on WebDAV so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched.
+When an `ingest` request fails after uploading XML to object storage (or when an update leaves old assets unreferenced), unreferenced objects remain in storage so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched. For `local`, the configured root directory must already exist (`gc` and `gc --dry-run` fail instead of creating an empty directory).
 
 1. List orphan objects safely while `aumbry-server` is running:
 
@@ -297,7 +296,7 @@ When an `ingest` request fails after uploading XML to WebDAV (or when an update 
 
 ### Rebuild the search index (`reindex`)
 
-Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on the title, summary, tags, and `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from WebDAV, recomputes the indexed text with the rules of the installed version, and rewrites all three, so the search paths stay consistent.
+Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on the title, summary, tags, and `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from object storage, recomputes the indexed text with the rules of the installed version, and rewrites all three, so the search paths stay consistent.
 
 Run `reindex` in either of these cases:
 
@@ -342,7 +341,11 @@ A writing run takes the same `aumbry.lock` as `gc`, so stop `aumbry-server` firs
 
 4. Restart `aumbry-server`.
 
-If an item's XML cannot be read from WebDAV or is no longer valid XML, `reindex` prints `error: item <id> (<xml path>): ...`, leaves that item's search data unchanged, and continues with the other items. After the last item, the command prints the summary and exits `1`. Fix the cause (run `verify-storage` to find missing objects), then run `reindex` again; repeated runs are safe.
+If an item's XML cannot be read from object storage or is no longer valid XML, `reindex` prints `error: item <id> (<xml path>): ...`, leaves that item's search data unchanged, and continues with the other items. After the last item, the command prints the summary and exits `1`. Fix the cause (run `verify-storage` to find missing objects), then run `reindex` again; repeated runs are safe.
+
+### Switching storage backends
+
+Aumbry does not ship a built-in migration command: stop `aumbry-server`, copy `xml/` and `assets/` from the old backend to the new backend with `rclone`, update your configuration, run `aumbry-server verify-storage`, and then start `aumbry-server`.
 
 ## First release: make the GHCR package public
 

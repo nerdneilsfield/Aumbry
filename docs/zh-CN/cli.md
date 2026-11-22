@@ -306,7 +306,7 @@ aumbry list --key demo:report --limit 20
 
 ### `aumbry unpublish`
 
-清空指定条目的全部目录挂载（`DELETE /api/v1/agent/items/{id}/mounts`），使其退回草稿状态（访客读取返回 `403`），条目 ID、元数据与 WebDAV XML 正文保留。仅允许创建该条目的 token 执行（其他 token 及没有归属记录的条目返回 HTTP `403 not_owner`）。
+清空指定条目的全部目录挂载（`DELETE /api/v1/agent/items/{id}/mounts`），使其退回草稿状态（访客读取返回 `403`），条目 ID、元数据与对象存储中的 XML 正文保留。仅允许创建该条目的 token 执行（其他 token 及没有归属记录的条目返回 HTTP `403 not_owner`）。
 
 ```sh
 aumbry unpublish MDUnpJpiAjMo
@@ -321,7 +321,7 @@ aumbry unpublish MDUnpJpiAjMo
 
 ### `aumbry delete`
 
-> **注意：不可恢复删除。** `aumbry delete <id> --yes` 永久删除该条目的元数据、全文搜索索引、目录挂载记录以及 WebDAV 中的 XML 正文对象（`DELETE /api/v1/agent/items/{id}`），操作无法撤销。未传入 `--yes` 时 CLI 在本地直接拒绝执行；同样仅创建者 token 有权删除（非创建者返回 `403 not_owner`）。
+> **注意：不可恢复删除。** `aumbry delete <id> --yes` 永久删除该条目的元数据、全文搜索索引、目录挂载记录以及对象存储中的 XML 正文对象（`DELETE /api/v1/agent/items/{id}`），操作无法撤销。未传入 `--yes` 时 CLI 在本地直接拒绝执行；同样仅创建者 token 有权删除（非创建者返回 `403 not_owner`）。
 
 ```sh
 aumbry delete MDUnpJpiAjMo --yes

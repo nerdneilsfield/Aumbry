@@ -321,7 +321,7 @@ aumbry unpublish MDUnpJpiAjMo
 
 ### `aumbry delete`
 
-> **Caution — Permanent deletion:** `aumbry delete <id> --yes` permanently deletes the item's metadata, search index entry, directory mounts, and XML content object on WebDAV (`DELETE /api/v1/agent/items/{id}`). This cannot be undone. Without `--yes`, the CLI refuses to execute locally. Only the creating API token is authorized (`403 not_owner` otherwise).
+> **Caution — Permanent deletion:** `aumbry delete <id> --yes` permanently deletes the item's metadata, search index entry, directory mounts, and XML content object in object storage (`DELETE /api/v1/agent/items/{id}`). This cannot be undone. Without `--yes`, the CLI refuses to execute locally. Only the creating API token is authorized (`403 not_owner` otherwise).
 
 ```sh
 aumbry delete MDUnpJpiAjMo --yes

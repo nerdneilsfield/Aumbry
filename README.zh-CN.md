@@ -12,20 +12,20 @@ Aumbry 是一个面向 AI agent 与人工研究产出的自托管私有报告库
 - **单二进制部署与内嵌阅读器**：`aumbry-server` 内嵌 Web 阅读器与管理控制台，单个二进制直接提供 `/d/<id>`、`/r/<id>`、`/p/<id>` 与 `/admin` 页面。
 - **前后端共享的 XML 校验器**：`aumbry` CLI 与 `aumbry-server` 执行同一套 XML 校验规则（`version="1.1"`），在上传前拦截未知标签、图表错误、超限代码块及越界符号链接图片。
 - **SQLite 元数据与全文检索**：目录关系、条目元数据与全文搜索索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 2 个字及以上的中文词直接检索（单字也可以）、其他 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
-- **目录级密码继承与私有 WebDAV 代理分发**：未挂载目录的条目对访客返回 HTTP `403`；目录密码沿子树继承；WebDAV 中的 XML 与图片仅通过服务端代理输出，并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
+- **目录级密码继承与私有对象存储代理分发**：未挂载目录的条目对访客返回 HTTP `403`；目录密码沿子树继承；保存在私有对象存储（默认 `local`，也支持 `webdav` / `s3` / `r2`）中的 XML 与图片仅通过服务端代理输出，并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
 - **随库分发的 Agent Skill**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档一起提供，规范 agent 发现目录、离线校验、保存草稿及幂等更新流程。
 
 ## 概述
 
 Aumbry 把“报告编写/校验”与“托管/权限控制”分开。AI agent 在本地生成结构化 XML 报告与相对路径配图，先运行 `aumbry validate` 通过本地校验，再使用 `api_tokens` 中的 Bearer token 推送到服务端 `POST /api/v1/ingest`。人类读者通过获分享的目录链接（`/d/<dir-id>`）或条目链接（`/r/<id>`、`/p/<id>`）访问内容，网站首页（`/`）不列出任何公开目录。
 
-项目基于 MIT 许可证开源（`github.com/nerdneilsfield/aumbry`），当前 `master` 分支实现 `1.1` 协议及配套功能。Aumbry 定位为单实例私有研究库，而不是多人公开 Wiki 或多副本集群，每个 `data_dir` 与私有 WebDAV 存储同一时刻仅允许连接一个服务端进程。
+项目基于 MIT 许可证开源（`github.com/nerdneilsfield/aumbry`），当前 `master` 分支实现 `1.1` 协议及配套功能。Aumbry 定位为单实例私有研究库，而不是多人公开 Wiki 或多副本集群，每个 `data_dir` 与对象存储同一时刻仅允许连接一个服务端进程。
 
 ## 安装
 
 可使用预构建容器镜像或从源码编译。GitHub Release 同样通过 GoReleaser 提供 `linux`、`darwin` 与 `windows`（`amd64` / `arm64`）的 `aumbry` 与 `aumbry-server` 预编译压缩包。
 
-**容器镜像**（`linux/amd64`、`linux/arm64`）：需本机已安装 Docker Engine、Docker Compose v2，以及一个可访问的私有 WebDAV 服务：
+**容器镜像**（`linux/amd64`、`linux/arm64`）：需本机已安装 Docker Engine 与 Docker Compose v2（默认使用 `/data` 卷内的 `local` 本地目录存储，也支持接入 `webdav` / `s3` / `r2`）：
 
 ```sh
 docker pull ghcr.io/nerdneilsfield/aumbry:latest
@@ -61,7 +61,7 @@ make build
 
 下面步骤通过 `.env` 配合 Docker Compose 启动服务端，并用 CLI 本地校验示例报告。
 
-> **前置条件：** 先准备好一个私有 WebDAV 服务，并提前用 `htpasswd -nbBC 10 '' '<your-password>' | cut -d: -f2` 生成管理员密码的 bcrypt 哈希。
+> **前置条件：** 启动前先用 `htpasswd -nbBC 10 '' '<your-password>' | cut -d: -f2` 生成管理员密码的 bcrypt 哈希。默认使用 `local` 存储（保存在 `/data/objects`）；若改用 `webdav`、`s3` 或 `r2`，需提前准备好对应服务或存储桶。
 
 1. 复制环境变量模板并填写全部必填项：
 
@@ -94,7 +94,7 @@ make build
    ```
 
    ```json
-   {"checks":{"sqlite":"ok","webdav":"ok"},"status":"ok"}
+   {"checks":{"sqlite":"ok","storage":"ok"},"status":"ok"}
    ```
 
 4. 在本地离线校验仓库自带示例（未配置服务端也可运行）：
@@ -161,13 +161,15 @@ npx skills add nerdneilsfield/aumbry --skill aumbry -g
 | :--- | :--- | :--- | :--- | :--- |
 | `listen_addr` | `AUMBRY_LISTEN_ADDR` | 是（有默认值） | `":8080"` | HTTP 监听地址 |
 | `data_dir` | `AUMBRY_DATA_DIR` | 是 | 无 | 保存 `aumbry.db`（WAL）的数据目录 |
+| `storage` | `AUMBRY_STORAGE` | 否 | `"local"` | 存储后端：`local`、`webdav`、`s3` 或 `r2` |
+| `local.path` | `AUMBRY_LOCAL_PATH` | 否 | `<data_dir>/objects` | `storage = "local"` 时的对象根目录 |
 | `admin.user` | `AUMBRY_ADMIN_USER` | 是 | 无 | 管理员登录用户名 |
 | `admin.password_hash` | `AUMBRY_ADMIN_PASSWORD_HASH` | 是 | 无 | 管理员密码 bcrypt 哈希 |
 | `api_tokens` | `AUMBRY_API_TOKENS` | 是 | 无 | 供 CLI/agent 使用的 Bearer token 列表 |
 | `cookie_secret` | `AUMBRY_COOKIE_SECRET` | 是 | 无 | Cookie 签名密钥（不少于 32 字节） |
-| `webdav.url` | `AUMBRY_WEBDAV_URL` | 是 | 无 | 私有 WebDAV 根 URL |
-| `webdav.user` | `AUMBRY_WEBDAV_USER` | 是 | 无 | WebDAV 用户名 |
-| `webdav.password` | `AUMBRY_WEBDAV_PASS` | 是 | 无 | WebDAV 密码 |
+| `webdav.*` | `AUMBRY_WEBDAV_*` | `storage = "webdav"` 时必填 | 无 | 私有 WebDAV 根 URL、用户名、密码 |
+| `s3.*` | `AUMBRY_S3_*` | `storage = "s3"` 时必填 | 无 | 端点、区域、桶名、静态密钥与 `path_style` |
+| `r2.*` | `AUMBRY_R2_*` | `storage = "r2"` 时必填 | 无 | Cloudflare R2 `account_id`、桶名与静态密钥 |
 | `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | 否 | `[]` | 可信反向代理 IP 或 CIDR 列表 |
 
 完整字段约束、脱敏规则与容器 UID `65532` 权限配置见[服务端配置参考](docs/zh-CN/configuration.md)。
@@ -187,7 +189,7 @@ npx skills add nerdneilsfield/aumbry --skill aumbry -g
 
 ## 安全与运维要点
 
-- **严格单实例运行**：服务端对 SQLite 仅开放 1 条连接，并在进程内存中统计限流（密码解锁与管理员登录每 IP 每分钟 10 次；`/ingest` 与 `/agent/*` 每 IP 每分钟 120 次且同时最多 4 个 `/ingest` 上传请求）。同一 `data_dir` 与 WebDAV 只能启动一个实例。
+- **严格单实例运行**：服务端对 SQLite 仅开放 1 条连接，并在进程内存中统计限流（密码解锁与管理员登录每 IP 每分钟 10 次；`/ingest` 与 `/agent/*` 每 IP 每分钟 120 次且同时最多 4 个 `/ingest` 上传请求）。同一 `data_dir` 与对象存储只能启动一个实例。
 - **反向代理与 Cookie**：`trusted_proxies` 默认为空，服务端忽略所有 `X-Forwarded-For` 与 `X-Forwarded-Proto`。配置代理网段后，按从右到左还原真实客户端 IP，并在到达 `X-Forwarded-Proto: https` 时为 Cookie（`aumbry_admin` 7 天、`aumbry_unlocked` 30 天，`HttpOnly`、`SameSite=Lax`）启用 `Secure` 标志。
 - **在线备份与离线 GC**：请使用 `aumbry-server backup --out <path>`（通过 SQLite `VACUUM INTO` 在线生成一致快照），不要在 WAL 模式下直接复制 `aumbry.db`。执行破坏性 `aumbry-server gc` 前必须先停止服务端；`gc` 仅清理未被引用的 Aumbry 命名规则对象。
 
