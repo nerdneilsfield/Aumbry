@@ -4,20 +4,19 @@
 
 Aumbry 文档采用基于 UTF-8 的 XML 格式，由统一的协议校验规则解析。`aumbry validate` 离线检查、服务端 `POST /api/v1/ingest` 写入与全文索引提取，以及 Web 阅读器全部依据同一套协议规则工作。
 
-## 版本差异（`1.0` 与 `1.1`）
+## 协议版本
 
-文档根节点必须声明 `<document version="1.0">` 或 `<document version="1.1">`：
+文档根节点必须声明 `<document version="1.1">`。Aumbry 不接受其他版本：`version` 取其他值或缺失时，校验报错 `UNSUPPORTED_VERSION`。
 
-| 维度 | `version="1.0"` | `version="1.1"` |
-| :--- | :--- | :--- |
-| `<body>` 直接子元素 | 仅允许 `<section>` 与 `<sources>` | 可直接放置块级标签（`<md>`、`<claim>`、`<metrics>`、`<chart>`、`<stages>`、`<tldr>`、`<quiz>`、`<news-item>` 等） |
-| `<section>` 嵌套深度 | 仅限 1 层（不可嵌套 `<section>`） | 最多 `3` 层 `<section>`（`<stage>` 祖先不计入层数） |
-| `<collapse>` 允许位置与子元素 | 仅限 `<section>` 内，且只含 `<md>` 与 `<figure>` | 可放在 `<body>` / `<section>` / `<stage>` 下，容纳各类叶子块与 `<search-log>` |
-| `<figure>` 资产收集范围 | 仅限 `<section>` 或 `<section>/<collapse>` 的直接子元素 `<figure>` | 文档内任意层级的带 `src` 属性 `<figure>` |
-| 全文块数量上限 | 仅受上传体积限制 | `chart <= 10`、`mermaid <= 10`、`stages <= 8`、`stage <= 40`、`section <= 3 层` |
-| 统一锚点与跳转 | 无 | `section`、`stages`、`stage`、`quiz`、`figure`、`equation`、`ref` 共用全局 `^[a-z0-9-]{1,32}$` ID；`<next-steps>` 跳转使用 `#s-` / `#stage-` / `#fig-` / `#eq-` / `#ref-` |
-| Markdown 渲染能力 | CommonMark（禁用原始 HTML）、KaTeX `$` 公式与代码语法高亮 | 同 `1.0`，并支持文档间隔离的脚注、只读任务列表、下标（`~`）与上标（`^`） |
-| 版本门控 | 出现任意 1.1 标签或新属性时报错 `TAG_REQUIRES_1_1` | 支持全部 1.0 与 1.1 元素和属性 |
+| 维度 | 规则 |
+| :--- | :--- |
+| `<body>` 直接子元素 | 可直接放置块级标签（`<md>`、`<claim>`、`<metrics>`、`<chart>`、`<stages>`、`<tldr>`、`<quiz>`、`<news-item>` 等） |
+| `<section>` 嵌套深度 | 最多 `3` 层 `<section>`（`<stage>` 祖先不计入层数） |
+| `<collapse>` 允许位置与子元素 | 可放在 `<body>` / `<section>` / `<stage>` 下，容纳各类叶子块与 `<search-log>` |
+| `<figure>` 资产收集范围 | 文档内任意层级的带 `src` 属性 `<figure>` |
+| 全文块数量上限 | `chart <= 10`、`mermaid <= 10`、`stages <= 8`、`stage <= 40`、`section <= 3 层` |
+| 统一锚点与跳转 | `section`、`stages`、`stage`、`quiz`、`figure`、`equation`、`ref` 共用全局 `^[a-z0-9-]{1,32}$` ID；`<next-steps>` 跳转使用 `#s-` / `#stage-` / `#fig-` / `#eq-` / `#ref-` |
+| Markdown 渲染能力 | CommonMark（禁用原始 HTML）、KaTeX `$` 公式、代码语法高亮，并支持文档间隔离的脚注、只读任务列表、下标（`~`）与上标（`^`） |
 
 ## 查看实时规范与本地校验
 
@@ -33,12 +32,12 @@ aumbry schema --format json
 ```markdown
 # Aumbry XML Protocol Specification
 
-## Version Comparison (1.0 vs 1.1)
+Protocol version: `1.1` (the only accepted value of `<document version>`).
 
-### Version `1.0`
+## Structure Rules
 
-- Section depth: 1 (top-level <section> inside <body> only; no nested <section>)
-- `<body>` direct children: section, sources
+- Section depth: 3 (at most 3 nested <section> levels counting only <section> ancestors (<stage> does not count))
+- `<body>` direct children: section, sources, md, figure, paper-card, repo-card, compare-table, ...
 ```
 
 推送前使用 `validate` 在本地离线检查（`--format json` 默认输出行号、`code`、`field`、`hint`）：

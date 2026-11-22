@@ -19,7 +19,7 @@ description: Use when publishing, structuring, validating, or managing research 
 1. Markdown 正文放入 `<md><![CDATA[...]]></md>`；XML 属性内禁止出现裸 `&`、`<`。
 2. `<figure src>` 仅限相对路径本地图片（`.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`），禁用外链、绝对路径与 `..` 越级路径。`validate` 与 `push` **按 XML 文档所在目录（非 CWD）解析相对路径**；原图能否纳入由用户决定。
 3. 禁止编造 `related-id`、`detail-id` 与目录 ID；查看公开性看 `aumbry dirs` 的 `protected`（不看 `has_password`），条目 ID 来自 `aumbry list --key` 或过往 `push` 响应。
-4. `<meta>/<date>` 用 `YYYY-MM-DD`；`<meta>/<type>` 为 `report` 或 `post`；使用任何 1.1 标签或新属性必须声明 `<document version="1.1">`。
+4. `<meta>/<date>` 用 `YYYY-MM-DD`；`<meta>/<type>` 为 `report` 或 `post`；根元素必须是 `<document version="1.1">`，这是唯一受支持的版本。
 5. 同题更新（含多轮修订、勘误、复测）复用同一个 `--key`（幂等键），**禁止每次换键**。
 6. 未核实事实写 `<claim level="unverified">`，对比表缺值写 `<cell tag="unreported">`，不写 0、不编造数据。
 7. 校验未通过绝不推送，不绕过校验。
@@ -48,7 +48,7 @@ description: Use when publishing, structuring, validating, or managing research 
 | 日报 / 周报 / 新闻简报 | `<tldr>` + `<news-item>`（`detail-id` / `<detail>`）+ `<metrics>` + `<timeline>` + `<sources>` |
 | 文献调研 / 学术综述 | `<section>` + `<references>`（`#ref-<id>`）+ `<search-log>` + `<glossary>` + `<quote>` |
 
-> 第 1 轮仅有单个 `<stage>` 时不要放指向未建未来 `<stage>` 的 `<next-steps>`（会报 `INVALID_TARGET`）；全量标签、属性、Chart JSON 字段与版本差异见 [xml-tags.md](references/xml-tags.md)。
+> 第 1 轮仅有单个 `<stage>` 时不要放指向未建未来 `<stage>` 的 `<next-steps>`（会报 `INVALID_TARGET`）；全量标签、属性与 Chart JSON 字段见 [xml-tags.md](references/xml-tags.md)。
 
 ## 发布目录决策与 CLI 认证速查
 

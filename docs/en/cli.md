@@ -79,7 +79,7 @@ CLI flags (--dir, --profile)  >  Environment variables (AUMBRY_SERVER, AUMBRY_TO
 
 ### `aumbry validate`
 
-Validate an Aumbry XML file (`version="1.0"` or `"1.1"`) offline. Relative `<figure src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected.
+Validate an Aumbry XML file (`version="1.1"`) offline. Relative `<figure src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected.
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -306,7 +306,7 @@ aumbry list --key demo:report --limit 20
 
 ### `aumbry unpublish`
 
-Clear all directory mounts for an item (`DELETE /api/v1/agent/items/{id}/mounts`), returning it to unmounted draft status (`403` to visitors) while preserving its ID, metadata, and XML content. Only the token that originally created the item can unpublish it (other tokens and legacy v1.0 items without a recorded owner return HTTP `403 not_owner`).
+Clear all directory mounts for an item (`DELETE /api/v1/agent/items/{id}/mounts`), returning it to unmounted draft status (`403` to visitors) while preserving its ID, metadata, and XML content. Only the token that originally created the item can unpublish it (other tokens and items without a recorded owner return HTTP `403 not_owner`).
 
 ```sh
 aumbry unpublish MDUnpJpiAjMo

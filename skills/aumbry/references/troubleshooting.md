@@ -4,13 +4,13 @@
 
 ## 1. 校验错误码全集（`pkg/schema` 与 `internal/api`）
 
-### XML 与根结构（v1.0+）
+### XML 与根结构
 
 | 错误码 | 触发原因 | 修复方式 |
 | :--- | :--- | :--- |
 | `INVALID_XML` | XML 语法错、未知实体（如 `&nbsp;`）或含 `<!DOCTYPE>` | 闭合标签并删 `<!DOCTYPE>`；正文含 `&`/`<T>` 时包进 `<![CDATA[ ... ]]>` |
-| `INVALID_ROOT` | 根元素不是 `<document>` | 改为 `<document version="1.1">`（或 `"1.0"`） |
-| `UNSUPPORTED_VERSION` | `document@version` 不是 `"1.0"` 或 `"1.1"` | 设为 `"1.1"` 或 `"1.0"` |
+| `INVALID_ROOT` | 根元素不是 `<document>` | 改为 `<document version="1.1">` |
+| `UNSUPPORTED_VERSION` | `document@version` 缺失或不是 `"1.1"`（`1.1` 是唯一受支持的版本） | 设为 `"1.1"` |
 | `UNEXPECTED_TEXT` | 容器（`document`/`body`/`section`/`stage`/`collapse`/`tab`/`step`/表格/列表）直接放了非空白文本 | 正文放入 `<md><![CDATA[...]]></md>` |
 | `MISSING_META` / `DUPLICATE_META` | 缺 `<meta>` 或存在多个 `<meta>` | 确保 `<document>` 内恰有 1 个 `<meta>` |
 | `MISSING_BODY` / `DUPLICATE_BODY` | 缺 `<body>` 或存在多个 `<body>` | 确保 `<document>` 内恰有 1 个 `<body>` |
@@ -30,11 +30,10 @@
 | `TABLE_NO_COLUMNS` / `TABLE_NO_ROWS` / `TABLE_COL_MISMATCH` | `<compare-table>` 缺 `<columns>/<col>`、缺 `<row>` 或某行 `<cell>` 数与 `<col>` 数不等 | 对齐列头与每行 `<cell>` 数 |
 | `MISSING_SOURCE` | `<sources>` 内无 `<source>` | 加至少 1 条 `<source>` 或删除空 `<sources>` |
 
-### v1.1 版本门控与富文本/互动/结构规则
+### 富文本、互动与结构规则
 
 | 错误码 | 触发原因 | 修复方式 |
 | :--- | :--- | :--- |
-| `TAG_REQUIRES_1_1` | 在 `version="1.0"` 文档用了 v1.1 标签或新属性（如 `figure@id/alt`、`cell@tag`、`paper-card@doi`、`section@id`） | 根节点改为 `<document version="1.1">` |
 | `SECTION_TOO_DEEP` | `<section>` 嵌套 >3 层（仅计 `section` 祖先，`<stage>` 不计） | 展平章节层级至 ≤3 层 |
 | `TOO_MANY_BLOCKS` | 总量超限：`<mermaid>` >10、`<chart>` >10、`<stages>` 组 >8 或全文 `<stage>` >40 | 合并或精简块/阶段数量 |
 | `DUPLICATE_ID` | 锚点 `@id` 跨组或跨类型重复 | 使用全文唯一 `@id` |
@@ -62,11 +61,10 @@
 | 本地参数互斥拒绝 | `--draft` 配 `--dir`；`--create-only` 缺 `--key` 或配 `--id`；`delete` 缺 `--yes` | 按互斥条件拆分命令；注意 `--draft` 自动忽略 `default_dirs`/`AUMBRY_DIRS` |
 | `400` | `invalid_request` / `unknown_dirs` | 检查 `external_key`（trim 后 1..200 runes 且无控制字符），或用 `aumbry dirs` 核对目录 ID |
 | `401` | `unauthorized` | 缺少或无效 Bearer token（与目录密码无关，须取自服务端 `api_tokens`）；用 `aumbry config show` / `config set --token ...` 核对 |
-| `403` | `not_owner`（仅 `unpublish`/`delete`） | 当前 token 非条目创建者（含 v1.0 `created_by` 为 `NULL` 的旧条目）；换原创建 token 或交由 `/admin` 管理控制台处理 |
-| `404` *(推新参数时)* | 预检 `/api/v1/agent/dirs` 返回 404 | 服务端仍为 v1.0，不支持 `--draft`/`--create-only`；升级服务端 |
+| `403` | `not_owner`（仅 `unpublish`/`delete`） | 当前 token 非条目创建者（含 `created_by` 为 `NULL`、没有归属记录的条目）；换原创建 token 或交由 `/admin` 管理控制台处理 |
 | `409` | `key_exists` | 带 `--create-only --key` 撞库；更新请去掉 `--create-only`，新建请换 `--key` |
 | `409` | `already_published` | 目标条目已挂目录，拒绝 `--draft` 覆盖；先 `aumbry unpublish <id>` 再存草稿，或去掉 `--draft` 更新 |
 | `413` | `too_large` | 总请求 >100 MiB、XML >10 MiB 或单图 >20 MiB；压缩图片或拆分正文 |
-| `422` *(或旧服务端 `UNSUPPORTED_VERSION`)* | 校验拒绝；若提示升级服务端说明对 v1.0 服务端推送 1.1 文档 | 按返回的 JSON `errors` 修改；若服务端为 v1.0 须升级或降级为 `version="1.0"` |
+| `422` | 校验拒绝 | 按返回的 JSON `errors` 修改 |
 | `429` | `too_many_requests` | `/ingest` 与 `/agent/*` 同 IP 每分钟上限 `120` 次且 `/ingest` 并发上限 `4`；退避重试 |
 | `502` | `storage_error` | 服务端私有 WebDAV 不可达或 30 s 响应头超时；检查 WebDAV 与服务端 `/readyz` |

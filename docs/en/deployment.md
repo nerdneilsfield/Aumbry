@@ -193,7 +193,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### Garbage collect orphan objects (`gc`)
 
-When an `ingest` request fails after uploading XML to WebDAV (or when legacy assets become unreferenced), unreferenced objects remain on WebDAV so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched.
+When an `ingest` request fails after uploading XML to WebDAV (or when an update leaves old assets unreferenced), unreferenced objects remain on WebDAV so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched.
 
 1. List orphan objects safely while `aumbry-server` is running:
 

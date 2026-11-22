@@ -10,7 +10,7 @@ Aumbry is a self-hosted hub for publishing, organizing, and searching structured
 ## Highlights
 
 - **Single server binary with embedded web reader**: `aumbry-server` bundles the web reader and admin console in one binary, serving `/d/<id>`, `/r/<id>`, `/p/<id>`, and `/admin` directly.
-- **Shared XML protocol and offline validator**: The `aumbry` CLI and `aumbry-server` enforce the same XML schema rules (`version="1.0"` and `"1.1"`), rejecting unknown tags, invalid charts, oversized blocks, and symlink asset escapes before upload.
+- **Shared XML protocol and offline validator**: The `aumbry` CLI and `aumbry-server` enforce the same XML schema rules (`version="1.1"`), rejecting unknown tags, invalid charts, oversized blocks, and symlink asset escapes before upload.
 - **SQLite metadata and full-text search**: Metadata, directory mounts, and the full-text search index live in `<data_dir>/aumbry.db` (SQLite WAL mode), supporting Chinese search from two characters up (single characters work too), full-text queries for other terms of 3+ characters, and substring matching for shorter terms.
 - **Directory-level access control and private object storage**: Unmounted items return HTTP `403` to visitors, directories inherit ancestor passwords across the tree, and XML/image objects stored on WebDAV are served only through authenticated server handlers with `Content-Security-Policy: default-src 'none'; sandbox`.
 - **Bundled Agent Skill**: [skills/aumbry/](skills/aumbry/SKILL.md) ships inside the repository and release archives so coding and research agents can discover directories, validate reports offline, save drafts, and publish updates idempotently.
@@ -19,7 +19,7 @@ Aumbry is a self-hosted hub for publishing, organizing, and searching structured
 
 Aumbry separates authoring from hosting so research agents do not write directly to your database or expose files on a public bucket. An agent writes a structured XML report alongside local images, runs `aumbry validate` locally, and uploads the bundle to `POST /api/v1/ingest` using a Bearer token from `api_tokens`. Visitors receive links to individual directories (`/d/<dir-id>`) or items (`/r/<id>`, `/p/<id>`); the root page (`/`) displays no public index.
 
-Aumbry is open-source under the MIT license (`github.com/nerdneilsfield/aumbry`), with both protocol `1.0` and `1.1` active on `master`. It runs as a single-instance private research hub rather than a public multi-user wiki or a distributed cluster: one `aumbry-server` process owns a given `data_dir` and private WebDAV store.
+Aumbry is open-source under the MIT license (`github.com/nerdneilsfield/aumbry`), with protocol `1.1` on `master`. It runs as a single-instance private research hub rather than a public multi-user wiki or a distributed cluster: one `aumbry-server` process owns a given `data_dir` and private WebDAV store.
 
 ## Installation
 
@@ -168,7 +168,7 @@ For all validation rules, secret masking rules, and container UID `65532` file p
 | [Directories and access control](docs/en/directories-and-access.md) | Directory tree, password inheritance, `protected` vs `has_password`, multi-directory visibility, unmounted drafts |
 | [CLI reference](docs/en/cli.md) | Profiles, env overrides, `validate`, `push`, `dirs`, `list`, `unpublish`, `delete`, real command examples |
 | [Agents and the Aumbry Skill](docs/en/agents-and-skill.md) | Skill installation, target-directory decision flow, draft vs publish authorization, token scoping |
-| [XML protocol overview](docs/en/protocol.md) | Protocol purpose, `1.0` vs `1.1` differences, `aumbry schema`, pointer to full generated reference |
+| [XML protocol overview](docs/en/protocol.md) | Protocol purpose, the `1.1` structure rules, `aumbry schema`, pointer to full generated reference |
 
 The repository issue tracker and discussions live on GitHub (`github.com/nerdneilsfield/Aumbry`).
 

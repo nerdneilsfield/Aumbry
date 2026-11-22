@@ -6,7 +6,7 @@ import { MAX_SECTION_DEPTH, attr, children, safeId, sectionDepth } from '@/lib/x
 const bodyOf = (el: Element) => el.closest('body') ?? el.ownerDocument.documentElement
 
 /**
- * Structure and safety checks for the v1.1 tags, mirroring the error codes of PRD 6.x. The renderer shows each failure
+ * Structure and safety checks for the protocol tags, mirroring the error codes of PRD 6.x. The renderer shows each failure
  * inline (so one bad block never hides the rest) and the offline demo lists them all in a banner.
  * Deliberately absent: any rule about which sections exist, what they are called, in what order, or how many.
  */
