@@ -509,22 +509,22 @@ func TestIngestExternalKeyValidationDraftCreateOnlyAndCreatedBy(t *testing.T) {
 		t.Fatalf("created_by overwritten on update: %q != %q", createdByAfter, createdBy)
 	}
 
-	// #56 unit level: legacy NULL created_by remains NULL after update via external_key.
+	// #56 unit level: NULL created_by remains NULL after update via external_key.
 	if _, err := e.db.Exec(`INSERT INTO items
 		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
-		VALUES ('legacy000099', 'legacy:staynull', 'report', 'Legacy', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/l.xml', 'legacy', NULL)`); err != nil {
+		VALUES ('noowner00003', 'noowner:stay', 'report', 'Ownerless', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/l.xml', 'ownerless', NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	updLegacy := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Updated"}), key: "legacy:staynull"})
-	if updLegacy.status != http.StatusOK {
-		t.Fatalf("update legacy = %d %s", updLegacy.status, updLegacy.body)
+	updOwnerless := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Ownerless Updated"}), key: "noowner:stay"})
+	if updOwnerless.status != http.StatusOK {
+		t.Fatalf("update ownerless = %d %s", updOwnerless.status, updOwnerless.body)
 	}
-	var legacyOwner sql.NullString
-	if err := e.db.Get(&legacyOwner, `SELECT created_by FROM items WHERE id = 'legacy000099'`); err != nil {
+	var noOwner sql.NullString
+	if err := e.db.Get(&noOwner, `SELECT created_by FROM items WHERE id = 'noowner00003'`); err != nil {
 		t.Fatal(err)
 	}
-	if legacyOwner.Valid {
-		t.Fatalf("legacy created_by became %q, want NULL", legacyOwner.String)
+	if noOwner.Valid {
+		t.Fatalf("created_by became %q, want NULL", noOwner.String)
 	}
 }
 
