@@ -22,7 +22,7 @@ const (
 
 var (
 	urlUserInfoPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
-	sigQueryPattern    = regexp.MustCompile(`(?i)((?:X-Amz-)?Signature=)[^&\s"]+`)
+	sigQueryPattern    = regexp.MustCompile(`(?i)((?:X-Amz-)?(?:Signature|Credential)=)[^&\s",]+`)
 )
 
 // ReadinessReport holds the result of probing SQLite and object storage.

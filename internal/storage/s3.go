@@ -253,7 +253,12 @@ func (s *S3) List(ctx context.Context, dir string) ([]string, error) {
 		}
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return nil, mapS3Err(err)
+			mapped := mapS3Err(err)
+			if errors.Is(mapped, ErrNotFound) {
+				// A listing never reports a missing key; a 404 means the bucket or a proxy in front of it is wrong.
+				return nil, fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
+			}
+			return nil, mapped
 		}
 		for _, obj := range page.Contents {
 			key := aws.ToString(obj.Key)
@@ -282,34 +287,49 @@ func (s *S3) Probe(ctx context.Context) error {
 		return nil
 	}
 	if isS3AuthErr(err) {
-		return fmt.Errorf("%w: %w", ErrAuth, err)
+		return fmt.Errorf("%w: %s", ErrAuth, s3Cause(err))
 	}
 	if isS3TimeoutErr(err) {
-		return fmt.Errorf("%w: %w", ErrTimeout, err)
+		return fmt.Errorf("%w: %s", ErrTimeout, s3Cause(err))
 	}
-	return fmt.Errorf("%w: %w", ErrUnreachable, err)
+	return fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
+}
+
+// s3Cause describes err by HTTP status and S3 error code only. The service's free-text message and
+// the SDK's request details are dropped because some S3-compatible services echo the Authorization header.
+func s3Cause(err error) string {
+	parts := []string{"s3 request failed"}
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) {
+		parts = append(parts, fmt.Sprintf("status %d", respErr.HTTPStatusCode()))
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() != "" {
+		parts = append(parts, "code "+apiErr.ErrorCode())
+	}
+	if len(parts) == 1 && isS3TimeoutErr(err) {
+		parts = append(parts, "timeout")
+	}
+	return strings.Join(parts, ", ")
 }
 
 func mapS3Err(err error) error {
 	if err == nil {
 		return nil
 	}
-	if isS3AuthErr(err) {
-		return fmt.Errorf("%w: %w", ErrAuth, err)
-	}
-	if isS3TimeoutErr(err) {
-		return fmt.Errorf("%w: %w", ErrTimeout, err)
-	}
-	if errors.Is(err, context.Canceled) {
+	switch {
+	case isS3AuthErr(err):
+		return fmt.Errorf("%w: %s", ErrAuth, s3Cause(err))
+	case isS3TimeoutErr(err):
+		return fmt.Errorf("%w: %s", ErrTimeout, s3Cause(err))
+	case errors.Is(err, context.Canceled):
 		return err
-	}
-	if isNoSuchBucketErr(err) {
-		return fmt.Errorf("%w: %w", ErrUnreachable, err)
-	}
-	if isS3ObjectNotFoundErr(err) {
+	case isNoSuchBucketErr(err):
+		return fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
+	case isS3ObjectNotFoundErr(err):
 		return ErrNotFound
 	}
-	return fmt.Errorf("%w: %w", ErrUnreachable, err)
+	return fmt.Errorf("%w: %s", ErrUnreachable, s3Cause(err))
 }
 
 func isS3AuthErr(err error) bool {
@@ -335,7 +355,11 @@ func isS3TimeoutErr(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "RequestTimeout"
 }
 
 func isNoSuchBucketErr(err error) bool {

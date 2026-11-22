@@ -298,3 +298,33 @@ func TestS3ErrorMappingAndProbe(t *testing.T) {
 		}
 	})
 }
+
+// A service that echoes the Authorization header in its error body must not leak it through the returned error,
+// and a 404 on a listing is a failure rather than an empty directory.
+func TestS3ErrorsDoNotEchoBackendText(t *testing.T) {
+	const leak = "AKIALEAKEDKEYID"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list-type") == "2" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `<Error><Code>SignatureDoesNotMatch</Code><Message>bad `+r.Header.Get("Authorization")+`</Message></Error>`)
+	}))
+	t.Cleanup(srv.Close)
+	store, err := NewS3(S3Options{Endpoint: srv.URL, Region: "us-east-1", Bucket: "b", AccessKeyID: leak, SecretAccessKey: "sk", PathStyle: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Open(context.Background(), "/xml/a.xml")
+	if !errors.Is(err, ErrAuth) || strings.Contains(err.Error(), leak) || strings.Contains(err.Error(), "Credential") {
+		t.Errorf("Open error = %v, want ErrAuth without the access key id", err)
+	}
+	if perr := store.Probe(context.Background()); !errors.Is(perr, ErrAuth) || strings.Contains(perr.Error(), leak) {
+		t.Errorf("Probe error = %v, want ErrAuth without the access key id", perr)
+	}
+	if _, lerr := store.List(context.Background(), "/xml"); !errors.Is(lerr, ErrUnreachable) {
+		t.Errorf("List on a 404 = %v, want ErrUnreachable", lerr)
+	}
+}
