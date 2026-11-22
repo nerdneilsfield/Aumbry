@@ -1,0 +1,89 @@
+# Aumbry behind Traefik v3 with automatic Let's Encrypt certificates (HTTP-01 challenge).
+# Single instance only: do not scale the aumbry service above 1.
+#
+# Usage:
+#   cp .env.example .env && chmod 600 .env     # then edit .env
+#   docker compose up -d
+#
+# Requirements: DNS for PUBLIC_HOST points at this host, and ports 80 and 443 are reachable
+# from the internet (port 80 is needed for the HTTP-01 challenge and the HTTPS redirect).
+#
+# Values containing "$" (the admin bcrypt hash) must be single-quoted in .env, for example
+# AUMBRY_ADMIN_PASSWORD_HASH='$2y$10$...'. Compose reads .env for ${...} substitution and
+# for env_file; an unquoted "$2y" is treated as a variable and corrupts the hash.
+# (If you set it in an `environment:` block here instead, double every "$" as "$$".)
+
+services:
+  traefik:
+    image: traefik:v3.7.19
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      # Only containers with traefik.enable=true are routed.
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=aumbry-proxy
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # HTTP -> HTTPS redirect for everything arriving on port 80.
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # Traefik v3 aborts a request that takes longer than 60 s to read (including the body).
+      # Aumbry accepts uploads up to 100 MiB, so allow slow uploads more time.
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
+      # Let's Encrypt via the HTTP-01 challenge on the "web" entrypoint.
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Even read-only, the Docker socket gives Traefik wide access to Docker.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks:
+      - aumbry-proxy
+
+  aumbry:
+    image: ghcr.io/nerdneilsfield/aumbry:latest   # pin a release tag for production
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AUMBRY_DATA_DIR: /data
+      # Trust X-Forwarded-For / X-Forwarded-Proto only from peers inside the proxy network.
+      # Traefik is the only other container on it, so its address is always inside this subnet.
+      # Without this, every visitor shares one rate-limit bucket (the proxy's address) and
+      # session cookies are issued without the Secure attribute.
+      AUMBRY_TRUSTED_PROXIES: ${PROXY_SUBNET:-172.31.250.0/24}
+    volumes:
+      - aumbry-data:/data
+    networks:
+      - aumbry-proxy
+    # No "ports:" on purpose: only Traefik can reach Aumbry.
+    # The image is distroless (no curl or wget), so there is no container-level healthcheck;
+    # Traefik probes /readyz instead (see the healthcheck labels below).
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.aumbry.rule=Host(`${PUBLIC_HOST:?set PUBLIC_HOST in .env}`)
+      - traefik.http.routers.aumbry.entrypoints=websecure
+      - traefik.http.routers.aumbry.tls.certresolver=le
+      - traefik.http.services.aumbry.loadbalancer.server.port=8080
+      # /readyz returns 503 when SQLite or WebDAV is unreachable. Traefik then stops routing
+      # to Aumbry and answers 503 itself. Use /healthz instead to keep Aumbry's own responses.
+      - traefik.http.services.aumbry.loadbalancer.healthcheck.path=/readyz
+      - traefik.http.services.aumbry.loadbalancer.healthcheck.interval=10s
+      - traefik.http.services.aumbry.loadbalancer.healthcheck.timeout=3s
+
+networks:
+  aumbry-proxy:
+    name: aumbry-proxy
+    ipam:
+      config:
+        # Fixed subnet so the same CIDR can be used for trusted_proxies.
+        # Change it (via PROXY_SUBNET in .env) if it overlaps a network you already use.
+        - subnet: ${PROXY_SUBNET:-172.31.250.0/24}
+
+volumes:
+  aumbry-data:
+  traefik-letsencrypt:

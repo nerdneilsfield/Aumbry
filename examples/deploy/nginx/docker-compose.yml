@@ -1,0 +1,62 @@
+# Aumbry behind nginx with TLS termination, using certificate files you already have.
+# Single instance only: do not scale the aumbry service above 1.
+#
+# Usage:
+#   cp .env.example .env && chmod 600 .env     # then edit .env
+#   edit aumbry.conf: set server_name (twice) to your host name
+#   put fullchain.pem and privkey.pem in ./certs/
+#   docker compose up -d
+#
+# Certificates: any PEM chain and key work. Obtain them with certbot or acme.sh, copy them
+# to ./certs/, and run `docker compose exec nginx nginx -s reload` after each renewal.
+#
+# Values containing "$" (the admin bcrypt hash) must be single-quoted in .env, for example
+# AUMBRY_ADMIN_PASSWORD_HASH='$2y$10$...'. An unquoted "$2y" is treated as a variable
+# and corrupts the hash. (In an `environment:` block, double every "$" as "$$".)
+
+services:
+  nginx:
+    image: nginx:1.30-alpine
+    restart: unless-stopped
+    depends_on:
+      - aumbry
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./aumbry.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks:
+      - aumbry-proxy
+
+  aumbry:
+    image: ghcr.io/nerdneilsfield/aumbry:latest   # pin a release tag for production
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AUMBRY_DATA_DIR: /data
+      # Trust X-Forwarded-For / X-Forwarded-Proto only from peers inside the proxy network.
+      # nginx is the only other container on it, so its address is always inside this subnet.
+      # Without this, every visitor shares one rate-limit bucket (the proxy's address) and
+      # session cookies are issued without the Secure attribute.
+      AUMBRY_TRUSTED_PROXIES: ${PROXY_SUBNET:-172.31.250.0/24}
+    volumes:
+      - aumbry-data:/data
+    networks:
+      - aumbry-proxy
+    # No "ports:" on purpose: only nginx can reach Aumbry.
+    # The image is distroless (no curl or wget), so no container healthcheck is defined.
+    # Probe GET /readyz from your monitoring instead.
+
+networks:
+  aumbry-proxy:
+    name: aumbry-proxy
+    ipam:
+      config:
+        # Fixed subnet so the same CIDR can be used for trusted_proxies.
+        # Change it (via PROXY_SUBNET in .env) if it overlaps a network you already use.
+        - subnet: ${PROXY_SUBNET:-172.31.250.0/24}
+
+volumes:
+  aumbry-data:

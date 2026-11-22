@@ -145,6 +145,74 @@
 1. 将代理服务器 IP 或网段写入 `trusted_proxies`（例如 `trusted_proxies = ["127.0.0.1", "10.0.0.0/8"]`，或环境变量 `AUMBRY_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8`）。服务端只信任直接 TCP 来源命中该列表的请求，并从右向左跳过可信代理跳数提取真实客户端 IP。
 2. 在代理端转发 `X-Forwarded-For`、`X-Forwarded-Proto` 与 `Host`，并将代理最大请求体调至不少于 `100 MiB`（例如 Nginx 设置 `client_max_body_size 100m;`），防止多图推送在代理层被截断。
 
+`examples/deploy/traefik`、`examples/deploy/nginx` 与 `examples/deploy/caddy` 目录提供了这三种代理的 Compose 示例，可直接复制使用。三个示例中，Aumbry 与代理位于同一个 Docker 网络，Aumbry 不发布任何端口。每个 Compose 文件把该网络固定为子网 `172.31.250.0/24`，并把同一个 CIDR 作为 `AUMBRY_TRUSTED_PROXIES` 传给 Aumbry，因此 Aumbry 只信任来自该网络内容器的转发头。如果宿主机已经使用该网段，在 `.env` 中设置 `PROXY_SUBNET` 即可换成其他网段，子网与 `AUMBRY_TRUSTED_PROXIES` 会同时跟随。不要在 `.env` 中设置 `AUMBRY_TRUSTED_PROXIES`，因为 Compose 文件中的值优先。
+
+不配置 `trusted_proxies` 时，Aumbry 看到的客户端地址只有代理的容器地址。此时所有访客共用同一个限流桶（登录限流每分钟 10 次由全体访客合计），签发的会话 Cookie 也不带 `Secure`。
+
+示例使用已发布的镜像 `ghcr.io/nerdneilsfield/aumbry:latest`，生产环境请固定为某个发布标签。示例只运行单个 Aumbry 实例；镜像中没有 `curl` 或 `wget`，所以 Aumbry 服务不定义容器 healthcheck。如果想用 `aumbry.toml` 代替 `.env` 配置 Aumbry，请像 `docker-compose.toml.yml` 那样挂载该文件，设置 `trusted_proxies = ["172.31.250.0/24"]`（或你的 `PROXY_SUBNET`），并删除 Compose 文件中的 `AUMBRY_TRUSTED_PROXIES` 一行，因为环境变量会覆盖 TOML 配置项。
+
+要确认 `trusted_proxies` 已生效，请通过代理登录并查看响应头。命令中的域名和密码需要替换：
+
+```sh
+curl -si -X POST https://aumbry.example.com/api/v1/admin/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<your-password>"}' | grep -i '^set-cookie'
+```
+
+`aumbry_admin` Cookie 必须带有 `Secure` 属性。如果没有，说明代理地址不在 `trusted_proxies` 内，或者代理没有发送 `X-Forwarded-Proto: https`。
+
+### 用 Traefik 部署
+
+相关文件是 `examples/deploy/traefik/docker-compose.yml` 与 `.env.example`。示例使用 Traefik v3，通过 HTTP-01 挑战申请 Let's Encrypt 证书，并把 HTTP 重定向到 HTTPS。
+
+1. 确认域名的 DNS 记录指向 Docker 主机，并且公网可以访问 `80` 与 `443` 端口。
+2. 在 `examples/deploy/traefik` 目录中复制模板并收紧权限：
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   ```
+
+3. 编辑 `.env`。设置 `PUBLIC_HOST`（域名）、`ACME_EMAIL`（Let's Encrypt 账号邮箱）以及 Aumbry 的配置项（`AUMBRY_ADMIN_PASSWORD_HASH`、`AUMBRY_API_TOKENS`、`AUMBRY_COOKIE_SECRET`、`AUMBRY_WEBDAV_URL`、`AUMBRY_WEBDAV_USER`、`AUMBRY_WEBDAV_PASS`）。bcrypt 哈希外面的单引号必须保留。
+4. 启动：
+
+   ```sh
+   docker compose up -d
+   ```
+
+Traefik 把证书保存在 `traefik-letsencrypt` 卷中。它每 10 s 探测一次 `GET /readyz`；SQLite 或 WebDAV 不可用期间，Traefik 停止向 Aumbry 转发请求，并自行返回 `503`。如果希望 WebDAV 故障时仍由 Aumbry 返回响应，把 healthcheck 路径标签改为 `/healthz`。示例还把入口点的 `readTimeout` 调到 `300s`：Traefik v3 默认的 `60s` 覆盖读取整个请求体的时间，会中断最大 100 MiB 的慢速上传。Traefik 会丢弃客户端自带的 `X-Forwarded-*` 头，所以 Aumbry 收到的只有 Traefik 设置的值。
+
+### 用 nginx 部署
+
+相关文件是 `examples/deploy/nginx/docker-compose.yml`、`aumbry.conf` 与 `.env.example`。nginx 使用你提供的证书文件终止 TLS，并把 HTTP 重定向到 HTTPS。示例不包含 certbot，请用 certbot 或 acme.sh 获取证书。
+
+1. 在 `examples/deploy/nginx` 目录中把 `.env.example` 复制为 `.env`，用 `chmod 600 .env` 收紧权限，并填写 Aumbry 的配置项。
+2. 在 `aumbry.conf` 中，把两处 `server_name` 里的 `aumbry.example.com` 都替换为你的域名。
+3. 把证书链和私钥分别以 `fullchain.pem` 和 `privkey.pem` 为文件名放入 `examples/deploy/nginx/certs/`。
+4. 启动：
+
+   ```sh
+   docker compose up -d
+   ```
+
+每次证书续期后，把新文件复制到 `certs/`，再执行 `docker compose exec nginx nginx -s reload`。
+
+`aumbry.conf` 设置了 `Host`、`X-Forwarded-For` 与 `X-Forwarded-Proto`。`client_max_body_size` 设为 `101m`（nginx 的 `m` 表示 MiB），比 Aumbry 拒绝的 100 MiB 请求体上限大 1 MiB，因此超限的推送会收到 Aumbry 返回的 JSON `413` 响应，而不是 nginx 的错误页。`proxy_send_timeout` 与 `proxy_read_timeout` 均为 `120s`。这两个超时只计算相邻两次写入或读取之间的间隔，而 Aumbry 在把 ingest 请求的对象上传到 WebDAV 之前不会返回任何响应。
+
+### 用 Caddy 部署
+
+相关文件是 `examples/deploy/caddy/docker-compose.yml`、`Caddyfile` 与 `.env.example`。这是最小配置：Caddy 自动申请并续期证书，并把 HTTP 重定向到 HTTPS，无需其他设置。
+
+1. 确认域名的 DNS 记录指向 Docker 主机，并且公网可以访问 `80` 与 `443` 端口（TCP；HTTP/3 另需 UDP）。
+2. 在 `examples/deploy/caddy` 目录中把 `.env.example` 复制为 `.env`，用 `chmod 600 .env` 收紧权限，并设置 `PUBLIC_HOST`、`ACME_EMAIL` 与 Aumbry 的配置项。Compose 会把前两项传给 Caddy 容器，`Caddyfile` 以 `{$PUBLIC_HOST}` 与 `{$ACME_EMAIL}` 读取它们。
+3. 启动：
+
+   ```sh
+   docker compose up -d
+   ```
+
+请保留 `caddy-data` 卷，证书保存在其中。Caddy 自己设置 `X-Forwarded-For`、`X-Forwarded-Proto` 与 `X-Forwarded-Host`，并忽略客户端发来的同名头。Caddy 默认不限制请求体大小，因此生效的是 Aumbry 自身的 100 MiB 上限。
+
 ## 备份、存储核验与维护命令
 
 下列子命令均与服务端主进程遵循同一配置加载顺序（`--config`、`AUMBRY_CONFIG`、`./aumbry.toml`、`/etc/aumbry/config.toml` 或纯环境变量）。

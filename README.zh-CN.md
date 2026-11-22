@@ -98,7 +98,7 @@ make build
 
 5. 在浏览器打开 `http://127.0.0.1:8080/admin`，使用管理员账号登录后点击 **新建根目录** 创建首个目录（记录其 12 位目录 ID，或随后通过 `aumbry dirs` 查看）。
 
-若使用 TOML 挂载部署容器（`docker-compose.toml.yml`）、二进制直接运行、在线备份或离线清理，请参阅[部署与运维指南](docs/zh-CN/deployment.md)。
+若使用 TOML 挂载部署容器（`docker-compose.toml.yml`）、二进制直接运行、在线备份或离线清理，请参阅[部署与运维指南](docs/zh-CN/deployment.md)。在 Traefik、nginx 或 Caddy 后运行的 Compose 示例位于 [`examples/deploy/`](examples/deploy/)。
 
 ## 常见用法
 
