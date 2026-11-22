@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>DriveFlow 精读：流匹配端到端世界模型</title>
+    <type>post</type>
+    <date>2026-11-20</date>
+    <summary>分阶段论文精读示例：多组 stages、测验 quiz、锚点跳转 next-steps 与分级摘要 tldr。</summary>
+    <source-agent>qi-read-paper</source-agent>
+    <canonical-url>https://arxiv.org/abs/2611.01234</canonical-url>
+    <tags>
+      <tag>Autonomous Driving</tag>
+      <tag>Paper Reading</tag>
+    </tags>
+  </meta>
+  <body>
+    <!-- 本示例演示多轮精读完整写法：<tldr>/<quiz>/<next-steps>/<section> 等均为按需可选。 -->
+    <!-- 若在第 1 轮仅写单个 <stage> 且内容较短，可省略 <tldr>，且切勿添加指向尚不存在的未来 <stage> 的 <next-steps>。 -->
+    <tldr title="全篇核心要点" placement="top">
+      <point>用一步流匹配替代 16 步扩散去噪，实现单卡 H100 30 FPS 多视角预测。</point>
+      <point>未来联合预测 3D 占用与轨迹速度场，避免纯 2D 生成丢失几何尺度。</point>
+      <verdict>结论：工程与延时收益明确，但闭环长尾泛化仍待 CARLA 以外实车检验。</verdict>
+    </tldr>
+
+    <stages id="rounds">
+      <stage id="r1" title="第一轮：动机与总体设计" level="入门">
+        <tldr>
+          <point>痛点在于扩散采样迭代步数过高，导致端到端闭环频率低于 10 Hz。</point>
+        </tldr>
+        <claim level="claim" source="§1 Introduction">
+          <![CDATA[作者主张直连噪声与目标隐状态的直线速度场可在单步内保持轨迹一致性。]]>
+        </claim>
+        <figure id="pipe" src="./imgs/world_model_arch.svg" alt="DriveFlow 总体管线" caption="图 1：多视角编码、流匹配世界模型与规划头"/>
+        <quiz id="q1">
+          <question>DriveFlow 降低采样延时的核心机制是什么？</question>
+          <option correct="true">将多步随机扩散替换为确定性流匹配速度场</option>
+          <option>将输入视频分辨率裁剪为单帧灰度图</option>
+          <option>完全移除规划头并改用规则避障</option>
+          <explain>流匹配沿直线路径学习速度场，使 1–2 步欧拉积分即可收敛（见 §3.1）。</explain>
+        </quiz>
+        <!-- 注：此处 #stage-r2 仅因下文已有 <stage id="r2"> 才合法；单 stage 的第 1 轮草稿勿放指向未来 stage 的 option（会 INVALID_TARGET） -->
+        <next-steps>
+          <option target="#stage-r2">继续：第二轮方法与证据</option>
+          <option target="#fig-pipe">跳到管线图</option>
+        </next-steps>
+      </stage>
+
+      <stage id="r2" title="第二轮：方法与定量证据" level="进阶">
+        <tldr>
+          <point>条件速度损失如式 (1) 所示，详见 [Smith et al.](#ref-smith24) 与 [公式 (1)](#eq-loss)。</point>
+        </tldr>
+        <equation id="loss" number="1" caption="条件流匹配目标函数"><![CDATA[\mathcal{L}_{\mathrm{CFM}} = \mathbb{E}_{t,x_0,x_1}\lVert v_\theta(x_t, t) - (x_1 - x_0)\rVert^2]]></equation>
+        <mermaid caption="图 2：训练与推理条件路径"><![CDATA[flowchart LR
+  V[多视角输入] --> E[时空编码器] --> F[流匹配场] --> P[规划输出]]]></mermaid>
+        <claim level="evidence" source="Table 2">
+          <![CDATA[nuScenes 验证集 L2 规划误差降幅为 **14%**，详见 [附录推导](#stages-deepdive)。]]>
+        </claim>
+        <next-steps>
+          <option target="#eq-loss">定位到公式 (1)</option>
+          <option target="#stages-deepdive">进入专题深读组</option>
+          <option target="#s-appendix">跳转到附录章节</option>
+        </next-steps>
+      </stage>
+    </stages>
+
+    <section id="appendix" title="附录：深读模块与术语表">
+      <stages id="deepdive" gated="false">
+        <stage id="dd1" title="专题：采样步数与误差权衡">
+          <md><![CDATA[将 Euler 步数从 1 增至 4 步，FVD 仅再下降 1.2%，而延迟翻倍；详见 [Smith et al.](#ref-smith24)。]]></md>
+        </stage>
+      </stages>
+
+      <glossary>
+        <term name="Flow Matching">通过回归条件速度场学习概率分布迁移的连续生成框架。</term>
+        <term name="NFE">模型前向求值次数（Number of Function Evaluations）。</term>
+      </glossary>
+
+      <references>
+        <ref id="smith24" title="Rectified Flow for Embodied World Models" authors="Smith et al." year="2024" venue="NeurIPS" doi="10.48550/arXiv.2611.01234" url="https://arxiv.org/abs/2611.01234" read-depth="full"/>
+      </references>
+    </section>
+  </body>
+</document>

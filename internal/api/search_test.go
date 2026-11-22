@@ -225,3 +225,133 @@ func TestAdminSearchFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchV11Projection(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dir := admin.createDir("", "V11Search", "")
+
+	v11XML := `<document version="1.1">
+  <meta>
+    <title>V11 Search Projection</title>
+    <type>report</type>
+    <date>2026-11-20</date>
+    <summary>Summary</summary>
+    <source-agent>agent</source-agent>
+  </meta>
+  <body>
+    <tldr><point>TldrBulletToken</point></tldr>
+    <claim level="evidence">ClaimSearchHit 推理加速</claim>
+    <equation id="eq1" caption="LossCaption"><![CDATA[\mathcal{EquationLatexOnly} \text{公式仅在公式内}]]></equation>
+    <mermaid caption="MermaidCap"><![CDATA[graph LR; HiddenMermaidNode-->B]]></mermaid>
+    <chart type="bar" caption="ChartCap"><![CDATA[{"categories":["HiddenChartCat"],"series":[{"name":"HiddenSeries","data":[1]}]}]]></chart>
+    <code-block file="model_v11.go" caption="CodeCap"><![CDATA[func HiddenCodeFunc() {}]]></code-block>
+    <quote author="AdaQuoteAuthor" source="Note G">Verba text</quote>
+    <checklist><check status="done" detail="CheckDetailHit">Verified</check></checklist>
+    <search-log><query source="arXiv">ti:world</query><excluded title="Old" reason="ExcludedReasonHit"/></search-log>
+    <stages id="g1"><stage id="s1" title="G1S1"><md>Group1</md></stage></stages>
+    <stages id="g2">
+      <stage id="s2a" title="A"><md>A</md></stage>
+      <stage id="s2b" title="B"><md>B</md></stage>
+      <stage id="s2c" title="C"><md>StageThreeSecondGroupHit</md></stage>
+    </stages>
+    <quiz id="q1">
+      <question>QuizQuestionHit</question>
+      <option correct="true">HiddenQuizChoiceToken</option>
+      <option>AnotherHiddenChoice</option>
+      <explain>QuizExplainHit</explain>
+    </quiz>
+    <next-steps><option target="#stage-s2c">HiddenNextBtnToken</option></next-steps>
+    <news-item title="NewsHeadlineHit" source="DailyWire">Headline<detail>NewsDetailHit 简报</detail></news-item>
+  </body>
+</document>`
+
+	admin.ingestOK(ingestReq{xml: v11XML, dirs: []string{dir}})
+	search := func(query string) []string {
+		return titles(t, admin.do("GET", q("/api/v1/dirs/"+dir+"/search", query), nil))
+	}
+
+	// #18 + #81 FTS (>=3 chars) hits
+	for _, hit := range []string{
+		"ClaimSearchHit",
+		"TldrBulletToken",
+		"StageThreeSecondGroupHit",
+		"ExcludedReasonHit",
+		"AdaQuoteAuthor",
+		"CheckDetailHit",
+		"QuizQuestionHit",
+		"QuizExplainHit",
+		"NewsDetailHit",
+		"model_v11.go",
+	} {
+		if got := search(hit); len(got) != 1 || got[0] != "V11 Search Projection" {
+			t.Errorf("search(%q) = %v, want 1 match", hit, got)
+		}
+	}
+
+	// #81 2-char Chinese LIKE search: hit in claim & detail, excluded in equation
+	if got := search("推理"); len(got) != 1 {
+		t.Errorf("2-char LIKE search(推理) = %v, want 1 match", got)
+	}
+	if got := search("简报"); len(got) != 1 {
+		t.Errorf("2-char LIKE search(简报) = %v, want 1 match", got)
+	}
+	if got := search("公式"); len(got) != 0 {
+		t.Errorf("2-char LIKE inside <equation> should miss: search(公式) = %v", got)
+	}
+
+	// #18 + #81 excluded fragments must return 0 matches
+	for _, miss := range []string{
+		"EquationLatexOnly",
+		"HiddenMermaidNode",
+		"HiddenChartCat",
+		"HiddenCodeFunc",
+		"HiddenQuizChoiceToken",
+		"HiddenNextBtnToken",
+	} {
+		if got := search(miss); len(got) != 0 {
+			t.Errorf("search(%q) = %v, want 0 matches", miss, got)
+		}
+	}
+}
+
+func TestDirSearchTypeAndTagFilter(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dirA := admin.createDir("", "DirA", "")
+	dirB := admin.createDir(dirA, "DirB", "pwB")
+
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Visible WM Post", typ: "post", date: "2026-11-20", tags: []string{"World Model"}}), dirs: []string{dirA}})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Locked WM Post", typ: "post", date: "2026-11-21", tags: []string{"World Model"}}), dirs: []string{dirB}})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Substring Archive Report", typ: "report", date: "2026-11-19", tags: []string{"World Model Archive"}}), dirs: []string{dirA}})
+	admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "Visible Vision Report", typ: "report", date: "2026-11-18", tags: []string{"Vision"}}), dirs: []string{dirA}})
+
+	v := e.anon()
+	// #45: locked subtree B stays excluded; exact tag match does not match "World Model Archive".
+	gotTag := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?tag="+url.QueryEscape("World Model"), nil))
+	if len(gotTag) != 1 || gotTag[0] != "Visible WM Post" {
+		t.Fatalf("visitor tag filter = %v, want [Visible WM Post]", gotTag)
+	}
+	// Empty q + type=post returns only visible posts.
+	gotType := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?type=post", nil))
+	if len(gotType) != 1 || gotType[0] != "Visible WM Post" {
+		t.Fatalf("visitor type=post = %v, want [Visible WM Post]", gotType)
+	}
+	// Combined tag + type.
+	gotBoth := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?type=report&tag=Vision", nil))
+	if len(gotBoth) != 1 || gotBoth[0] != "Visible Vision Report" {
+		t.Fatalf("visitor type+tag = %v, want [Visible Vision Report]", gotBoth)
+	}
+	// Invalid type returns 400.
+	if resp := v.do("GET", "/api/v1/dirs/"+dirA+"/search?type=memo", nil); resp.status != http.StatusBadRequest {
+		t.Errorf("invalid type = %d, want 400", resp.status)
+	}
+	// Unlocking B makes Locked WM Post visible under A's subtree tag filter.
+	if resp := v.do("POST", "/api/v1/dirs/"+dirB+"/unlock", map[string]string{"password": "pwB"}); resp.status != http.StatusOK {
+		t.Fatalf("unlock B = %d %s", resp.status, resp.body)
+	}
+	gotUnlocked := titles(t, v.do("GET", "/api/v1/dirs/"+dirA+"/search?tag="+url.QueryEscape("World Model"), nil))
+	if len(gotUnlocked) != 2 {
+		t.Fatalf("unlocked tag filter = %v, want 2 items", gotUnlocked)
+	}
+}

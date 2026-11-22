@@ -18,7 +18,8 @@ type Metadata struct {
 // Document is a parsed Aumbry document. It is only returned together with the
 // validation issues found while parsing it; callers must treat any issue as fatal.
 type Document struct {
-	Meta Metadata
+	Version string
+	Meta    Metadata
 	// Assets lists the normalized local paths referenced by <figure src>, in document order, without duplicates.
 	Assets []string
 

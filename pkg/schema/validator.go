@@ -45,8 +45,8 @@ var protocol = sync.OnceValue(func() *schematron.Schema {
 })
 
 const (
-	figureXPath = "/document/body/section/figure | /document/body/section/collapse/figure"
-	urlXPath    = "/document/meta/canonical-url | /document/body//*[self::paper-card or self::repo-card or self::source][@url]"
+	figureXPath = "//figure[@src]"
+	urlXPath    = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document[@version='1.1']/body//*[self::ref or self::quote or self::news-item][@url]"
 )
 
 var imageExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".svg"}
@@ -92,6 +92,7 @@ func Parse(input []byte, opts Options) (*Document, []ValidationError) {
 	d := &Document{input: input, tree: tree}
 	d.readMeta()
 	issues := protocolIssues(tree)
+	issues = append(issues, d.checkV11()...)
 	issues = append(issues, d.checkURLs()...)
 	issues = append(issues, d.checkFigures(opts)...)
 	slices.SortStableFunc(issues, func(a, b ValidationError) int { return cmp.Compare(a.Line, b.Line) })
@@ -113,33 +114,61 @@ func protocolIssues(tree *helium.Document) []ValidationError {
 			continue
 		}
 		code, rest, _ := strings.Cut(ve.Message, "|")
-		field, message, _ := strings.Cut(rest, "|")
-		issues = append(issues, ValidationError{Line: ve.Line, Code: code, Field: field, Message: strings.TrimSpace(message)})
+		field, rest, _ := strings.Cut(rest, "|")
+		message, hint, _ := strings.Cut(rest, "|")
+		issues = append(issues, ValidationError{
+			Line:    ve.Line,
+			Code:    code,
+			Field:   field,
+			Message: strings.TrimSpace(message),
+			Hint:    strings.TrimSpace(hint),
+		})
 	}
 	return issues
 }
 
-// checkURLs verifies that every URL is an absolute http(s) URL.
+// checkURLs verifies that every URL attribute and canonical-url element uses http(s).
 func (d *Document) checkURLs() []ValidationError {
 	var issues []ValidationError
 	for _, n := range find(d.tree, urlXPath) {
-		field, raw := n.Name(), text(n)
-		if el, ok := n.(*helium.Element); ok && field != "canonical-url" {
-			raw, _ = el.GetAttribute("url")
-			field += ".url"
-		} else {
-			field = "meta." + field
-		}
-		if raw == "" {
+		el, ok := n.(*helium.Element)
+		if !ok {
 			continue
 		}
-		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			issues = append(issues, ValidationError{
-				Line: n.Line(), Code: "INVALID_URL", Field: field, Message: "must be an http or https URL",
-			})
+		if el.Name() == "canonical-url" {
+			if issue := validateHTTPURL(el.Line(), "meta.canonical-url", text(el)); issue != nil {
+				issues = append(issues, *issue)
+			}
+			continue
+		}
+		attrs := []string{"url"}
+		if d.Version == "1.1" && el.Name() == "paper-card" {
+			attrs = []string{"url", "code-url"}
+		}
+		for _, attr := range attrs {
+			raw, has := el.GetAttribute(attr)
+			if !has {
+				continue
+			}
+			if issue := validateHTTPURL(el.Line(), el.Name()+"."+attr, raw); issue != nil {
+				issues = append(issues, *issue)
+			}
 		}
 	}
 	return issues
+}
+
+func validateHTTPURL(line int, field, raw string) *ValidationError {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return &ValidationError{
+			Line: line, Code: "INVALID_URL", Field: field, Message: "must be an http or https URL",
+		}
+	}
+	return nil
 }
 
 // checkFigures validates figure src values against the local filesystem rules and collects Assets.

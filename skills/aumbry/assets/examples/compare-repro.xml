@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.1">
+  <meta>
+    <title>对比与复现记录：DriveFlow vs Vista-v2</title>
+    <type>post</type>
+    <date>2026-11-20</date>
+    <summary>多方法对比与复现示例：含 cell tag、误差棒 chart、交互 steps、tabs、figure-group、diff 代码映射、checklist 与 search-log。</summary>
+    <source-agent>paper-reproduce</source-agent>
+    <tags>
+      <tag>Comparison</tag>
+      <tag>Reproducibility</tag>
+    </tags>
+  </meta>
+  <body>
+    <section id="protocol" title="一、复现目标、容差与横向对比">
+      <md><![CDATA[
+按复现规范，先约定目标指标与容差：**nuScenes 闭环帧率 ≥ 28 FPS（论文 30 FPS，容差 ±2 FPS）**；未报告字段严禁填 0 或估算。
+      ]]></md>
+
+      <compare-table caption="表 1：同硬件环境下的指标与证据分级对比">
+        <columns>
+          <col>方案</col>
+          <col>采样步数</col>
+          <col>实测帧率</col>
+          <col>多随机种子方差</col>
+          <col>图读峰值显存</col>
+        </columns>
+        <row>
+          <cell>DriveFlow (Paper)</cell>
+          <cell tag="claim">1 step</cell>
+          <cell tag="evidence">30 FPS</cell>
+          <cell tag="unreported">未报告</cell>
+          <cell tag="approx">≈ 42 GB</cell>
+        </row>
+        <row>
+          <cell>DriveFlow (Ours)</cell>
+          <cell tag="evidence">1 step</cell>
+          <cell tag="evidence">29.4 FPS</cell>
+          <cell tag="inference">±0.6 FPS (3 seeds)</cell>
+          <cell tag="na">不可比（batch=1）</cell>
+        </row>
+      </compare-table>
+
+      <metrics>
+        <metric label="3 种子均值帧率" value="29.4" unit="FPS" delta="-0.6 vs paper" trend="flat"/>
+        <metric label="复现判定" value="通过容差" trend="up"/>
+      </metrics>
+
+      <chart type="line" caption="图 1：不同输入视角数下的帧率均值与标准差（err 误差棒）"><![CDATA[{
+  "categories": ["2-cam", "4-cam", "6-cam"],
+  "series": [
+    { "name": "DriveFlow (Ours)", "data": [48.0, 36.2, 29.4], "err": [0.9, 0.7, 0.6] },
+    { "name": "Vista-v2", "data": [15.0, 11.2, 8.0], "err": [0.4, 0.3, 0.2] }
+  ],
+  "x_label": "相机数量",
+  "y_label": "FPS"
+}]]></chart>
+    </section>
+
+    <section id="impl" title="二、复现步骤与公式到代码映射">
+      <steps interactive="true">
+        <step title="准备 nuScenes 预处理与环境">
+          <md><![CDATA[固定 `CUDA 12.4` 与随机种子 `{0, 1, 2}`，对齐时间窗长度 `T=8`。]]></md>
+        </step>
+        <step title="验证前向管线与单步输出">
+          <figure src="./imgs/world_model_arch.svg" alt="Single-step pipeline verification"/>
+        </step>
+      </steps>
+
+      <figure-group cols="2" caption="复现管线多配置并排对照">
+        <figure src="./imgs/world_model_arch.svg" alt="Run A pipeline"/>
+        <figure src="./imgs/world_model_arch.svg" alt="Run B pipeline"/>
+      </figure-group>
+
+      <tabs>
+        <tab title="单步采样配置">
+          <equation id="obj" number="2" caption="离散欧拉更新步"><![CDATA[x_{k+1} = x_k + \Delta t \cdot v_\theta(x_k, t_k)]]></equation>
+        </tab>
+        <tab title="多步对照说明">
+          <md><![CDATA[4 步采样可略微改善长时序抖动，但无法满足实时预算。]]></md>
+        </tab>
+      </tabs>
+
+      <section title="关键实现差异（section 嵌套第 2 层）">
+        <code-block lang="diff" file="models/flow_sampler.py" lines="42-50" diff="true" highlight="2,4" eq="obj" caption="时间步离散化微调补丁"><![CDATA[@@ -42,4 +42,4 @@
+-t = torch.linspace(0, 1, steps)
++t = torch.linspace(1e-3, 1.0, steps)
+ x = x + dt * model(x, t)
+ return x]]></code-block>
+
+        <section title="核查清单与检索审计（section 嵌套第 3 层）">
+          <checklist>
+            <check status="done" detail="误差在 2 FPS 内">单卡 H100 FPS 指标核验</check>
+            <check status="todo" detail="待补测 5 个种子">扩展长尾天气切分</check>
+            <check status="blocked" detail="缺私有数据权重">实车闭环回放</check>
+            <check status="risk" detail="原文未注明 EMA 衰减">训练后期权重平滑</check>
+          </checklist>
+
+          <collapse title="展开查看对照文献检索日志">
+            <search-log date="2026-11-20">
+              <criteria>
+                <include>2025-2026 多视角自动驾驶世界模型，含代码或吞吐报告</include>
+                <exclude>纯仿真 2D 网格预测</exclude>
+              </criteria>
+              <query source="arXiv" date="2026-11-19" hits="24" kept="4">ti:"world model" AND "flow matching" AND driving</query>
+              <excluded title="GridSim-2D" reason="无多视角图像与 FPS 评测"/>
+              <gap>缺少统一 batch=1、FP16 与 INT8 跨卡基准</gap>
+              <stop>连续两轮检索无新增开源基线后停止</stop>
+            </search-log>
+          </collapse>
+        </section>
+      </section>
+    </section>
+  </body>
+</document>

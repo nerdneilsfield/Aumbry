@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aumbry.local/schemas/chart.json",
+  "$defs": {
+    "bar": {
+      "$ref": "#/$defs/cartesian"
+    },
+    "line": {
+      "$ref": "#/$defs/cartesian"
+    },
+    "cartesian": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categories", "series"],
+      "properties": {
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/cartesianSeries" }
+        },
+        "x_label": { "type": "string" },
+        "y_label": { "type": "string" }
+      }
+    },
+    "cartesianSeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "data"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number" }
+        },
+        "err": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "pie": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categories", "series"],
+      "properties": {
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "$ref": "#/$defs/pieSeries" }
+        },
+        "x_label": { "type": "string" },
+        "y_label": { "type": "string" }
+      }
+    },
+    "pieSeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "data"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number" }
+        },
+        "err": {
+          "not": {},
+          "description": "pie charts do not allow err"
+        }
+      }
+    },
+    "scatter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["series"],
+      "properties": {
+        "categories": {
+          "not": {},
+          "description": "scatter charts do not allow categories"
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/scatterSeries" }
+        },
+        "x_label": { "type": "string" },
+        "y_label": { "type": "string" }
+      }
+    },
+    "scatterSeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "data"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number" }
+          }
+        },
+        "err": {
+          "not": {},
+          "description": "scatter charts do not allow err"
+        }
+      }
+    }
+  }
+}

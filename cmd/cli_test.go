@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/nerdneilsfield/aumbry/internal/cliconfig"
+	"github.com/nerdneilsfield/aumbry/pkg/schema"
 )
 
 // runCLI executes the root command with an isolated config directory and clean AUMBRY_* env.
@@ -155,5 +157,62 @@ func TestValidateExit(t *testing.T) {
 	out, err = runCLI(t, "validate", bad, "--format", "text")
 	if !errors.As(err, &failed) || strings.Contains(out, "{") {
 		t.Errorf("text format: err=%v out=%q", err, out)
+	}
+}
+
+func TestValidateHintAndSchemaCommand(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+
+	// #44: INVALID_XML with bare & inside <md> prints CDATA hint in both json and text output.
+	bareAmp := filepath.Join(dir, "amp.xml")
+	xmlAmp := `<document version="1.1"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><md>A & B</md></body></document>`
+	if err := os.WriteFile(bareAmp, []byte(xmlAmp), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var failed *ValidationFailedError
+	outJSON, err := runCLI(t, "validate", bareAmp, "--format", "json")
+	if !errors.As(err, &failed) || !strings.Contains(outJSON, `"hint"`) || !strings.Contains(outJSON, "CDATA") {
+		t.Fatalf("json hint missing: err=%v out=%s", err, outJSON)
+	}
+	outText, err := runCLI(t, "validate", bareAmp, "--format", "text")
+	if !errors.As(err, &failed) || !strings.Contains(outText, "hint:") || !strings.Contains(outText, "CDATA") {
+		t.Fatalf("text hint missing: err=%v out=%s", err, outText)
+	}
+
+	// #16: <claim> in version="1.0" exits via ValidationFailedError with TAG_REQUIRES_1_1.
+	v10Claim := filepath.Join(dir, "claim10.xml")
+	xmlClaim := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><section title="S"><claim level="claim">x</claim></section></body></document>`
+	if err := os.WriteFile(v10Claim, []byte(xmlClaim), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outClaim, err := runCLI(t, "validate", v10Claim)
+	if !errors.As(err, &failed) || !strings.Contains(outClaim, `"TAG_REQUIRES_1_1"`) {
+		t.Fatalf("v1.0 claim validate: err=%v out=%s", err, outClaim)
+	}
+
+	// #25 + #69: aumbry schema --format json and md.
+	jsonOut := mustRun(t, "schema", "--format", "json")
+	var spec schema.ProtocolSpec
+	if err := json.Unmarshal([]byte(jsonOut), &spec); err != nil {
+		t.Fatalf("unmarshal schema json: %v\n%s", err, jsonOut)
+	}
+	if _, ok := spec.Versions["1.0"]; !ok {
+		t.Fatal("schema json missing 1.0")
+	}
+	if _, ok := spec.Versions["1.1"]; !ok {
+		t.Fatal("schema json missing 1.1")
+	}
+	if len(spec.Elements) == 0 || len(spec.ErrorCodes) == 0 {
+		t.Fatalf("schema json missing elements/error_codes: %+v", spec)
+	}
+
+	mdOut := mustRun(t, "schema")
+	if !strings.Contains(mdOut, "Version `1.0`") || !strings.Contains(mdOut, "Version `1.1`") || !strings.Contains(mdOut, "<tldr>") {
+		t.Fatalf("schema md unexpected output:\n%s", mdOut)
+	}
+
+	if _, err := runCLI(t, "schema", "--format", "xml"); err == nil {
+		t.Fatal("expected unsupported schema format error")
 	}
 }

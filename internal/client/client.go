@@ -14,12 +14,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	ingestPath     = "/api/v1/ingest"
+	agentDirsPath  = "/api/v1/agent/dirs"
+	agentItemsPath = "/api/v1/agent/items"
 	defaultTimeout = 2 * time.Minute
 	maxResponse    = 1 << 20
 )
@@ -39,7 +42,32 @@ type PushRequest struct {
 	Dirs        []string
 	ItemID      string
 	ExternalKey string
+	Draft       bool
+	CreateOnly  bool
 	// HTTPClient is optional; the default has a two-minute overall timeout.
+	HTTPClient *http.Client
+}
+
+// AgentDir mirrors one entry returned by GET /api/v1/agent/dirs.
+type AgentDir struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Path        string  `json:"path"`
+	ParentID    *string `json:"parent_id"`
+	HasPassword bool    `json:"has_password"`
+	Protected   bool    `json:"protected"`
+	ItemCount   int     `json:"item_count"`
+}
+
+// ListItemsRequest filters GET /api/v1/agent/items.
+type ListItemsRequest struct {
+	Server     string
+	Token      string
+	Key        string
+	Query      string
+	Dir        string
+	Limit      int
+	Offset     int
 	HTTPClient *http.Client
 }
 
@@ -101,6 +129,111 @@ func Push(ctx context.Context, req PushRequest) ([]byte, error) {
 	}
 }
 
+// FullURL resolves relURL against the configured server base URL.
+func FullURL(server, relURL string) string {
+	base, err := url.Parse(strings.TrimSpace(server))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return relURL
+	}
+	ref, err := url.Parse(relURL)
+	if err != nil {
+		return relURL
+	}
+	base.Path = strings.TrimSuffix(base.Path, "/") + "/" + strings.TrimPrefix(ref.Path, "/")
+	base.RawQuery = ref.RawQuery
+	base.Fragment = ref.Fragment
+	return base.String()
+}
+
+// ListDirs calls GET /api/v1/agent/dirs and returns the parsed slice plus raw JSON.
+func ListDirs(ctx context.Context, server, token string, httpClient *http.Client) ([]AgentDir, []byte, error) {
+	endpoint, err := endpointURL(server, agentDirsPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw, err := doJSON(ctx, http.MethodGet, endpoint, token, httpClient)
+	if err != nil {
+		return nil, nil, err
+	}
+	var dirs []AgentDir
+	if err := json.Unmarshal(raw, &dirs); err != nil {
+		return nil, nil, fmt.Errorf("decode dirs response: %w", err)
+	}
+	return dirs, raw, nil
+}
+
+// ListItems calls GET /api/v1/agent/items and returns the raw JSON body.
+func ListItems(ctx context.Context, req ListItemsRequest) ([]byte, error) {
+	endpoint, err := endpointURL(req.Server, agentItemsPath)
+	if err != nil {
+		return nil, err
+	}
+	u, _ := url.Parse(endpoint)
+	q := u.Query()
+	if req.Key != "" {
+		q.Set("key", req.Key)
+	}
+	if req.Query != "" {
+		q.Set("q", req.Query)
+	}
+	if req.Dir != "" {
+		q.Set("dir", req.Dir)
+	}
+	if req.Limit > 0 {
+		q.Set("limit", strconv.Itoa(req.Limit))
+	}
+	if req.Offset > 0 {
+		q.Set("offset", strconv.Itoa(req.Offset))
+	}
+	u.RawQuery = q.Encode()
+	return doJSON(ctx, http.MethodGet, u.String(), req.Token, req.HTTPClient)
+}
+
+// Unpublish calls DELETE /api/v1/agent/items/{id}/mounts.
+func Unpublish(ctx context.Context, server, token, id string, httpClient *http.Client) error {
+	endpoint, err := endpointURL(server, agentItemsPath, id, "mounts")
+	if err != nil {
+		return err
+	}
+	_, err = doJSON(ctx, http.MethodDelete, endpoint, token, httpClient)
+	return err
+}
+
+// DeleteItem calls DELETE /api/v1/agent/items/{id}.
+func DeleteItem(ctx context.Context, server, token, id string, httpClient *http.Client) error {
+	endpoint, err := endpointURL(server, agentItemsPath, id)
+	if err != nil {
+		return err
+	}
+	_, err = doJSON(ctx, http.MethodDelete, endpoint, token, httpClient)
+	return err
+}
+
+func doJSON(ctx context.Context, method, endpoint, token string, httpClient *http.Client) ([]byte, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Accept", "application/json")
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: defaultTimeout}
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: %w", method, endpoint, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
+	if err != nil {
+		return nil, fmt.Errorf("read server response: %w", err)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return data, nil
+	}
+	return nil, newAPIError(resp.StatusCode, data)
+}
+
 // Indent pretty-prints a JSON document, returning it unchanged if it is not valid JSON.
 func Indent(data []byte) []byte {
 	var out bytes.Buffer
@@ -112,11 +245,15 @@ func Indent(data []byte) []byte {
 }
 
 func ingestURL(server string) (string, error) {
+	return endpointURL(server, ingestPath)
+}
+
+func endpointURL(server string, elem ...string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(server))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return "", fmt.Errorf("invalid server URL %q: expected http(s)://host", server)
 	}
-	return parsed.JoinPath(ingestPath).String(), nil
+	return parsed.JoinPath(elem...).String(), nil
 }
 
 func newAPIError(status int, data []byte) *APIError {
@@ -157,6 +294,16 @@ func writeForm(form *multipart.Writer, req PushRequest) error {
 			continue
 		}
 		if err := form.WriteField(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	if req.Draft {
+		if err := form.WriteField("draft", "1"); err != nil {
+			return err
+		}
+	}
+	if req.CreateOnly {
+		if err := form.WriteField("create_only", "1"); err != nil {
 			return err
 		}
 	}

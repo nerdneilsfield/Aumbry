@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/nerdneilsfield/aumbry/internal/api"
 	"github.com/nerdneilsfield/aumbry/internal/auth"
@@ -21,41 +24,119 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
-	if err := run(logger); err != nil {
-		logger.Error("server stopped", "error", err)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	cmd := newRootCmd(logger)
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.Load()
+func newRootCmd(logger *slog.Logger) *cobra.Command {
+	var configPath string
+	root := &cobra.Command{
+		Use:           "aumbry-server",
+		Short:         "Run and maintain the Aumbry server",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runServer(cmd.Context(), configPath, logger)
+		},
+	}
+	root.PersistentFlags().StringVar(&configPath, "config", "", "path to TOML configuration file")
+	root.AddCommand(
+		newCheckConfigCmd(&configPath),
+		newBackupCmd(&configPath),
+		newVerifyStorageCmd(&configPath),
+		newGCCmd(&configPath),
+	)
+	return root
+}
+
+func newCheckConfigCmd(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "check-config",
+		Short: "Validate server configuration and print masked effective settings",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			res, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			for _, w := range res.Warnings {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w)
+			}
+			out, err := res.Config.FormatMasked()
+			if err != nil {
+				return err
+			}
+			_, err = io.WriteString(cmd.OutOrStdout(), out)
+			return err
+		},
+	}
+}
+
+func runServer(ctx context.Context, configPath string, logger *slog.Logger) error {
+	res, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
+	cfg := res.Config
+	if res.FilePath != "" {
+		logger.Info("loaded configuration", "source", res.FilePath)
+	} else {
+		logger.Info("loaded configuration", "source", "environment")
+	}
+	for _, w := range res.Warnings {
+		logger.Warn("configuration warning", "warning", w)
+	}
+
 	sessions, err := auth.New(auth.Settings{
-		AdminUser:         cfg.AdminUser,
-		AdminPasswordHash: cfg.AdminPasswordHash,
+		AdminUser:         cfg.Admin.User,
+		AdminPasswordHash: cfg.Admin.PasswordHash,
 		APITokens:         cfg.APITokens,
 		CookieSecret:      cfg.CookieSecret,
 	})
 	if err != nil {
 		return err
 	}
-	store, err := storage.NewWebDAV(cfg.WebDAVURL, cfg.WebDAVUser, cfg.WebDAVPassword)
+	store, err := storage.NewWebDAV(cfg.WebDAV.URL, cfg.WebDAV.User, cfg.WebDAV.Password)
 	if err != nil {
 		return fmt.Errorf("configure WebDAV storage: %w", err)
 	}
+	lock, err := db.TryLockDataDir(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil {
+			logger.Error("release data directory lock", "error", closeErr)
+		}
+	}()
 	database, err := db.Open(cfg.DataDir)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := database.Close(); err != nil {
-			logger.Error("close database", "error", err)
+		if closeErr := database.Close(); closeErr != nil {
+			logger.Error("close database", "error", closeErr)
 		}
 	}()
 
-	router, err := api.NewRouter(database, store, sessions, logger)
+	ready := api.NewReadinessChecker(database, store, logger, 0, 0)
+	if rep := ready.Check(ctx); rep.Ready {
+		logger.Info("startup dependency check passed", "sqlite", rep.Checks["sqlite"], "webdav", rep.Checks["webdav"])
+	} else {
+		logger.Warn("startup dependency check degraded", "sqlite", rep.Checks["sqlite"], "webdav", rep.Checks["webdav"])
+	}
+
+	router, err := api.NewRouter(database, store, sessions, logger, api.RouterOptions{
+		TrustedProxies: cfg.TrustedProxyPrefixes,
+	})
 	if err != nil {
 		return err
 	}
@@ -64,8 +145,6 @@ func run(logger *slog.Logger) error {
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -82,9 +161,6 @@ func run(logger *slog.Logger) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
-		return nil
+		return server.Shutdown(shutdownCtx)
 	}
 }

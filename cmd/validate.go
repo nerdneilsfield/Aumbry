@@ -52,6 +52,11 @@ func writeValidation(w io.Writer, result schema.ValidationResult, format string)
 		if _, err := fmt.Fprintf(w, "%s: %s: %s\n", issue.Code, issue.Field, issue.Message); err != nil {
 			return err
 		}
+		if issue.Hint != "" {
+			if _, err := fmt.Fprintf(w, "  hint: %s\n", issue.Hint); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

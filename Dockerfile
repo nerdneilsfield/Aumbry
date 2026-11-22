@@ -21,6 +21,5 @@ COPY --from=build --chown=65532:65532 /data /data
 COPY --from=build /out/aumbry /usr/local/bin/aumbry
 COPY --from=build /out/aumbry-server /usr/local/bin/aumbry-server
 USER nonroot:nonroot
-ENV AUMBRY_LISTEN_ADDR=:8080 AUMBRY_DATA_DIR=/data
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/aumbry-server"]

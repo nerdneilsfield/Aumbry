@@ -2,10 +2,14 @@ package api
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/nerdneilsfield/aumbry/internal/auth"
 )
 
 func TestIngestRequiresToken(t *testing.T) {
@@ -295,5 +299,232 @@ func TestContentIsServedSandboxed(t *testing.T) {
 	resp := admin.do("GET", "/api/v1/items/"+id+"/content", nil)
 	if got := resp.header.Get("Content-Security-Policy"); got != "default-src 'none'; sandbox" {
 		t.Errorf("Content-Security-Policy = %q, want default-src 'none'; sandbox", got)
+	}
+}
+
+func TestV11IngestFigureRewriteAndV10Gating(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	dir := admin.createDir("", "V11", "")
+
+	sum := sha256.Sum256([]byte(testSVG))
+	wantAssetURL := "/api/v1/assets/" + hex.EncodeToString(sum[:])
+
+	// #31: <figure> inside <step>, <tab>, and <figure-group> all rewrite on ingest.
+	v11XML := `<document version="1.1">
+  <meta><title>V11 Figs</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta>
+  <body>
+    <steps><step title="S1"><figure src="./s.svg"/></step></steps>
+    <tabs><tab title="T1"><figure src="./t.svg"/></tab><tab title="T2"><md>ok</md></tab></tabs>
+    <figure-group cols="2"><figure src="./g1.svg"/><figure src="./g2.svg"/></figure-group>
+  </body>
+</document>`
+	resp := admin.ingest(ingestReq{
+		xml: v11XML,
+		assets: []figure{
+			{src: "./s.svg", name: "s.svg", data: []byte(testSVG)},
+			{src: "./t.svg", name: "t.svg", data: []byte(testSVG)},
+			{src: "./g1.svg", name: "g1.svg", data: []byte(testSVG)},
+			{src: "./g2.svg", name: "g2.svg", data: []byte(testSVG)},
+		},
+		dirs: []string{dir},
+	})
+	if resp.status != http.StatusCreated {
+		t.Fatalf("ingest v1.1 figures: %d %s", resp.status, resp.body)
+	}
+	id := resp.json()["id"].(string)
+	content := string(admin.do("GET", "/api/v1/items/"+id+"/content", nil).body)
+	if gotCount := strings.Count(content, wantAssetURL); gotCount != 4 {
+		t.Fatalf("expected 4 rewritten %s paths, got %d\n%s", wantAssetURL, gotCount, content)
+	}
+
+	// #79 runnable part: re-uploading v1.0 document using <figure alt="..."> returns 422 TAG_REQUIRES_1_1 with hint.
+	badV10 := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><section title="S"><figure src="a.svg" alt="Alt"/></section></body></document>`
+	rej := admin.ingest(ingestReq{
+		xml:    badV10,
+		assets: []figure{{src: "a.svg", name: "a.svg", data: []byte(testSVG)}},
+	})
+	if rej.status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 on v1.0 with <figure alt>, got %d %s", rej.status, rej.body)
+	}
+	errs := rej.json()["errors"].([]any)
+	first := errs[0].(map[string]any)
+	if first["code"] != "TAG_REQUIRES_1_1" || first["hint"] == nil || first["hint"] == "" {
+		t.Fatalf("expected TAG_REQUIRES_1_1 with hint, got %v", first)
+	}
+}
+
+func TestIngestExternalKeyValidationDraftCreateOnlyAndCreatedBy(t *testing.T) {
+	e := newEnv(t)
+	admin := e.admin()
+	anon := e.anon()
+	dir := admin.createDir("", "Public", "")
+
+	// external_key validation (whitespace-only, >200 runes, control char -> 400 invalid_request).
+	for name, val := range map[string]string{
+		"whitespace only": "   \t  ",
+		"too long":        strings.Repeat("x", 201),
+		"control char":    "bad\x07key",
+	} {
+		k := val
+		resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "BadKey"}), rawKey: &k})
+		if resp.status != http.StatusBadRequest || resp.json()["error"] != "invalid_request" {
+			t.Errorf("%s: got %d %s, want 400 invalid_request", name, resp.status, resp.body)
+		}
+	}
+	// Exact 200 runes with surrounding spaces succeeds.
+	paddedKey := "  " + strings.Repeat("k", 200) + "  "
+	okResp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "MaxKey"}), rawKey: &paddedKey})
+	if okResp.status != http.StatusCreated {
+		t.Fatalf("200-rune padded key = %d %s", okResp.status, okResp.body)
+	}
+
+	// #22 & #42: draft lifecycle.
+	draftResp := admin.ingest(ingestReq{
+		xml:   xmlDoc(docOpts{title: "Draft R1", md: "round1"}),
+		key:   "paper:draft1",
+		draft: true,
+	})
+	if draftResp.status != http.StatusCreated {
+		t.Fatalf("create draft = %d %s", draftResp.status, draftResp.body)
+	}
+	dj := draftResp.json()
+	draftID := dj["id"].(string)
+	if dj["draft"] != true || dj["published"] != false || len(dj["dirs"].([]any)) != 0 || dj["created"] != true {
+		t.Fatalf("unexpected draft response: %v", dj)
+	}
+	if st := anon.do("GET", "/api/v1/items/"+draftID, nil).status; st != http.StatusForbidden {
+		t.Errorf("visitor GET draft item = %d, want 403", st)
+	}
+	if st := admin.do("GET", "/api/v1/items/"+draftID, nil).status; st != http.StatusOK {
+		t.Errorf("admin GET draft item = %d, want 200", st)
+	}
+
+	// Repeated draft update on unpublished item succeeds.
+	draftUpd := admin.ingest(ingestReq{
+		xml:   xmlDoc(docOpts{title: "Draft R2", md: "round2"}),
+		key:   "paper:draft1",
+		draft: true,
+	})
+	if draftUpd.status != http.StatusOK || draftUpd.json()["id"] != draftID || draftUpd.json()["published"] != false {
+		t.Fatalf("update draft = %d %s", draftUpd.status, draftUpd.body)
+	}
+
+	// Draft + dirs conflicts -> 400 invalid_request.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "X"}), dirs: []string{dir}, draft: true}); resp.status != http.StatusBadRequest {
+		t.Errorf("draft+dirs = %d %s, want 400", resp.status, resp.body)
+	}
+
+	// Publish draft with --dir keeps same ID and becomes visitor-visible.
+	pubResp := admin.ingest(ingestReq{
+		xml:  xmlDoc(docOpts{title: "Published R2", md: "round2"}),
+		key:  "paper:draft1",
+		dirs: []string{dir},
+	})
+	if pubResp.status != http.StatusOK {
+		t.Fatalf("publish draft = %d %s", pubResp.status, pubResp.body)
+	}
+	pj := pubResp.json()
+	if pj["id"] != draftID || pj["published"] != true || pj["draft"] != false {
+		t.Fatalf("publish response = %v", pj)
+	}
+	if st := anon.do("GET", "/api/v1/items/"+draftID, nil).status; st != http.StatusOK {
+		t.Errorf("visitor GET published item = %d, want 200", st)
+	}
+
+	// #42: draft against published item -> 409 already_published; content & mounts & store untouched.
+	beforeXML := string(admin.do("GET", "/api/v1/items/"+draftID+"/content", nil).body)
+	beforeObjCount := e.store.count("/xml/" + draftID)
+	rejDraft := admin.ingest(ingestReq{
+		xml:   xmlDoc(docOpts{title: "Overwrite Attempt", md: "secret"}),
+		key:   "paper:draft1",
+		draft: true,
+	})
+	if rejDraft.status != http.StatusConflict || rejDraft.json()["error"] != "already_published" {
+		t.Fatalf("draft on published = %d %s, want 409 already_published", rejDraft.status, rejDraft.body)
+	}
+	if afterXML := string(admin.do("GET", "/api/v1/items/"+draftID+"/content", nil).body); afterXML != beforeXML {
+		t.Errorf("published content changed after 409 already_published")
+	}
+	if e.store.count("/xml/"+draftID) != beforeObjCount {
+		t.Errorf("storage objects changed after 409 already_published")
+	}
+
+	// #41: create_only conflicts & parameter checks.
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "X"}), itemID: draftID, createOnly: true}); resp.status != http.StatusBadRequest {
+		t.Errorf("create_only+item_id = %d %s, want 400", resp.status, resp.body)
+	}
+	if resp := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Dup"}), key: "paper:draft1", createOnly: true}); resp.status != http.StatusConflict || resp.json()["error"] != "key_exists" {
+		t.Errorf("create_only existing key = %d %s, want 409 key_exists", resp.status, resp.body)
+	}
+
+	// #41 concurrent create_only race decided atomically by UNIQUE constraint.
+	var readyWG, releaseWG sync.WaitGroup
+	readyWG.Add(2)
+	releaseWG.Add(1)
+	var barrierOnce sync.Once
+	e.store.onPut = func() {
+		readyWG.Done()
+		readyWG.Wait()
+		barrierOnce.Do(func() { releaseWG.Done() })
+		releaseWG.Wait()
+	}
+	results := make(chan response, 2)
+	for i := range 2 {
+		go func(idx int) {
+			results <- e.anon().ingest(ingestReq{
+				xml:        xmlDoc(docOpts{title: "Race", md: string(rune('A' + idx))}),
+				key:        "concurrent:key",
+				createOnly: true,
+			})
+		}(i)
+	}
+	r1, r2 := <-results, <-results
+	e.store.onPut = nil
+	if r1.status > r2.status {
+		r1, r2 = r2, r1
+	}
+	if r1.status != http.StatusCreated || r2.status != http.StatusConflict || r2.json()["error"] != "key_exists" {
+		t.Fatalf("concurrent create_only = (%d %s) and (%d %s), want 201 and 409 key_exists", r1.status, r1.body, r2.status, r2.body)
+	}
+
+	// #39a: created_by stores full SHA-256 hex digest (no plaintext) and preserves creator on update.
+	tokAID := admin.ingestOK(ingestReq{xml: xmlDoc(docOpts{title: "OwnedByA"}), key: "own:1"})
+	var createdBy string
+	if err := e.db.Get(&createdBy, `SELECT created_by FROM items WHERE id = ?`, tokAID); err != nil {
+		t.Fatal(err)
+	}
+	if createdBy != auth.TokenDigest(apiToken) || strings.Contains(createdBy, apiToken) {
+		t.Fatalf("created_by = %q, want SHA-256 digest %q without plaintext", createdBy, auth.TokenDigest(apiToken))
+	}
+	// Updating with second token ("other") preserves original created_by.
+	updResp := admin.ingest(ingestReq{token: "other", xml: xmlDoc(docOpts{title: "UpdatedByOther"}), key: "own:1"})
+	if updResp.status != http.StatusOK {
+		t.Fatalf("update by other token = %d %s", updResp.status, updResp.body)
+	}
+	var createdByAfter string
+	if err := e.db.Get(&createdByAfter, `SELECT created_by FROM items WHERE id = ?`, tokAID); err != nil {
+		t.Fatal(err)
+	}
+	if createdByAfter != createdBy {
+		t.Fatalf("created_by overwritten on update: %q != %q", createdByAfter, createdBy)
+	}
+
+	// #56 unit level: legacy NULL created_by remains NULL after update via external_key.
+	if _, err := e.db.Exec(`INSERT INTO items
+		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
+		VALUES ('legacy000099', 'legacy:staynull', 'report', 'Legacy', '2026-11-20', 'S', '[]', 'a', '', '[]', '/xml/l.xml', 'legacy', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	updLegacy := admin.ingest(ingestReq{xml: xmlDoc(docOpts{title: "Legacy Updated"}), key: "legacy:staynull"})
+	if updLegacy.status != http.StatusOK {
+		t.Fatalf("update legacy = %d %s", updLegacy.status, updLegacy.body)
+	}
+	var legacyOwner sql.NullString
+	if err := e.db.Get(&legacyOwner, `SELECT created_by FROM items WHERE id = 'legacy000099'`); err != nil {
+		t.Fatal(err)
+	}
+	if legacyOwner.Valid {
+		t.Fatalf("legacy created_by became %q, want NULL", legacyOwner.String)
 	}
 }

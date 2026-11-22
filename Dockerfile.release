@@ -1,0 +1,12 @@
+FROM --platform=$BUILDPLATFORM gcr.io/distroless/static-debian13:debug AS init
+RUN ["/busybox/sh", "-c", "mkdir -p /data && chown 65532:65532 /data"]
+
+FROM gcr.io/distroless/static-debian13:nonroot
+ARG TARGETPLATFORM
+WORKDIR /app
+COPY --from=init --chown=65532:65532 /data /data
+COPY ${TARGETPLATFORM}/aumbry /usr/local/bin/aumbry
+COPY ${TARGETPLATFORM}/aumbry-server /usr/local/bin/aumbry-server
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/aumbry-server"]

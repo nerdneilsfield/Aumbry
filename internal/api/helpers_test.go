@@ -13,10 +13,14 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"net/url"
+	"path"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
@@ -33,11 +37,18 @@ const (
 
 // memStore is an in-memory storage.Store.
 type memStore struct {
-	mu    sync.Mutex
-	files map[string][]byte
+	mu         sync.Mutex
+	files      map[string][]byte
+	probeErr   error
+	probeCalls atomic.Int32
+	onProbe    func()
+	onPut      func()
 }
 
 func (m *memStore) Put(_ context.Context, name string, body io.Reader) error {
+	if m.onPut != nil {
+		m.onPut()
+	}
 	data, err := io.ReadAll(body)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -69,6 +80,36 @@ func (m *memStore) Delete(_ context.Context, name string) error {
 	return nil
 }
 
+func (m *memStore) List(_ context.Context, dir string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := strings.TrimSuffix(path.Clean("/"+dir), "/") + "/"
+	var out []string
+	for name := range m.files {
+		if strings.HasPrefix(name, prefix) && !strings.Contains(strings.TrimPrefix(name, prefix), "/") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (m *memStore) Probe(_ context.Context) error {
+	m.probeCalls.Add(1)
+	if m.onProbe != nil {
+		m.onProbe()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.probeErr
+}
+
+func (m *memStore) setProbeErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.probeErr = err
+}
+
 func (m *memStore) count(prefix string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -96,12 +137,19 @@ func (m *memStore) has(prefix, content string) bool {
 type env struct {
 	t      *testing.T
 	srv    *httptest.Server
+	router http.Handler
+	db     *sqlx.DB
 	store  *memStore
 	secret string
 	dir    string // scratch slot for tests
 }
 
 func newEnv(t *testing.T) *env {
+	t.Helper()
+	return newEnvWithOptions(t, RouterOptions{}, nil)
+}
+
+func newEnvWithOptions(t *testing.T, opts RouterOptions, logger *slog.Logger) *env {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -119,13 +167,16 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	store := &memStore{files: map[string][]byte{}}
-	router, err := NewRouter(database, store, sessions, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	router, err := NewRouter(database, store, sessions, logger, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, store: store, secret: cookieSecret}
+	return &env{t: t, srv: srv, router: router, db: database, store: store, secret: cookieSecret}
 }
 
 // client is an HTTP client with its own cookie jar, i.e. one browser.
@@ -226,14 +277,17 @@ type figure struct {
 }
 
 type ingestReq struct {
-	token    string // empty means the valid token; "-" sends none
-	xml      string
-	assets   []figure
-	dirs     []string
-	itemID   string
-	key      string
-	rawSrcs  []string // overrides asset_srcs when non-nil
-	commaDir bool
+	token      string // empty means the valid token; "-" sends none
+	xml        string
+	assets     []figure
+	dirs       []string
+	itemID     string
+	key        string
+	rawKey     *string
+	draft      bool
+	createOnly bool
+	rawSrcs    []string // overrides asset_srcs when non-nil
+	commaDir   bool
 }
 
 func (c *client) ingest(in ingestReq) response {
@@ -267,8 +321,16 @@ func (c *client) ingest(in ingestReq) response {
 	if in.itemID != "" {
 		_ = mw.WriteField("item_id", in.itemID)
 	}
-	if in.key != "" {
+	if in.rawKey != nil {
+		_ = mw.WriteField("external_key", *in.rawKey)
+	} else if in.key != "" {
 		_ = mw.WriteField("external_key", in.key)
+	}
+	if in.draft {
+		_ = mw.WriteField("draft", "1")
+	}
+	if in.createOnly {
+		_ = mw.WriteField("create_only", "1")
 	}
 	_ = mw.Close()
 	req, _ := http.NewRequest("POST", c.e.srv.URL+"/api/v1/ingest", &buf)
