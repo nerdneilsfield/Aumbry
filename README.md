@@ -11,7 +11,7 @@ Aumbry is a self-hosted hub for publishing, organizing, and searching structured
 
 - **Single server binary with embedded web reader**: `aumbry-server` bundles the web reader and admin console in one binary, serving `/d/<id>`, `/r/<id>`, `/p/<id>`, and `/admin` directly.
 - **Shared XML protocol and offline validator**: The `aumbry` CLI and `aumbry-server` enforce the same XML schema rules (`version="1.0"` and `"1.1"`), rejecting unknown tags, invalid charts, oversized blocks, and symlink asset escapes before upload.
-- **SQLite metadata and full-text search**: Metadata, directory mounts, and the full-text search index live in `<data_dir>/aumbry.db` (SQLite WAL mode), supporting full-text queries (3+ characters) and substring matching for shorter terms.
+- **SQLite metadata and full-text search**: Metadata, directory mounts, and the full-text search index live in `<data_dir>/aumbry.db` (SQLite WAL mode), supporting Chinese search from two characters up (single characters work too), full-text queries for other terms of 3+ characters, and substring matching for shorter terms.
 - **Directory-level access control and private object storage**: Unmounted items return HTTP `403` to visitors, directories inherit ancestor passwords across the tree, and XML/image objects stored on WebDAV are served only through authenticated server handlers with `Content-Security-Policy: default-src 'none'; sandbox`.
 - **Bundled Agent Skill**: [skills/aumbry/](skills/aumbry/SKILL.md) ships inside the repository and release archives so coding and research agents can discover directories, validate reports offline, save drafts, and publish updates idempotently.
 

@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/jmoiron/sqlx"
+
+	"github.com/nerdneilsfield/aumbry/internal/cjk"
 )
 
 const (
@@ -29,7 +31,8 @@ type searchResult struct {
 
 type searchRow struct {
 	itemRow
-	Snippet string `db:"snippet"`
+	Snippet   string `db:"snippet"`
+	PlainText string `db:"plain_text"`
 }
 
 type searchResponse struct {
@@ -54,46 +57,96 @@ type searchQuery struct {
 // likeEscaper escapes LIKE wildcards; the pattern is used with ESCAPE '\'.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// splitTerms separates the query into tokens usable with the trigram index (3 or more runes,
-// quoted as FTS5 phrases so user input can never be parsed as FTS syntax) and short tokens,
-// which the trigram index cannot match and are searched with LIKE instead.
-func splitTerms(text string) (match string, short []string) {
-	var phrases []string
-	for _, tok := range strings.Fields(text) {
-		if utf8.RuneCountInString(tok) < 3 {
-			short = append(short, tok)
-			continue
-		}
-		phrases = append(phrases, `"`+strings.ReplaceAll(tok, `"`, `""`)+`"`)
-	}
-	return strings.Join(phrases, " "), short
+// bm25Weights are the bm25() column weights shared by items_fts and items_fts_cjk, in table column
+// order (item_id, title, summary, tags, plain_text): title 10 > tags 5 > summary 3 > plain_text 1.
+// item_id is UNINDEXED and never contributes, so its weight is irrelevant.
+const bm25Weights = `0.0, 10.0, 3.0, 5.0, 1.0`
+
+// queryTerms is a search text split by the index that answers each part.
+type queryTerms struct {
+	trigram []string // FTS5 phrases for items_fts (non-CJK segments of 3 or more runes)
+	cjk     []string // FTS5 phrases of bigrams for items_fts_cjk (CJK segments of 2 or more runes)
+	short   []string // searched with LIKE: non-CJK segments under 3 runes and single CJK characters
+	mark    []string // original text of the FTS-matched segments, highlighted in the snippet
 }
 
-func (s *Server) search(ctx context.Context, q searchQuery) ([]searchResult, error) {
-	match, short := splitTerms(q.text)
+// ftsPhrase quotes s as one FTS5 phrase so user input can never be parsed as FTS syntax.
+func ftsPhrase(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+
+// splitTerms splits every whitespace-separated word into CJK and other segments (internal/cjk) and
+// assigns each segment to the index that can answer it. All segments are ANDed.
+func splitTerms(text string) queryTerms {
+	var t queryTerms
+	for _, word := range strings.Fields(text) {
+		for _, seg := range cjk.Segments(word) {
+			n := utf8.RuneCountInString(seg.Text)
+			switch {
+			case seg.CJK && n >= 2:
+				t.cjk = append(t.cjk, ftsPhrase(cjk.Bigrams(seg.Text)))
+				t.mark = append(t.mark, seg.Text)
+			case seg.CJK || n < 3:
+				t.short = append(t.short, seg.Text)
+			default:
+				t.trigram = append(t.trigram, ftsPhrase(seg.Text))
+				t.mark = append(t.mark, seg.Text)
+			}
+		}
+	}
+	return t
+}
+
+// builtSearch is a ready-to-run search statement. mark is non-empty when the snippet must be built
+// in Go from the original text (see snippet.go) because items_fts_cjk, which stores expanded text,
+// takes part in the query.
+type builtSearch struct {
+	sql  string
+	args []any
+	mark []string
+}
+
+// buildSearch assembles the SQL for q. Terms the trigram index (items_fts) or the bigram index
+// (items_fts_cjk) can answer become MATCH conditions on the FTS tables, which then also order the
+// results by bm25 (the sum when both tables take part); the rest are LIKE conditions.
+func buildSearch(q searchQuery) (builtSearch, error) {
+	t := splitTerms(q.text)
 	from := `items i`
-	columns := itemColumns + `, '' AS snippet`
+	columns := itemColumns + `, '' AS snippet, '' AS plain_text`
 	var colArgs, args []any
 	var where []string
 	order := `i.report_date DESC, i.created_at DESC, i.id`
+	var built builtSearch
 
-	if match != "" {
+	var ranks []string
+	if len(t.trigram) > 0 {
 		from = `items_fts JOIN items i ON i.id = items_fts.item_id`
-		columns = itemColumns + `, snippet(items_fts, -1, ?, ?, '…', 24) AS snippet`
-		colArgs = []any{markStart, markEnd}
 		where = append(where, `items_fts MATCH ?`)
-		args = append(args, match)
-		order = `bm25(items_fts), ` + order
+		args = append(args, strings.Join(t.trigram, " "))
+		ranks = append(ranks, `bm25(items_fts, `+bm25Weights+`)`)
 	}
-	for _, tok := range short {
+	if len(t.cjk) > 0 {
+		if len(t.trigram) > 0 {
+			from += ` JOIN items_fts_cjk ON items_fts_cjk.item_id = i.id`
+		} else {
+			from = `items_fts_cjk JOIN items i ON i.id = items_fts_cjk.item_id`
+		}
+		where = append(where, `items_fts_cjk MATCH ?`)
+		args = append(args, strings.Join(t.cjk, " "))
+		ranks = append(ranks, `bm25(items_fts_cjk, `+bm25Weights+`)`)
+		built.mark = t.mark
+		columns = itemColumns + `, '' AS snippet, i.plain_text AS plain_text`
+	} else if len(t.trigram) > 0 {
+		columns = itemColumns + `, snippet(items_fts, -1, ?, ?, '…', 24) AS snippet, '' AS plain_text`
+		colArgs = []any{markStart, markEnd}
+	}
+	if len(ranks) > 0 {
+		order = strings.Join(ranks, ` + `) + `, ` + order
+	}
+	for _, tok := range t.short {
 		pattern := "%" + likeEscaper.Replace(tok) + "%"
 		where = append(where, `(i.title LIKE ? ESCAPE '\' OR i.summary LIKE ? ESCAPE '\' OR i.plain_text LIKE ? ESCAPE '\' OR i.tags_json LIKE ? ESCAPE '\')`)
 		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	if q.dirIDs != nil {
-		if len(q.dirIDs) == 0 {
-			return []searchResult{}, nil
-		}
 		where = append(where, `i.id IN (SELECT item_id FROM directory_items WHERE directory_id IN (?))`)
 		args = append(args, q.dirIDs)
 	}
@@ -123,17 +176,30 @@ func (s *Server) search(ctx context.Context, q searchQuery) ([]searchResult, err
 	}
 	query += ` ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 	all := append(append(colArgs, args...), q.limit, q.offset)
-	query, all, err := sqlx.In(query, all...)
+	var err error
+	built.sql, built.args, err = sqlx.In(query, all...)
+	return built, err
+}
+
+func (s *Server) search(ctx context.Context, q searchQuery) ([]searchResult, error) {
+	if q.dirIDs != nil && len(q.dirIDs) == 0 {
+		return []searchResult{}, nil
+	}
+	built, err := buildSearch(q)
 	if err != nil {
 		return nil, err
 	}
 	var rows []searchRow
-	if err := s.db.SelectContext(ctx, &rows, query, all...); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, built.sql, built.args...); err != nil {
 		return nil, err
 	}
 	results := make([]searchResult, len(rows))
 	for i, row := range rows {
-		results[i] = searchResult{itemSummary: row.summary(), Snippet: renderSnippet(row.Snippet)}
+		snippet := row.Snippet
+		if len(built.mark) > 0 {
+			snippet = originalSnippet([]string{row.PlainText, row.Summary, row.Title}, built.mark)
+		}
+		results[i] = searchResult{itemSummary: row.summary(), Snippet: renderSnippet(snippet)}
 	}
 	return results, nil
 }

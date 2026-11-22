@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
+
+	"github.com/nerdneilsfield/aumbry/internal/db"
 )
 
 type agentDigestKey struct{}
@@ -260,7 +262,7 @@ func (s *Server) agentDeleteItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not_owner", "only the creating token may delete this item")
 		return
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items_fts WHERE item_id = ?`, id); err != nil {
+	if err := db.DeleteItemFTS(ctx, tx, id); err != nil {
 		internalError(w, r, err)
 		return
 	}

@@ -200,10 +200,11 @@ func TestAgentUnpublishDeleteAndOwnershipEnforcement(t *testing.T) {
 	if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/"+idA, apiToken); resp.status != http.StatusNoContent {
 		t.Fatalf("Token A delete = %d %s, want 204", resp.status, resp.body)
 	}
-	var itemCount, ftsCount int
+	var itemCount, ftsCount, cjkCount int
 	_ = e.db.Get(&itemCount, `SELECT count(*) FROM items WHERE id = ?`, idA)
 	_ = e.db.Get(&ftsCount, `SELECT count(*) FROM items_fts WHERE item_id = ?`, idA)
-	if itemCount != 0 || ftsCount != 0 || e.store.count("/xml/"+idA) != 0 {
+	_ = e.db.Get(&cjkCount, `SELECT count(*) FROM items_fts_cjk WHERE item_id = ?`, idA)
+	if itemCount != 0 || ftsCount != 0 || cjkCount != 0 || e.store.count("/xml/"+idA) != 0 {
 		t.Fatalf("delete leftover: items=%d fts=%d storeXML=%d", itemCount, ftsCount, e.store.count("/xml/"+idA))
 	}
 
