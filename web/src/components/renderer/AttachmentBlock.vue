@@ -23,11 +23,13 @@ const currentPage = ref(1)
 const pageInput = ref('1')
 const scale = ref(1.25)
 const loading = ref(false)
-const loadError = ref('')
+const docError = ref('')
+const pageError = ref('')
 
 let pdfDoc: PDFDocumentProxy | null = null
 let activeRenderTask: RenderTask | null = null
 let loadSerial = 0
+let renderSerial = 0
 
 function cancelRender() {
   if (activeRenderTask) {
@@ -57,11 +59,13 @@ async function renderPage(num: number) {
   const canvas = canvasEl.value
   if (!doc || !canvas || num < 1 || num > totalPages.value) return
 
+  const serial = ++renderSerial
   cancelRender()
+  pageError.value = ''
   loading.value = true
   try {
     const page = await doc.getPage(num)
-    if (pdfDoc !== doc || currentPage.value !== num) return
+    if (serial !== renderSerial || pdfDoc !== doc || currentPage.value !== num) return
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     const viewport = page.getViewport({ scale: scale.value })
@@ -78,23 +82,28 @@ async function renderPage(num: number) {
     await task.promise
     if (activeRenderTask === task) activeRenderTask = null
   } catch (err: unknown) {
+    if (serial !== renderSerial || pdfDoc !== doc) return
     const msg = err instanceof Error ? err.message : String(err)
     if (!msg.toLowerCase().includes('cancelled')) {
-      loadError.value = `第 ${num} 页渲染失败：${msg}`
+      pageError.value = `第 ${num} 页渲染失败：${msg}`
     }
   } finally {
-    loading.value = false
+    if (serial === renderSerial) {
+      loading.value = false
+    }
   }
 }
 
 async function loadDocument(url: string | undefined) {
   const serial = ++loadSerial
+  renderSerial++
   await destroyDoc()
   totalPages.value = 0
-  loadError.value = ''
+  docError.value = ''
+  pageError.value = ''
 
   if (!url || type.value !== 'pdf') {
-    loadError.value = '无效的 PDF 附件地址或类型。'
+    docError.value = '无效的 PDF 附件地址或类型。'
     return
   }
 
@@ -125,7 +134,7 @@ async function loadDocument(url: string | undefined) {
   } catch (err: unknown) {
     if (serial !== loadSerial) return
     const msg = err instanceof Error ? err.message : String(err)
-    loadError.value = `无法加载 PDF：${msg}`
+    docError.value = `无法加载 PDF：${msg}`
     loading.value = false
   }
 }
@@ -256,10 +265,19 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <p v-if="loadError" class="rounded border border-red-800/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">
-      {{ loadError }}
+    <p v-if="docError" class="rounded border border-red-800/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">
+      {{ docError }}
     </p>
-    <div v-else class="relative overflow-x-auto rounded-lg border border-gray-700/80 bg-gray-950/60 p-3 text-center print:hidden">
+    <div v-else class="relative space-y-2 overflow-x-auto rounded-lg border border-gray-700/80 bg-gray-950/60 p-3 text-center print:hidden">
+      <div
+        v-if="pageError"
+        class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-left text-xs text-amber-200"
+      >
+        <span>{{ pageError }}</span>
+        <button type="button" class="btn !px-2 !py-0.5 text-xs" @click="renderPage(currentPage)">
+          重试当前页
+        </button>
+      </div>
       <canvas ref="canvasEl" class="mx-auto block max-w-full rounded shadow" />
       <div
         v-if="loading"

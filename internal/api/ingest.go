@@ -25,10 +25,11 @@ import (
 )
 
 const (
-	maxXMLSize   = 10 << 20
-	maxImageSize = 20 << 20
-	maxPDFSize   = 50 << 20
-	maxAudioSize = 100 << 20
+	maxXMLSize       = 10 << 20
+	maxStoredXMLSize = maxXMLSize + (1 << 20) // 11 MiB bound accounts for rewritten local/remote asset URLs
+	maxImageSize     = 20 << 20
+	maxPDFSize       = 50 << 20
+	maxAudioSize     = 100 << 20
 	// formMemory is how much of the multipart form is held in memory before it spills to disk.
 	formMemory = 32 << 20
 )
@@ -409,7 +410,7 @@ func (s *Server) executeIngest(ctx context.Context, in ingestParams) (outcome *i
 
 	for _, ref := range doc.AssetRefs {
 		fh := in.uploads[ref.Path]
-		asset, issue, tooBigMsg, inspectErr := inspectUploadedAsset(ref, fh)
+		asset, issue, tooBigMsg, inspectErr := inspectUploadedAsset(ctx, ref, fh)
 		if inspectErr != nil {
 			return nil, 0, "", "", nil, nil, inspectErr
 		}
@@ -473,6 +474,9 @@ func (s *Server) executeIngest(ctx context.Context, in ingestParams) (outcome *i
 	if err != nil {
 		return nil, 0, "", "", nil, nil, err
 	}
+	if len(rewritten) > maxStoredXMLSize {
+		return nil, http.StatusRequestEntityTooLarge, "too_large", "rewritten xml exceeds the 11MB storage limit", nil, nil, nil
+	}
 	// The content is stored under a path derived from its hash, so a version is never overwritten:
 	// the live item keeps serving its old object until the transaction commits the new path.
 	sum := sha256.Sum256(rewritten)
@@ -532,7 +536,7 @@ func (s *Server) executeIngest(ctx context.Context, in ingestParams) (outcome *i
 	}, 0, "", "", nil, nil, nil
 }
 
-func inspectUploadedAsset(ref schema.AssetRef, fh *multipart.FileHeader) (asset storedAsset, issue *schema.ValidationError, tooBigMsg string, err error) {
+func inspectUploadedAsset(ctx context.Context, ref schema.AssetRef, fh *multipart.FileHeader) (asset storedAsset, issue *schema.ValidationError, tooBigMsg string, err error) {
 	limit := int64(maxImageSize)
 	limitMB := 20
 	switch ref.Kind {
@@ -601,7 +605,7 @@ func inspectUploadedAsset(ref schema.AssetRef, fh *multipart.FileHeader) (asset 
 			size: written,
 		}, nil, "", nil
 	case schema.AssetKindPDF:
-		pdfMeta, pdfErr := media.InspectPDF(f, detectedStr)
+		pdfMeta, pdfErr := media.InspectPDF(ctx, f, detectedStr)
 		if pdfErr != nil {
 			return storedAsset{}, &schema.ValidationError{
 				Code: "INVALID_ATTACHMENT", Field: "attachment.src",

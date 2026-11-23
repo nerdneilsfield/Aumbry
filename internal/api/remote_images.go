@@ -98,6 +98,8 @@ func (s *Server) newRemoteImageHTTPClient() (*http.Client, func()) {
 			if !ok {
 				return fmt.Errorf("%w: redirect target %s rejected: %s", errRemoteBlocked, req.URL.Redacted(), msg)
 			}
+			// Never leak signed source URLs / tokens across redirect hops via Referer.
+			req.Header.Del("Referer")
 			return nil
 		},
 	}

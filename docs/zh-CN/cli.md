@@ -360,4 +360,4 @@ aumbry delete MDUnpJpiAjMo --yes
   3. `Authorization: Bearer <api_token>`（可附带 `X-Aumbry-Dir-Tokens: ad_...,ad_...`）：可读公开目录、已授权子树、以及自己创建（`created_by == digest`）的草稿/受保护条目与自建修订；**仅 API Token 有权调用 `push_item`**。
 - **6 个内置工具**：`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`。
   - `list_items` 与 `search_items` 仅返回元数据（绝不返回 `xml`/`plain_text`），并把多挂载目录 `dirs` 过滤为调用方可见子集；传入 `dir_id` 时严格与调用方权限求交（自建草稿与跨目录条目不会越权绕过 `dir_id`）。
-  - `push_item` 复用 `/api/v1/ingest` 权限、限流、10 MiB XML 上限与外链图片 SSRF 自动转存规则；**若 XML 中包含本地相对路径媒体或 PDF 附件**，会返回 `invalid_request` 工具错误并提示改用 `aumbry push`。
+  - `push_item` 复用 `/api/v1/ingest` 权限、限流、外链图片 SSRF 自动转存规则与两道独立上限（传输层 JSON-RPC 请求体 ≤ `16 MiB`、解码后 XML ≤ `10 MiB`；若接近 `10 MiB` 的多转义 XML 编码后超出 `16 MiB` 将在传输层返回 HTTP `413`，且包含本地相对路径媒体或 PDF 附件的 XML 会返回 `invalid_request` 工具错误），遇以上两类情况请改用 CLI `aumbry push`。

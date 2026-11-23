@@ -100,3 +100,12 @@ Aumbry 在仓库根目录随附 [skills/aumbry/](../../skills/aumbry/SKILL.md)�
 | 意图含糊，或要求发布但无目标/默认目录 | 先向用户确认目录或意图后再执行 `aumbry push` | 避免误公开或生成 `403` 未挂载条目 |
 
 > **注意：挂入目录前核对 `protected` 字段。** 向某个目录挂载私密笔记前，请核对 `aumbry dirs` 返回中的 `"protected"`（不要只看 `"has_password"`）。`has_password: false` 且 `protected: false` 的目录对外持有链接即公开可读。
+
+## 通过 MCP（`/mcp`）接入 Agent
+
+除在终端调用 `aumbry` CLI 外，支持 MCP 的 Agent 还可直接连接服务端的 Streamable HTTP `/mcp` 端点：
+
+- **凭据与权限**：通过 HTTP 头传入 `Authorization: Bearer <api_token>`（可附带 `X-Aumbry-Dir-Tokens: ad_...,ad_...` 访问受保护子树），或传入 `Authorization: Bearer ad_<...>` 仅只读该目录授权子树；`/mcp` 不接受浏览器 Cookie。
+- **内置工具**：`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml` 与 `push_item`（写入仅对 API Token 开放）。
+- **何时改用 CLI `aumbry push`**：MCP `push_item` 仅支持纯文本与 `v1.2` 公网 `http(s)://` 外链 `<figure src>` XML（受 `16 MiB` JSON-RPC 请求体与 `10 MiB` 解码 XML 两道上限约束）；凡需上传本地图片、音频或 `<attachment type="pdf">` 原文附件，或经多轮 JSON 转义超出 `16 MiB` 的文档，请统一调用 CLI `aumbry push`。
+- **部署前提**：通过非回环主机名或反向代理访问 `/mcp` 时，服务端必须配置匹配的 `public_url`（详见[部署与运维指南](deployment.md)）。

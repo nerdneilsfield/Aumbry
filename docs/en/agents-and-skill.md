@@ -100,3 +100,12 @@ When pushing a published report (`--draft` is **not** set), the agent follows th
 | Ambiguous request ("Save/push it") or missing target directory | Ask the user before calling `aumbry push` | Prevents accidental public exposure or unmounted `403` |
 
 > **Caution — Check `protected` before publishing:** Inspect `"protected"` (not `"has_password"`) in `aumbry dirs` output before mounting internal notes. A child directory with `"has_password": false` and `"protected": false` is publicly accessible to anyone who receives its link.
+
+## Connecting AI agents via MCP (`/mcp`)
+
+In addition to invoking the `aumbry` CLI, MCP-capable agents can connect directly to the server's Streamable HTTP endpoint at `/mcp`:
+
+- **Credentials and scoping:** Pass `Authorization: Bearer <api_token>` (plus optional `X-Aumbry-Dir-Tokens: ad_...,ad_...` for protected directory subtrees) or `Authorization: Bearer ad_<...>` for read-only access to a single directory subtree. Browser cookies are ignored on `/mcp`.
+- **Available tools:** `list_dirs`, `list_items`, `search_items`, `get_item`, `validate_xml`, and `push_item`.
+- **When to use CLI `aumbry push` instead of MCP `push_item`:** MCP `push_item` handles text-only XML and `v1.2` public `http(s)://` remote `<figure src>` URLs (`16 MiB` raw JSON-RPC request cap / `10 MiB` decoded XML cap). Use CLI `aumbry push` whenever uploading local relative binary assets (`.png`/`.jpg`/`.webp`/`.svg` figures, audio, or `<attachment type="pdf">`) or heavily JSON-escaped documents exceeding the `16 MiB` transport limit.
+- **Deployment prerequisite:** Non-loopback clients connecting to `/mcp` require `public_url` on the server (see [Deployment guide](deployment.md)).

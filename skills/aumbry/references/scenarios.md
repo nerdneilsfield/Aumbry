@@ -6,10 +6,10 @@
 
 | 场景 | 来源 / Skill | `meta/type` | 推荐幂等键（`--key`） | 常用积木 | 参考示例 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **A 单篇论文精读** | `qi-read-paper` | `post` | `paper:<arxiv-id \| doi \| slug>` | `stages`/`stage`、`quiz`、`next-steps`、`tldr`、`claim`、`equation`、`figure`、`mermaid`、`chart`、`metrics`、`steps`、`glossary`、`compare-table`、`references`/`sources` | `paper-reading.xml` |
+| **A 单篇论文精读** | `qi-read-paper` | `post` | `paper:<arxiv-id \| doi \| slug>` | `stages`/`stage`、`quiz`、`next-steps`、`tldr`、`claim`、`equation`、`figure`、`mermaid`、`chart`、`metrics`、`steps`、`glossary`、`compare-table`、`references`/`sources`；可选 `v1.2` `<attachment type="pdf" id>`（`#att-<id>:p=<N>`）与 `<audio>` | `paper-reading.xml`、`v12-features.xml` |
 | **B 多方法对比** | `paper-compare` | `post` | `compare:<slug>` | `compare-table`（`cell@tag`）、`claim`、`callout type="warn"`、`chart` | `compare-repro.xml` |
 | **C 日报/周报/简报** | 各日报 Agent、`steward-reports` | `report` | `<agent>:<YYYY-MM-DD>` 或 `<agent>:<YYYY>-W<ww>` | `tldr`（全文+分节）、`metrics`、`paper-card`、`repo-card`、`timeline`、`sources`、`related-ids` | `news-digest.xml`（周报结构） |
-| **D 研究报告** | `research-report`（+ `paper-search`） | `post` | `report:<slug>` | `section`、`figure`、`mermaid`、`chart`、`references`、`compare-table`、`search-log` | — |
+| **D 研究报告** | `research-report`（+ `paper-search`） | `post` | `report:<slug>` | `section`、`figure`、`mermaid`、`chart`、`references`、`compare-table`、`search-log`；可选 `v1.2` `<attachment type="pdf">`、`http(s)://` 外链 `<figure src>` 与 `<audio>` | `v12-features.xml` |
 | **E 开源拆解** | 各拆解 Agent | `post` / `report` | `repo:<owner>/<name>` / `<agent>:<YYYY-MM-DD>` | `repo-card`、`mermaid`、`code-block`、`steps`、`checklist`、`metrics` | — |
 | **F 周期汇报** | `steward-reports` | `report` | `steward:<YYYY-MM-DD>` / `steward:<YYYY>-W<ww>` | `section`（Facts/Results/Blockers/Evidence/Next steps）、`checklist`、`metrics`、`claim` | — |
 | **G 复现 / 实验** | `paper-reproduce`、`algorithm-experiment` | `post` | `repro:<paper-slug>` / `exp:<slug>` | `compare-table`（`unreported`/`approx`）、`metrics`、`chart`（`series[].err`）、`checklist`、`claim`（`unverified`）、`stages` | `compare-repro.xml` |
@@ -35,3 +35,4 @@
 - **研究报告（D）**：`[@note-slug]` 转为 `<references>` + `[标签](#ref-<id>)`；只读摘要/片段时在 `<ref>` 或 `<paper-card>` 标 `read-depth="abstract|snippet"`；检索过程用 `<search-log>`。
 - **新闻简报与详情（K / L）**：短消息用 `<news-item>` 内联 `<detail>`；需独立检索与分享的详情先推取得 `id` 再填入 `detail-id`（详情可用同 `--key` 更新 `related-ids` 指回简报）；未核实标 `<claim level="unverified">` 或“据称”。
 - **分层 `<tldr>`**：仅在文档 >= 3 部分或明显偏长时加全文及分节 `<tldr>`（只概括已有内容，对齐 `meta/summary`）；第 1 轮单 `<stage>` 或一页短文省略，第 1 轮单 stage 禁用指向未来 stage 的 `<next-steps>`。
+- **`v1.2` 富媒体与附件**：需附带原文 PDF 时用 `<document version="1.2">` + `<attachment id="paper" type="pdf" src="./paper.pdf" title="..."/>`（用 `#att-paper:p=<N>` 从 `<next-steps>` 或 `<audio>/<chapter target>` 跳页）；引用可公开访问的网络配图时可直接写 `<figure src="https://...">` 交由服务端转存（本地路径图片仍随 `aumbry push` 打包上传）。

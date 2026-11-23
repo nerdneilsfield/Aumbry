@@ -29,14 +29,18 @@ import (
 )
 
 const (
-	mcpMaxRequestBodyBytes  = 16 << 20 // 16 MiB transport limit so 10 MiB escaped XML succeeds
-	mcpSessionTimeout       = 30 * time.Minute
-	mcpMaxAnonSessionsPerIP = 16
-	mcpAnonRateLimitPerMin  = 120
-	mcpDefaultListLimit     = 20
-	mcpMaxListLimit         = 100
-	mcpHeaderExtraDirTokens = "X-Aumbry-Dir-Tokens"
-	mcpSessionHeader        = "Mcp-Session-Id"
+	mcpMaxRequestBodyBytes         = 16 << 20 // 16 MiB transport limit
+	mcpSessionTimeout              = 30 * time.Minute
+	mcpMaxAnonSessionsPerIP        = 16
+	mcpMaxAnonConcurrentPostsPerIP = 4
+	mcpMaxAnonConcurrentPostsTotal = 16
+	mcpAnonRateLimitPerMin         = 120
+	mcpAnonPostReadDeadline        = 15 * time.Second
+	mcpAuthedPostReadDeadline      = 60 * time.Second
+	mcpDefaultListLimit            = 20
+	mcpMaxListLimit                = 100
+	mcpHeaderExtraDirTokens        = "X-Aumbry-Dir-Tokens"
+	mcpSessionHeader               = "Mcp-Session-Id"
 )
 
 type mcpAuthKind int
@@ -76,66 +80,137 @@ type mcpSessionRecord struct {
 	ownerKey string
 	anonIP   string
 	lastSeen time.Time
+	inFlight int
 }
 
 type mcpSessionTracker struct {
-	mu       sync.Mutex
-	sessions map[string]mcpSessionRecord
+	mu              sync.Mutex
+	sessions        map[string]mcpSessionRecord
+	pendingAnonInit map[string]int
+	anonPostsByIP   map[string]int
+	anonPostsTotal  int
 }
 
 func newMCPSessionTracker() *mcpSessionTracker {
-	return &mcpSessionTracker{sessions: make(map[string]mcpSessionRecord)}
+	return &mcpSessionTracker{
+		sessions:        make(map[string]mcpSessionRecord),
+		pendingAnonInit: make(map[string]int),
+		anonPostsByIP:   make(map[string]int),
+	}
 }
 
 func (tr *mcpSessionTracker) pruneLocked(now time.Time) {
 	cutoff := now.Add(-mcpSessionTimeout)
 	for sid, rec := range tr.sessions {
-		if rec.lastSeen.Before(cutoff) {
+		if rec.inFlight == 0 && rec.lastSeen.Before(cutoff) {
 			delete(tr.sessions, sid)
 		}
 	}
 }
 
-func (tr *mcpSessionTracker) checkExisting(sid, ownerKey string) (known bool, allowed bool) {
+func (tr *mcpSessionTracker) acquireExisting(sid, ownerKey string) (found, allowed bool) {
 	now := time.Now()
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	tr.pruneLocked(now)
 	rec, ok := tr.sessions[sid]
 	if !ok {
-		return false, true
+		return false, false
 	}
 	if rec.ownerKey != ownerKey {
 		return true, false
 	}
+	rec.inFlight++
 	rec.lastSeen = now
 	tr.sessions[sid] = rec
 	return true, true
 }
 
-func (tr *mcpSessionTracker) countAnonForIP(ip string) int {
-	now := time.Now()
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-	tr.pruneLocked(now)
-	n := 0
-	for _, rec := range tr.sessions {
-		if rec.anonIP == ip {
-			n++
-		}
-	}
-	return n
-}
-
-func (tr *mcpSessionTracker) bind(sid, ownerKey, anonIP string) {
+func (tr *mcpSessionTracker) releaseExisting(sid string) {
 	if sid == "" {
 		return
 	}
 	now := time.Now()
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
+	rec, ok := tr.sessions[sid]
+	if !ok {
+		return
+	}
+	if rec.inFlight > 0 {
+		rec.inFlight--
+	}
+	rec.lastSeen = now
+	tr.sessions[sid] = rec
+}
+
+func (tr *mcpSessionTracker) tryReserveAnonInit(anonIP string) bool {
+	now := time.Now()
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
 	tr.pruneLocked(now)
-	tr.sessions[sid] = mcpSessionRecord{ownerKey: ownerKey, anonIP: anonIP, lastSeen: now}
+	n := tr.pendingAnonInit[anonIP]
+	for _, rec := range tr.sessions {
+		if rec.anonIP == anonIP {
+			n++
+		}
+	}
+	if n >= mcpMaxAnonSessionsPerIP {
+		return false
+	}
+	tr.pendingAnonInit[anonIP]++
+	return true
+}
+
+func (tr *mcpSessionTracker) releaseAnonInitReservation(anonIP string) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.pendingAnonInit[anonIP] > 1 {
+		tr.pendingAnonInit[anonIP]--
+	} else {
+		delete(tr.pendingAnonInit, anonIP)
+	}
+}
+
+func (tr *mcpSessionTracker) tryAcquireAnonPost(anonIP string) bool {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.anonPostsByIP[anonIP] >= mcpMaxAnonConcurrentPostsPerIP || tr.anonPostsTotal >= mcpMaxAnonConcurrentPostsTotal {
+		return false
+	}
+	tr.anonPostsByIP[anonIP]++
+	tr.anonPostsTotal++
+	return true
+}
+
+func (tr *mcpSessionTracker) releaseAnonPost(anonIP string) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.anonPostsByIP[anonIP] > 1 {
+		tr.anonPostsByIP[anonIP]--
+	} else {
+		delete(tr.anonPostsByIP, anonIP)
+	}
+	if tr.anonPostsTotal > 0 {
+		tr.anonPostsTotal--
+	}
+}
+
+func (tr *mcpSessionTracker) bind(sid, ownerKey, anonIP string, consumeReservation bool) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	now := time.Now()
+	tr.pruneLocked(now)
+	if sid != "" {
+		tr.sessions[sid] = mcpSessionRecord{ownerKey: ownerKey, anonIP: anonIP, lastSeen: now}
+	}
+	if consumeReservation && anonIP != "" {
+		if tr.pendingAnonInit[anonIP] > 1 {
+			tr.pendingAnonInit[anonIP]--
+		} else {
+			delete(tr.pendingAnonInit, anonIP)
+		}
+	}
 }
 
 func (tr *mcpSessionTracker) remove(sid string) {
@@ -149,19 +224,29 @@ func (tr *mcpSessionTracker) remove(sid string) {
 
 type mcpStatusCaptureWriter struct {
 	http.ResponseWriter
-	status int
+	status     int
+	headerDone bool
+	onHeader   func(status int, header http.Header)
+}
+
+func (w *mcpStatusCaptureWriter) notifyHeader(code int) {
+	if !w.headerDone {
+		w.headerDone = true
+		w.status = code
+		if w.onHeader != nil {
+			w.onHeader(code, w.Header())
+		}
+	}
 }
 
 func (w *mcpStatusCaptureWriter) WriteHeader(code int) {
-	if w.status == 0 {
-		w.status = code
-	}
+	w.notifyHeader(code)
 	w.ResponseWriter.WriteHeader(code)
 }
 
 func (w *mcpStatusCaptureWriter) Write(p []byte) (int, error) {
 	if w.status == 0 {
-		w.status = http.StatusOK
+		w.notifyHeader(http.StatusOK)
 	}
 	return w.ResponseWriter.Write(p)
 }
@@ -170,6 +255,25 @@ func (w *mcpStatusCaptureWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (w *mcpStatusCaptureWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func exactClientIP(r *http.Request) string {
+	raw := strings.TrimSpace(middleware.GetClientIP(r.Context()))
+	if raw == "" {
+		raw = r.RemoteAddr
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	raw = strings.Trim(raw, "[]")
+	if addr, err := netip.ParseAddr(raw); err == nil {
+		return addr.Unmap().String()
+	}
+	return raw
 }
 
 func (s *Server) newMCPHTTPHandler() http.Handler {
@@ -207,9 +311,10 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 			return
 		}
 
-		clientIP := httprate.CanonicalizeIP(middleware.GetClientIP(r.Context()))
+		exactIP := exactClientIP(r)
+		rateIP := httprate.CanonicalizeIP(exactIP)
 		cloned := r.Clone(r.Context())
-		cloned.Header.Set("X-Aumbry-Internal-Client-IP", clientIP)
+		cloned.Header.Set("X-Aumbry-Internal-Client-IP", rateIP)
 
 		sid := strings.TrimSpace(r.Header.Get(mcpSessionHeader))
 		authHdr := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -222,75 +327,126 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 					ownerKey = ti.UserID
 				}
 				if sid != "" {
-					if _, ok := tracker.checkExisting(sid, ownerKey); !ok {
+					found, ok := tracker.acquireExisting(sid, ownerKey)
+					if !found {
+						http.Error(w, "unknown or expired MCP session", http.StatusNotFound)
+						return
+					}
+					if !ok {
 						http.Error(w, "session owner mismatch", http.StatusForbidden)
 						return
 					}
+					defer tracker.releaseExisting(sid)
 				}
-				s.serveTrackedMCP(sdkHandler, tracker, ownerKey, "", sid, w, authedReq)
+				if authedReq.Method == http.MethodPost {
+					rc := http.NewResponseController(w)
+					_ = rc.SetReadDeadline(time.Now().Add(mcpAuthedPostReadDeadline))
+					defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
+				}
+				s.serveTrackedMCP(sdkHandler, tracker, ownerKey, "", nil, sid, w, authedReq)
 			}))
 			wrapped.ServeHTTP(w, cloned)
 			return
 		}
 
-		if anonRate.RespondOnLimit(w, cloned, clientIP) {
+		if anonRate.RespondOnLimit(w, cloned, rateIP) {
 			return
 		}
-		ownerKey := "anon:" + clientIP
+		ownerKey := "anon:" + exactIP
 		if sid != "" {
-			if _, ok := tracker.checkExisting(sid, ownerKey); !ok {
+			found, ok := tracker.acquireExisting(sid, ownerKey)
+			if !found {
+				http.Error(w, "unknown or expired MCP session", http.StatusNotFound)
+				return
+			}
+			if !ok {
 				http.Error(w, "session owner mismatch", http.StatusForbidden)
 				return
 			}
-		} else if r.Method == http.MethodPost && tracker.countAnonForIP(clientIP) >= mcpMaxAnonSessionsPerIP {
-			http.Error(w, "too many active anonymous MCP sessions", http.StatusTooManyRequests)
-			return
+			defer tracker.releaseExisting(sid)
 		}
-		s.serveTrackedMCP(sdkHandler, tracker, ownerKey, clientIP, sid, w, cloned)
+		reservedInit := false
+		if r.Method == http.MethodPost {
+			if sid == "" {
+				if !tracker.tryReserveAnonInit(exactIP) {
+					http.Error(w, "too many active anonymous MCP sessions", http.StatusTooManyRequests)
+					return
+				}
+				reservedInit = true
+				defer func() {
+					if reservedInit {
+						tracker.releaseAnonInitReservation(exactIP)
+					}
+				}()
+			}
+			if !tracker.tryAcquireAnonPost(exactIP) {
+				http.Error(w, "too many concurrent anonymous MCP requests", http.StatusTooManyRequests)
+				return
+			}
+			defer tracker.releaseAnonPost(exactIP)
+
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(mcpAnonPostReadDeadline))
+			defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
+		}
+		s.serveTrackedMCP(sdkHandler, tracker, ownerKey, exactIP, &reservedInit, sid, w, cloned)
 	})
 }
 
-func (s *Server) serveTrackedMCP(sdkHandler http.Handler, tracker *mcpSessionTracker, ownerKey, anonIP, reqSID string, w http.ResponseWriter, r *http.Request) {
-	cw := &mcpStatusCaptureWriter{ResponseWriter: w}
+func (s *Server) serveTrackedMCP(sdkHandler http.Handler, tracker *mcpSessionTracker, ownerKey, anonIP string, reservedInit *bool, reqSID string, w http.ResponseWriter, r *http.Request) {
+	cw := &mcpStatusCaptureWriter{
+		ResponseWriter: w,
+		onHeader: func(code int, hdr http.Header) {
+			if code >= http.StatusBadRequest {
+				return
+			}
+			if r.Method == http.MethodDelete && reqSID != "" {
+				tracker.remove(reqSID)
+				return
+			}
+			if reqSID == "" {
+				if newSID := strings.TrimSpace(hdr.Get(mcpSessionHeader)); newSID != "" {
+					consumed := false
+					if reservedInit != nil && *reservedInit {
+						*reservedInit = false
+						consumed = true
+					}
+					tracker.bind(newSID, ownerKey, anonIP, consumed)
+				}
+			}
+		},
+	}
 	sdkHandler.ServeHTTP(cw, r)
-	status := cw.status
-	if status == 0 {
-		status = http.StatusOK
+}
+
+func (s *Server) authenticateMCPToken(ctx context.Context, q sqlx.QueryerContext, rawTok string) (kind mcpAuthKind, ownerKey, apiDigest, dirID string, err error) {
+	trimmed := strings.TrimSpace(rawTok)
+	if trimmed == "" {
+		return 0, "", "", "", mcpauth.ErrInvalidToken
 	}
-	if r.Method == http.MethodDelete && reqSID != "" && status < http.StatusBadRequest {
-		tracker.remove(reqSID)
-		return
+	if digest, ok := s.auth.AuthenticateToken("Bearer " + trimmed); ok {
+		return mcpAuthAPIToken, "api:" + digest, digest, "", nil
 	}
-	if newSID := strings.TrimSpace(w.Header().Get(mcpSessionHeader)); newSID != "" && status < http.StatusBadRequest {
-		tracker.bind(newSID, ownerKey, anonIP)
+	if strings.HasPrefix(trimmed, dirTokenPrefix) && len(trimmed) > len(dirTokenPrefix) {
+		tokHash := auth.TokenDigest(trimmed)
+		if err = sqlx.GetContext(ctx, q, &dirID, `SELECT directory_id FROM directory_tokens WHERE token_hash = ?`, tokHash); errors.Is(err, sql.ErrNoRows) {
+			return 0, "", "", "", mcpauth.ErrInvalidToken
+		}
+		if err != nil {
+			return 0, "", "", "", err
+		}
+		return mcpAuthDirToken, "dir:" + tokHash, "", dirID, nil
 	}
+	return 0, "", "", "", mcpauth.ErrInvalidToken
 }
 
 func (s *Server) verifyMCPBearerToken(ctx context.Context, token string, _ *http.Request) (*mcpauth.TokenInfo, error) {
-	trimmed := strings.TrimSpace(token)
-	if trimmed == "" {
-		return nil, mcpauth.ErrInvalidToken
-	}
-	if strings.HasPrefix(trimmed, dirTokenPrefix) {
-		tokHash := auth.TokenDigest(trimmed)
-		var dirID string
-		err := s.db.GetContext(ctx, &dirID, `SELECT directory_id FROM directory_tokens WHERE token_hash = ?`, tokHash)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, mcpauth.ErrInvalidToken
-		}
-		if err != nil {
-			return nil, err
-		}
-		return &mcpauth.TokenInfo{
-			UserID: "dir:" + tokHash,
-		}, nil
-	}
-	digest, ok := s.auth.AuthenticateToken("Bearer " + trimmed)
-	if !ok {
-		return nil, mcpauth.ErrInvalidToken
+	_, ownerKey, _, _, err := s.authenticateMCPToken(ctx, s.db, token)
+	if err != nil {
+		return nil, err
 	}
 	return &mcpauth.TokenInfo{
-		UserID: "api:" + digest,
+		UserID: ownerKey,
 	}, nil
 }
 
@@ -298,6 +454,25 @@ func (s *Server) allowMCPHostAndOrigin(r *http.Request) bool {
 	if r.Host == "" {
 		return false
 	}
+
+	rawOrigin := strings.TrimSpace(r.Header.Get("Origin"))
+	var origURL *url.URL
+	var origScheme string
+	if rawOrigin != "" {
+		if strings.EqualFold(rawOrigin, "null") {
+			return false
+		}
+		u, err := url.Parse(rawOrigin)
+		if err != nil || u.Host == "" {
+			return false
+		}
+		origScheme = strings.ToLower(u.Scheme)
+		if origScheme != "http" && origScheme != "https" {
+			return false
+		}
+		origURL = u
+	}
+
 	if s.publicURL != "" {
 		pubURL, err := url.Parse(s.publicURL)
 		if err != nil || pubURL.Host == "" {
@@ -306,39 +481,26 @@ func (s *Server) allowMCPHostAndOrigin(r *http.Request) bool {
 		if !sameHostPort(r.Host, pubURL.Host, pubURL.Scheme) {
 			return false
 		}
-	} else {
-		// Enforce DNS rebinding check whenever the request terminates on a loopback interface or came directly from loopback.
-		if localAddr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && localAddr != nil {
-			if isLoopbackAddrStr(localAddr.String()) && !isLoopbackHost(r.Host) {
-				return false
-			}
-		} else if isLoopbackAddrStr(r.RemoteAddr) && !isLoopbackHost(r.Host) {
-			return false
+		if origURL != nil {
+			return strings.EqualFold(origScheme, pubURL.Scheme) && sameHostPort(origURL.Host, pubURL.Host, pubURL.Scheme)
 		}
-	}
-
-	rawOrigin := strings.TrimSpace(r.Header.Get("Origin"))
-	if rawOrigin == "" {
 		return true
 	}
-	if strings.EqualFold(rawOrigin, "null") {
-		return false
-	}
-	origURL, err := url.Parse(rawOrigin)
-	if err != nil || origURL.Host == "" {
-		return false
-	}
-	origScheme := strings.ToLower(origURL.Scheme)
-	if origScheme != "http" && origScheme != "https" {
-		return false
-	}
 
-	expectedBase := s.resolvePublicURL(r)
-	expURL, err := url.Parse(expectedBase)
-	if err != nil || expURL.Host == "" {
+	if !isLoopbackHost(r.Host) {
 		return false
 	}
-	return strings.EqualFold(origScheme, expURL.Scheme) && sameHostPort(origURL.Host, expURL.Host, expURL.Scheme)
+	if origURL != nil {
+		expectedBase := s.resolvePublicURL(r)
+		expURL, err := url.Parse(expectedBase)
+		if err != nil || expURL.Host == "" {
+			return false
+		}
+		return strings.EqualFold(origScheme, expURL.Scheme) &&
+			isLoopbackHost(origURL.Host) &&
+			sameHostPort(origURL.Host, r.Host, origScheme)
+	}
+	return true
 }
 
 func sameHostPort(a, b, scheme string) bool {
@@ -359,16 +521,6 @@ func normalizeHostPort(hostPort, scheme string) string {
 		}
 	}
 	return strings.ToLower(h) + ":" + p
-}
-
-func isLoopbackAddrStr(raw string) bool {
-	host, _, err := net.SplitHostPort(raw)
-	if err != nil {
-		host = raw
-	}
-	host = strings.Trim(host, "[]")
-	ip, err := netip.ParseAddr(host)
-	return err == nil && ip.Unmap().IsLoopback()
 }
 
 func isLoopbackHost(hostHeader string) bool {
@@ -404,20 +556,15 @@ func resolveMCPPrincipalTx(ctx context.Context, q sqlx.QueryerContext, s *Server
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return mcpPrincipal{}, mcpToolError("unauthorized", "invalid Authorization header")
 	}
-	rawTok = strings.TrimSpace(rawTok)
-	if rawTok == "" {
-		return mcpPrincipal{}, mcpToolError("unauthorized", "empty bearer token")
-	}
 
-	if strings.HasPrefix(rawTok, dirTokenPrefix) {
-		var dirID string
-		err := sqlx.GetContext(ctx, q, &dirID, `SELECT directory_id FROM directory_tokens WHERE token_hash = ?`, auth.TokenDigest(rawTok))
-		if errors.Is(err, sql.ErrNoRows) {
-			return mcpPrincipal{}, mcpToolError("unauthorized", "directory read token is invalid or revoked")
-		}
-		if err != nil {
-			return mcpPrincipal{}, err
-		}
+	kind, _, digest, dirID, err := s.authenticateMCPToken(ctx, q, rawTok)
+	if errors.Is(err, mcpauth.ErrInvalidToken) {
+		return mcpPrincipal{}, mcpToolError("unauthorized", "bearer token is invalid or revoked")
+	}
+	if err != nil {
+		return mcpPrincipal{}, err
+	}
+	if kind == mcpAuthDirToken {
 		dirVisible := make(map[string]bool)
 		for _, id := range t.subtreeVisibleByDirToken(dirID) {
 			dirVisible[id] = true
@@ -425,22 +572,18 @@ func resolveMCPPrincipalTx(ctx context.Context, q sqlx.QueryerContext, s *Server
 		return mcpPrincipal{kind: mcpAuthDirToken, visibleDirs: dirVisible}, nil
 	}
 
-	digest, ok := s.auth.AuthenticateToken("Bearer " + rawTok)
-	if !ok {
-		return mcpPrincipal{}, mcpToolError("unauthorized", "invalid API token")
-	}
 	if extra := strings.TrimSpace(hdr.Get(mcpHeaderExtraDirTokens)); extra != "" {
 		for _, part := range strings.Split(extra, ",") {
 			tok := strings.TrimSpace(part)
 			if !strings.HasPrefix(tok, dirTokenPrefix) || len(tok) <= len(dirTokenPrefix) {
 				continue
 			}
-			var dirID string
-			err := sqlx.GetContext(ctx, q, &dirID, `SELECT directory_id FROM directory_tokens WHERE token_hash = ?`, auth.TokenDigest(tok))
-			if err != nil {
+			var extraDirID string
+			extraErr := sqlx.GetContext(ctx, q, &extraDirID, `SELECT directory_id FROM directory_tokens WHERE token_hash = ?`, auth.TokenDigest(tok))
+			if extraErr != nil {
 				continue
 			}
-			for _, id := range t.subtreeVisibleByDirToken(dirID) {
+			for _, id := range t.subtreeVisibleByDirToken(extraDirID) {
 				visible[id] = true
 			}
 		}
@@ -735,7 +878,7 @@ func (s *Server) mcpListItems(ctx context.Context, req *mcp.CallToolRequest, in 
 		args = append(args, tag)
 	}
 
-	querySQL := `SELECT ` + itemColumns + `, COALESCE(i.created_by, '') AS created_by FROM items i WHERE ` +
+	querySQL := `SELECT ` + itemColumns + ` FROM items i WHERE ` +
 		strings.Join(where, ` AND `) +
 		` ORDER BY i.report_date DESC, i.created_at DESC, i.id LIMIT ? OFFSET ?`
 	args = append(args, limit, in.Offset)
@@ -744,10 +887,7 @@ func (s *Server) mcpListItems(ctx context.Context, req *mcp.CallToolRequest, in 
 		return nil, zero, err
 	}
 
-	var rows []struct {
-		itemRow
-		CreatedBy string `db:"created_by"`
-	}
+	var rows []itemRow
 	if err = sqlx.SelectContext(ctx, tx, &rows, flatSQL, flatArgs...); err != nil {
 		return nil, zero, err
 	}
@@ -763,7 +903,7 @@ func (s *Server) mcpListItems(ctx context.Context, req *mcp.CallToolRequest, in 
 
 	entries := make([]mcpItemEntry, len(rows))
 	for i, row := range rows {
-		revCount, revErr := mcpRevisionCountTx(ctx, tx, t, principal, row.ID, row.CreatedBy)
+		revCount, revErr := mcpRevisionCountTx(ctx, tx, t, principal, row.ID)
 		if revErr != nil {
 			return nil, zero, revErr
 		}
@@ -858,14 +998,10 @@ func (s *Server) mcpSearchItems(ctx context.Context, req *mcp.CallToolRequest, i
 	if err != nil {
 		return nil, zero, err
 	}
-	ownersByItem, err := ownersForItemsTx(ctx, tx, ids)
-	if err != nil {
-		return nil, zero, err
-	}
 
 	out := make([]mcpSearchItemEntry, len(results))
 	for i, res := range results {
-		revCount, revErr := mcpRevisionCountTx(ctx, tx, t, principal, res.ID, ownersByItem[res.ID])
+		revCount, revErr := mcpRevisionCountTx(ctx, tx, t, principal, res.ID)
 		if revErr != nil {
 			return nil, zero, revErr
 		}
@@ -939,14 +1075,15 @@ func (s *Server) mcpGetItem(ctx context.Context, req *mcp.CallToolRequest, in mc
 	targetTitle, targetSummary, targetDate, targetXMLPath := itemRow.Title, itemRow.Summary, itemRow.Date, itemRow.XMLPath
 	if in.Rev != nil {
 		var revRow struct {
-			ID      int64  `db:"id"`
-			Title   string `db:"title"`
-			Summary string `db:"summary"`
-			Date    string `db:"report_date"`
-			XMLPath string `db:"xml_storage_path"`
+			ID        int64  `db:"id"`
+			Title     string `db:"title"`
+			Summary   string `db:"summary"`
+			Date      string `db:"report_date"`
+			XMLPath   string `db:"xml_storage_path"`
+			CreatedBy string `db:"created_by"`
 		}
 		err = sqlx.GetContext(ctx, tx, &revRow,
-			`SELECT id, title, summary, report_date, xml_storage_path FROM item_revisions WHERE item_id = ? AND rev = ?`,
+			`SELECT id, title, summary, report_date, xml_storage_path, COALESCE(created_by, '') AS created_by FROM item_revisions WHERE item_id = ? AND rev = ?`,
 			id, *in.Rev)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, zero, mcpToolError("not_found", "revision not found")
@@ -954,14 +1091,12 @@ func (s *Server) mcpGetItem(ctx context.Context, req *mcp.CallToolRequest, in mc
 		if err != nil {
 			return nil, zero, err
 		}
-		if !isOwner {
-			revMounts, mountErr := revisionMounts(ctx, tx, revRow.ID)
-			if mountErr != nil {
-				return nil, zero, mountErr
-			}
-			if !mcpCanViewRevisionMounts(t, principal, revMounts) {
-				return nil, zero, mcpToolError("forbidden", "this revision is not accessible")
-			}
+		revMounts, mountErr := revisionMounts(ctx, tx, revRow.ID)
+		if mountErr != nil {
+			return nil, zero, mountErr
+		}
+		if !mcpCanViewRevision(t, principal, revRow.CreatedBy, revMounts) {
+			return nil, zero, mcpToolError("forbidden", "this revision is not accessible")
 		}
 		targetTitle, targetSummary, targetDate, targetXMLPath = revRow.Title, revRow.Summary, revRow.Date, revRow.XMLPath
 	}
@@ -978,15 +1113,18 @@ func (s *Server) mcpGetItem(ctx context.Context, req *mcp.CallToolRequest, in mc
 		if openErr != nil {
 			return nil, zero, openErr
 		}
-		raw, readErr := io.ReadAll(io.LimitReader(rc, maxXMLSize+1))
+		raw, readErr := io.ReadAll(io.LimitReader(rc, maxStoredXMLSize+1))
 		_ = rc.Close()
 		if readErr != nil {
 			return nil, zero, readErr
 		}
+		if len(raw) > maxStoredXMLSize {
+			return nil, zero, mcpToolError("too_large", "stored item XML exceeds readable size limit")
+		}
 		if format == "text" {
 			parsed, _ := schema.Parse(raw, schema.Options{StoredAssets: true})
 			if parsed == nil {
-				return nil, zero, mcpToolError("not_found", "stored revision XML is unreadable")
+				return nil, zero, mcpToolError("internal_error", "stored revision XML could not be parsed")
 			}
 			content = parsed.PlainText()
 		} else {
@@ -1127,18 +1265,20 @@ func mcpCanViewRevisionMounts(t *dirTree, p mcpPrincipal, mounts []revMount) boo
 	return false
 }
 
-func mcpRevisionCountTx(ctx context.Context, q sqlx.QueryerContext, t *dirTree, p mcpPrincipal, itemID, createdBy string) (int, error) {
-	isOwner := p.kind == mcpAuthAPIToken && createdBy != "" && createdBy == p.apiDigest
-	if isOwner {
-		var count int
-		err := sqlx.GetContext(ctx, q, &count, `SELECT count(*) FROM item_revisions WHERE item_id = ?`, itemID)
-		return count, err
+func mcpCanViewRevision(t *dirTree, p mcpPrincipal, revCreatedBy string, mounts []revMount) bool {
+	if p.kind == mcpAuthAPIToken && revCreatedBy != "" && revCreatedBy == p.apiDigest {
+		return true
 	}
+	return mcpCanViewRevisionMounts(t, p, mounts)
+}
+
+func mcpRevisionCountTx(ctx context.Context, q sqlx.QueryerContext, t *dirTree, p mcpPrincipal, itemID string) (int, error) {
 	var revs []struct {
-		ID  int64 `db:"id"`
-		Rev int   `db:"rev"`
+		ID        int64  `db:"id"`
+		Rev       int    `db:"rev"`
+		CreatedBy string `db:"created_by"`
 	}
-	if err := sqlx.SelectContext(ctx, q, &revs, `SELECT id, rev FROM item_revisions WHERE item_id = ? ORDER BY rev DESC`, itemID); err != nil {
+	if err := sqlx.SelectContext(ctx, q, &revs, `SELECT id, rev, COALESCE(created_by, '') AS created_by FROM item_revisions WHERE item_id = ? ORDER BY rev DESC`, itemID); err != nil {
 		return 0, err
 	}
 	if len(revs) == 0 {
@@ -1154,7 +1294,7 @@ func mcpRevisionCountTx(ctx context.Context, q sqlx.QueryerContext, t *dirTree, 
 	}
 	count := 0
 	for _, rv := range revs {
-		if mcpCanViewRevisionMounts(t, p, mountsByRev[rv.ID]) {
+		if mcpCanViewRevision(t, p, rv.CreatedBy, mountsByRev[rv.ID]) {
 			count++
 		}
 	}
@@ -1179,28 +1319,6 @@ func mountsForItemsTx(ctx context.Context, q sqlx.QueryerContext, itemIDs []stri
 	}
 	for _, r := range rows {
 		out[r.ItemID] = append(out[r.ItemID], r.DirID)
-	}
-	return out, nil
-}
-
-func ownersForItemsTx(ctx context.Context, q sqlx.QueryerContext, itemIDs []string) (map[string]string, error) {
-	out := make(map[string]string, len(itemIDs))
-	if len(itemIDs) == 0 {
-		return out, nil
-	}
-	query, args, err := sqlx.In(`SELECT id, COALESCE(created_by, '') AS created_by FROM items WHERE id IN (?)`, itemIDs)
-	if err != nil {
-		return nil, err
-	}
-	var rows []struct {
-		ID        string `db:"id"`
-		CreatedBy string `db:"created_by"`
-	}
-	if err = sqlx.SelectContext(ctx, q, &rows, query, args...); err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		out[r.ID] = r.CreatedBy
 	}
 	return out, nil
 }

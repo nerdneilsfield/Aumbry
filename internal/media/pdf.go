@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	pdfcpuapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -16,6 +17,7 @@ const (
 	MaxPDFBytes = 50 << 20
 
 	pdfHeaderProbeBytes = 1024
+	pdfParseTimeout     = 20 * time.Second
 )
 
 // ErrInvalidPDF indicates that an uploaded attachment is not a readable, non-user-encrypted PDF.
@@ -30,7 +32,13 @@ type PDFMetadata struct {
 // extracts its page count using a pure-Go stateless pdfcpu configuration. PDFs protected only by
 // an owner password (empty user password) succeed; user-password encrypted, malformed, or 0-page
 // PDFs return ErrInvalidPDF.
-func InspectPDF(rs io.ReadSeeker, detectedMIME string) (meta PDFMetadata, err error) {
+func InspectPDF(ctx context.Context, rs io.ReadSeeker, detectedMIME string) (meta PDFMetadata, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return PDFMetadata{}, fmt.Errorf("%w: %w", ErrInvalidPDF, ctxErr)
+	}
 	if detectedMIME != "application/pdf" {
 		return PDFMetadata{}, fmt.Errorf("%w: unexpected mime type %q", ErrInvalidPDF, detectedMIME)
 	}
@@ -72,8 +80,19 @@ func InspectPDF(rs io.ReadSeeker, detectedMIME string) (meta PDFMetadata, err er
 	conf.ValidationMode = model.ValidationRelaxed
 	conf.ValidateLinks = false
 	conf.CheckFileNameExt = false
+	conf.Limits.MaxObjectBytes = 32 << 20
+	conf.Limits.MaxStreamBytes = 64 << 20
+	conf.Limits.MaxDecodeBytes = 64 << 20
+	conf.Limits.MaxImageBytes = 64 << 20
+	conf.Limits.MaxObjectCount = 500_000
+	conf.Limits.MaxObjectStreamCount = 100_000
+	conf.Limits.MaxXRefEntries = 500_000
+	conf.Limits.MaxRecursionDepth = 100
 
-	pages, countErr := pdfcpuapi.PageCount(context.Background(), rs, conf)
+	parseCtx, cancel := context.WithTimeout(ctx, pdfParseTimeout)
+	defer cancel()
+
+	pages, countErr := pdfcpuapi.PageCount(parseCtx, rs, conf)
 	if countErr != nil {
 		return PDFMetadata{}, fmt.Errorf("%w: %w", ErrInvalidPDF, countErr)
 	}

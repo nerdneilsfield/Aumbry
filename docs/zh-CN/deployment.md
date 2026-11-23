@@ -215,8 +215,8 @@ Traefik 把证书保存在 `traefik-letsencrypt` 卷中。它每 10 s 探测一�
 
 ### `/mcp` 反向代理与外链抓取运行注意
 
-- **`Host`、`Origin` 与 `public_url`**：`/mcp` 在服务端逐请求校验 HTTP `Host` 与浏览器 `Origin`（防止 DNS Rebinding 与跨站请求，不依赖 loopback 监听特判）。生产环境挂在反向代理后面时，务必把反代的外部 `Host` 透传给后端（例如 nginx 保留 `proxy_set_header Host $host;`），并在配置中正确设置 `public_url = "https://<你的对外域名>"`（若 `public_url` 与反代 `Host` 不一致，`/mcp` 会直接拒绝 `403`）。
-- **SSE 与请求体转发**：若使用 `GET /mcp` 独立 SSE 长连接，在 nginx/反代上保持 `proxy_http_version 1.1` 并对 `/mcp` 关闭代理缓冲（如 `proxy_buffering off;`）；单次 `push_item` 传输带 JSON 转义 `<= 10 MiB` XML 时请求体可达 `16 MiB`，需确保反代 `client_max_body_size` ≥ `16m`（示例 nginx 已设为 `201m`）。
+- **`Host`、`Origin` 与 `public_url`**：`/mcp` 在服务端逐请求校验 HTTP `Host` 与浏览器 `Origin`（防止 DNS Rebinding 与跨站请求）。当 `public_url` 留空时，**`/mcp` 仅放行回环 `Host`（`localhost` / `127.0.0.1` / `::1`）**，任何内网或公网非回环 `Host` 一律返回 `403`。因此只要通过非回环网卡或反向代理接入 `/mcp`，必须设置 `public_url = "https://<你的对外域名>[:端口]"`，且反代务必透传含端口的原始 Host（例如 nginx 使用 `proxy_set_header Host $http_host;`，而非会丢弃非标准端口的 `$host`）。
+- **SSE 与两道体积上限**：若使用 `GET /mcp` 独立 SSE 长连接，在 nginx/反代上保持 `proxy_http_version 1.1` 并对 `/mcp` 关闭代理缓冲（`proxy_buffering off;`）。`/mcp` 同时执行两道独立大小上限：`16 MiB` JSON-RPC 原始请求体上限（超限 HTTP `413`）与 `10 MiB` 解码后 XML 上限；反代 `client_max_body_size` 至少设为 `16m`（示例 nginx 已设为 `201m`）。接近 `10 MiB` 且包含大量需 JSON 转义字符（换行、双引号、尖括号）的文档若编码后超过 `16 MiB`，请改用 CLI `aumbry push`。
 - **外链图片转存并发与直连策略**：`ingest.allow_remote_images = true`（默认）开启时，服务端最多使用 4 并发、单图 15 s、整篇 **60 s 总预算** 抓图；该过程占用全局 **4 个 `ingest` 并发槽位**之一，因此在大量并发抓取慢速外链时可能短暂触发后来请求的 `429`。专用抓图 HTTP 客户端**显式禁用代理（`Proxy: nil`）**并在每次 Socket建连（含 5 跳以内重定向）前校验 `.Unmap()` 后的真实远端 IP，**不会继承或走系统 `HTTP_PROXY`/`HTTPS_PROXY`**；若部署在必须经出口 HTTP 代理才能访问公网的隔离环境，可设为 `allow_remote_images = false` 并由推送端本地上传图片。
 
 ## 备份、存储核验与维护命令

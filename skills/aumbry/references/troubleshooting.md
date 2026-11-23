@@ -75,5 +75,5 @@
 
 ### MCP `/mcp` 常见拒绝与工具错误
 
-- **HTTP 传输层**：`401 Unauthorized`（Bearer `api_token` 或 `ad_` Token 无效/已吊销，不接受 Cookie）、`403 Forbidden`（`Host` 与 `public_url`/loopback 不匹配、`Origin` 跨站或 `null`、跨身份复用他人 `Mcp-Session-Id`）、`413`（JSON-RPC 请求体超过 `16 MiB`）。
+- **HTTP 传输层**：`401 Unauthorized`（Bearer `api_token` 或 `ad_` Token 无效/已吊销，不接受 Cookie）、`403 Forbidden`（未设 `public_url` 时用了非回环 `Host`、或 `Host`/`Origin` 与 `public_url` 不一致，以及跨身份复用他人 `Mcp-Session-Id`）、`404 Not Found`（携带未知或已过期的 `Mcp-Session-Id`）、`413`（JSON-RPC 原始请求体超过 `16 MiB` 上限，包含多转义超大 XML；请改用 CLI `aumbry push`）、`429`（匿名会话数超 16/IP 或并发 POST 超限）。
 - **工具返回 `CallToolResult{IsError: true}`**：`unauthorized`（匿名调 `push_item`）、`forbidden`（用 `ad_` Token 调 `push_item`，或访问未授权目录/条目/受 B1 隔离的私密历史修订）、`invalid_request`（`push_item` 所传 XML 包含需要本地上传的相对路径资源，须改用 CLI `aumbry push`）、`validation_failed`（附带 `schema.ValidationResult` JSON）。

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 var extraNonPublicPrefixes = mustParsePrefixes([]string{
@@ -82,14 +84,28 @@ func ValidateRemoteImageURL(raw string) (code, msg, hint string, ok bool) {
 	if u.User != nil {
 		return "REMOTE_ASSET_BLOCKED", "remote figure url must not contain userinfo credentials", "remove username/password from the image URL", false
 	}
-	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	rawHost := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if rawHost == "" {
+		return "REMOTE_ASSET_BLOCKED", "remote figure url must include a host", "use a valid https:// or http:// URL with a public host", false
+	}
+	if ip, ipErr := netip.ParseAddr(rawHost); ipErr == nil {
+		if !IsPublicAddr(ip) {
+			return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure IP %s is non-public and blocked", ip.Unmap()), "remote images must target public IP addresses", false
+		}
+		return "", "", "", true
+	}
+	asciiHost, idnaErr := idna.Lookup.ToASCII(rawHost)
+	if idnaErr != nil {
+		return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure host %q is invalid: %v", u.Hostname(), idnaErr), "use a standard ASCII domain name or public IP", false
+	}
+	host := strings.TrimSuffix(strings.ToLower(asciiHost), ".")
 	if host == "" {
 		return "REMOTE_ASSET_BLOCKED", "remote figure url must include a host", "use a valid https:// or http:// URL with a public host", false
 	}
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "localhost.localdomain" {
 		return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure host %q is blocked", u.Hostname()), "remote images must target public hosts", false
 	}
-	if ip, err := netip.ParseAddr(host); err == nil {
+	if ip, ipErr := netip.ParseAddr(host); ipErr == nil {
 		if !IsPublicAddr(ip) {
 			return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure IP %s is non-public and blocked", ip.Unmap()), "remote images must target public IP addresses", false
 		}

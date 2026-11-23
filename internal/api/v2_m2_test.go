@@ -8,10 +8,13 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -20,6 +23,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	pdfcpuapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/nerdneilsfield/aumbry/internal/auth"
+	"github.com/nerdneilsfield/aumbry/internal/db"
 )
 
 func buildMinimalTestPDF(t *testing.T, pages int) []byte {
@@ -261,6 +268,15 @@ func TestV2M2RemoteImagesAndSSRF(t *testing.T) {
 		case "/not-svg-root.svg":
 			w.Header().Set("Content-Type", "image/svg+xml")
 			_, _ = w.Write([]byte(`<!-- <svg --><html><body>hi</body></html>`))
+		case "/signed-redir":
+			http.Redirect(w, r, "http://cdn.example.org/check-referer", http.StatusFound)
+		case "/check-referer":
+			if r.Header.Get("Referer") != "" {
+				http.Error(w, "Referer leaked signed source URL: "+r.Header.Get("Referer"), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBytes)
 		default:
 			if strings.HasPrefix(r.URL.Path, "/many/") {
 				w.Header().Set("Content-Type", "image/png")
@@ -328,6 +344,7 @@ func TestV2M2RemoteImagesAndSSRF(t *testing.T) {
   <figure id="f1" src="%s" caption="png"/>
   <figure id="f2" src="http://cdn.example.org/alias.jpg" caption="webp"/>
   <figure id="f3" src="http://cdn.example.org/ok.svg" caption="svg"/>
+  <figure id="f4" src="http://cdn.example.org/signed-redir?sig=topsecret" caption="redir"/>
 </body></document>`, canonicalURL, canonicalURL)
 
 		resp := admin.ingest(ingestReq{xml: xml, dirs: []string{dir}})
@@ -827,4 +844,315 @@ func (rt *hostInjectRT) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	}
 	return rt.base.RoundTrip(clone)
+}
+
+func TestV2M2ReviewRegressions(t *testing.T) {
+	const initBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`
+
+	t.Run("H1 per-revision creator B1 boundary on MCP get_item and revision_count", func(t *testing.T) {
+		e := newEnv(t)
+		admin := e.admin()
+		ag := e.anon()
+		pubQ := admin.createDir("", "Public Q", "")
+		protC := admin.createDir("", "Protected C", "pw-c")
+
+		// Token A creates item (rev=1 in pubQ); admin moves mount to protC so Token B's rev=2 is recorded strictly under protC.
+		itemID := ag.ingestOK(ingestReq{
+			key:  "h1:shared:item",
+			xml:  xmlDoc(docOpts{title: "H1 Rev1", md: "token A initial public"}),
+			dirs: []string{pubQ},
+		})
+		if st := admin.do("PUT", "/api/v1/admin/items/"+itemID+"/mounts", map[string]any{"dirs": []string{protC}}).status; st != http.StatusNoContent {
+			t.Fatalf("admin move mount to protC = %d", st)
+		}
+		_ = ag.ingestOK(ingestReq{
+			token: "other",
+			key:   "h1:shared:item",
+			xml:   xmlDoc(docOpts{title: "H1 Rev2 Secret", md: "token B private draft in protC"}),
+			dirs:  []string{protC},
+		})
+		// Clear mounts (or via creator unpublish), then Token B publishes sanitized rev=3 to pubQ.
+		if st := admin.do("PUT", "/api/v1/admin/items/"+itemID+"/mounts", map[string]any{"dirs": []string{}}).status; st != http.StatusNoContent {
+			t.Fatalf("admin clear mounts = %d", st)
+		}
+		_ = ag.ingestOK(ingestReq{
+			token: "other",
+			key:   "h1:shared:item",
+			xml:   xmlDoc(docOpts{title: "H1 Rev3 Public", md: "token B sanitized public"}),
+			dirs:  []string{pubQ},
+		})
+
+		connectToken := func(tok string) *mcp.ClientSession {
+			c := mcp.NewClient(&mcp.Implementation{Name: "h1", Version: "1.0"}, nil)
+			tr := &mcp.StreamableClientTransport{
+				Endpoint: e.srv.URL + "/mcp",
+				HTTPClient: &http.Client{
+					Transport: &hostInjectRT{
+						base:    http.DefaultTransport,
+						headers: http.Header{"Authorization": []string{"Bearer " + tok}},
+					},
+				},
+				DisableStandaloneSSE: true,
+			}
+			sess, err := c.Connect(t.Context(), tr, nil)
+			if err != nil {
+				t.Fatalf("connect(%s): %v", tok, err)
+			}
+			t.Cleanup(func() { _ = sess.Close() })
+			return sess
+		}
+
+		sessA := connectToken(apiToken)
+		sessB := connectToken("other")
+
+		// Token A is item creator, NOT creator of rev=2 -> cannot see rev=2 in count or get_item!
+		listA, rawA, isErr := callMCPJSON(t, sessA, "list_items", map[string]any{"key": "h1:shared:item"})
+		if isErr {
+			t.Fatalf("sessA list_items = %s", rawA)
+		}
+		if gotCnt := int(listA["items"].([]any)[0].(map[string]any)["revision_count"].(float64)); gotCnt != 2 {
+			t.Fatalf("Token A revision_count = %d, want 2 (excluding B's private rev=2)", gotCnt)
+		}
+		if _, rev2Msg, rev2Err := callMCPJSON(t, sessA, "get_item", map[string]any{"id": itemID, "rev": 2}); !rev2Err || !strings.Contains(rev2Msg, "forbidden") {
+			t.Fatalf("Token A read B's private rev=2 = err=%v msg=%q, want forbidden", rev2Err, rev2Msg)
+		}
+		if rev1Out, _, rev1Err := callMCPJSON(t, sessA, "get_item", map[string]any{"id": itemID, "rev": 1, "format": "text"}); rev1Err || !strings.Contains(rev1Out["content"].(string), "token A initial public") {
+			t.Fatalf("Token A read own rev=1 failed: err=%v %v", rev1Err, rev1Out)
+		}
+
+		// Token B is creator of rev=2 -> sees all 3 revisions and can read rev=2.
+		listB, rawB, isErr := callMCPJSON(t, sessB, "list_items", map[string]any{"key": "h1:shared:item"})
+		if isErr {
+			t.Fatalf("sessB list_items = %s", rawB)
+		}
+		if gotCnt := int(listB["items"].([]any)[0].(map[string]any)["revision_count"].(float64)); gotCnt != 3 {
+			t.Fatalf("Token B revision_count = %d, want 3", gotCnt)
+		}
+		if rev2Out, _, rev2Err := callMCPJSON(t, sessB, "get_item", map[string]any{"id": itemID, "rev": 2, "format": "text"}); rev2Err || !strings.Contains(rev2Out["content"].(string), "token B private draft") {
+			t.Fatalf("Token B read own rev=2 failed: err=%v %v", rev2Err, rev2Out)
+		}
+	})
+
+	t.Run("H2 + M1 unknown sid 404, atomic anon session cap 16, concurrent anon POST cap 4, and IPv6 /64 isolation", func(t *testing.T) {
+		e := newEnv(t)
+
+		// Unknown Mcp-Session-Id -> 404 instead of forwarding to SDK.
+		badSIDReq, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+		badSIDReq.Header.Set("Content-Type", "application/json")
+		badSIDReq.Header.Set("Accept", "application/json, text/event-stream")
+		badSIDReq.Header.Set(mcpSessionHeader, "unknown-session-id")
+		badSIDResp, err := http.DefaultClient.Do(badSIDReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = badSIDResp.Body.Close()
+		if badSIDResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("unknown sid = %d, want 404", badSIDResp.StatusCode)
+		}
+
+		// Concurrent anonymous init burst (24 parallel requests) never exceeds 16 sessions.
+		var okCount, rejectCount atomic.Int32
+		var firstSID atomic.Value
+		var wg sync.WaitGroup
+		for range 24 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", strings.NewReader(initBody))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json, text/event-stream")
+				resp, rErr := http.DefaultClient.Do(req)
+				if rErr != nil {
+					t.Errorf("concurrent init: %v", rErr)
+					return
+				}
+				_ = resp.Body.Close()
+				switch resp.StatusCode {
+				case http.StatusOK:
+					okCount.Add(1)
+					if sid := resp.Header.Get(mcpSessionHeader); sid != "" {
+						firstSID.CompareAndSwap(nil, sid)
+					}
+				case http.StatusTooManyRequests:
+					rejectCount.Add(1)
+				default:
+					t.Errorf("unexpected concurrent init status: %d", resp.StatusCode)
+				}
+			}()
+		}
+		wg.Wait()
+		if okCount.Load() > 16 || okCount.Load()+rejectCount.Load() != 24 || rejectCount.Load() == 0 {
+			t.Fatalf("concurrent init cap failed: ok=%d reject=%d", okCount.Load(), rejectCount.Load())
+		}
+
+		// Concurrent anonymous POST body reads on an existing session cap at 4 in flight per IP.
+		sid, _ := firstSID.Load().(string)
+		if sid == "" {
+			t.Fatal("missing initial anonymous session id")
+		}
+		pipes := make([]*io.PipeWriter, 4)
+		var postWG sync.WaitGroup
+		entered := make(chan struct{}, 4)
+		for i := range 4 {
+			pr, pw := io.Pipe()
+			pipes[i] = pw
+			postWG.Add(1)
+			go func(r io.Reader) {
+				defer postWG.Done()
+				req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", r)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json, text/event-stream")
+				req.Header.Set(mcpSessionHeader, sid)
+				entered <- struct{}{}
+				resp, pErr := http.DefaultClient.Do(req)
+				if pErr == nil {
+					_ = resp.Body.Close()
+				}
+			}(pr)
+			_, _ = pw.Write([]byte(`{"jsonrpc":"2.0",`))
+		}
+		for range 4 {
+			<-entered
+		}
+		// Give handlers a moment to acquire their in-flight slot cleanly.
+		time.Sleep(50 * time.Millisecond)
+
+		req5, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":9,"method":"tools/list"}`))
+		req5.Header.Set("Content-Type", "application/json")
+		req5.Header.Set("Accept", "application/json, text/event-stream")
+		req5.Header.Set(mcpSessionHeader, sid)
+		resp5, err5 := http.DefaultClient.Do(req5)
+		if err5 != nil {
+			t.Fatal(err5)
+		}
+		_ = resp5.Body.Close()
+		for _, pw := range pipes {
+			_ = pw.Close()
+		}
+		postWG.Wait()
+		if resp5.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("5th concurrent anon POST = %d, want 429", resp5.StatusCode)
+		}
+
+		// Two distinct IPv6 addresses sharing a /64 must NOT share anonymous session ownership.
+		eV6 := newEnv(t)
+		initV6 := httptest.NewRequest(http.MethodPost, "http://localhost/mcp", strings.NewReader(initBody))
+		initV6.Host = "localhost"
+		initV6.RemoteAddr = "[2001:db8::1]:12345"
+		initV6.Header.Set("Content-Type", "application/json")
+		initV6.Header.Set("Accept", "application/json, text/event-stream")
+		recV6 := httptest.NewRecorder()
+		eV6.router.ServeHTTP(recV6, initV6)
+		v6SID := recV6.Header().Get(mcpSessionHeader)
+		if recV6.Code != http.StatusOK || v6SID == "" {
+			t.Fatalf("IPv6 init = %d sid=%q", recV6.Code, v6SID)
+		}
+
+		peerV6 := httptest.NewRequest(http.MethodPost, "http://localhost/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+		peerV6.Host = "localhost"
+		peerV6.RemoteAddr = "[2001:db8::2]:12345"
+		peerV6.Header.Set("Content-Type", "application/json")
+		peerV6.Header.Set("Accept", "application/json, text/event-stream")
+		peerV6.Header.Set(mcpSessionHeader, v6SID)
+		recPeer := httptest.NewRecorder()
+		eV6.router.ServeHTTP(recPeer, peerV6)
+		if recPeer.Code != http.StatusForbidden {
+			t.Fatalf("same-/64 sibling IPv6 session reuse = %d, want 403", recPeer.Code)
+		}
+	})
+
+	t.Run("H3 + M2 fail-closed Host when public_url empty and port preservation", func(t *testing.T) {
+		eNoPub := newEnv(t)
+		serveLocalAddr := func(host, origin string) int {
+			req := httptest.NewRequest(http.MethodPost, "http://"+host+"/mcp", strings.NewReader(initBody))
+			req.Host = host
+			if origin != "" {
+				req.Header.Set("Origin", origin)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			ctx := context.WithValue(req.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("10.0.0.5"), Port: 8080})
+			rec := httptest.NewRecorder()
+			eNoPub.router.ServeHTTP(rec, req.WithContext(ctx))
+			return rec.Code
+		}
+		if st := serveLocalAddr("evil.example:8080", "http://evil.example:8080"); st != http.StatusForbidden {
+			t.Fatalf("non-loopback DNS rebind without public_url = %d, want 403", st)
+		}
+		if st := serveLocalAddr("10.0.0.5:8080", "http://10.0.0.5:8080"); st != http.StatusForbidden {
+			t.Fatalf("LAN IP host without public_url = %d, want 403", st)
+		}
+		if st := serveLocalAddr("localhost:8080", "http://localhost:8080"); st != http.StatusOK {
+			t.Fatalf("loopback localhost with empty public_url = %d, want 200", st)
+		}
+
+		ePort := newEnvWithOptions(t, RouterOptions{PublicURL: "https://hub.example.org:8443"}, nil)
+		checkPortHost := func(host, origin string) int {
+			req := httptest.NewRequest(http.MethodPost, "https://"+host+"/mcp", strings.NewReader(initBody))
+			req.Host = host
+			req.Header.Set("Origin", origin)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			rec := httptest.NewRecorder()
+			ePort.router.ServeHTTP(rec, req)
+			return rec.Code
+		}
+		if st := checkPortHost("hub.example.org:8443", "https://hub.example.org:8443"); st != http.StatusOK {
+			t.Fatalf("matching non-standard port = %d, want 200", st)
+		}
+		if st := checkPortHost("hub.example.org", "https://hub.example.org:8443"); st != http.StatusForbidden {
+			t.Fatalf("port-stripped Host = %d, want 403", st)
+		}
+	})
+
+	t.Run("L2 configured API token starting with ad_ works on /mcp", func(t *testing.T) {
+		const adAPIToken = "ad_configured_api_token_123456"
+		database, err := db.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = database.Close() })
+		pwHash, _ := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.MinCost)
+		sessions, err := auth.New(auth.Settings{
+			AdminUser:         adminUser,
+			AdminPasswordHash: string(pwHash),
+			APITokens:         []string{adAPIToken},
+			CookieSecret:      cookieSecret,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		store := &memStore{files: map[string][]byte{}}
+		router, err := NewRouter(database, store, sessions, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(router)
+		t.Cleanup(srv.Close)
+
+		c := mcp.NewClient(&mcp.Implementation{Name: "ad-api", Version: "1.0"}, nil)
+		tr := &mcp.StreamableClientTransport{
+			Endpoint: srv.URL + "/mcp",
+			HTTPClient: &http.Client{
+				Transport: &hostInjectRT{
+					base:    http.DefaultTransport,
+					headers: http.Header{"Authorization": []string{"Bearer " + adAPIToken}},
+				},
+			},
+			DisableStandaloneSSE: true,
+		}
+		sess, err := c.Connect(t.Context(), tr, nil)
+		if err != nil {
+			t.Fatalf("ad_-prefixed API token Connect failed: %v", err)
+		}
+		t.Cleanup(func() { _ = sess.Close() })
+
+		out, raw, isErr := callMCPJSON(t, sess, "push_item", map[string]any{
+			"xml":   xmlDoc(docOpts{title: "AD Prefixed API Token Push"}),
+			"draft": true,
+		})
+		if isErr || out["id"] == "" {
+			t.Fatalf("push_item with ad_-prefixed API token = err=%v raw=%s", isErr, raw)
+		}
+	})
 }

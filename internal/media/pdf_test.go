@@ -63,7 +63,7 @@ func TestInspectPDF(t *testing.T) {
 	raw3 := buildTestPDF(t, 3)
 
 	t.Run("valid multi-page PDF returns exact page count", func(t *testing.T) {
-		meta, err := InspectPDF(bytes.NewReader(raw3), "application/pdf")
+		meta, err := InspectPDF(t.Context(), bytes.NewReader(raw3), "application/pdf")
 		if err != nil {
 			t.Fatalf("InspectPDF(3-page) = %v", err)
 		}
@@ -74,7 +74,7 @@ func TestInspectPDF(t *testing.T) {
 
 	t.Run("owner-password only PDF (empty user password) succeeds", func(t *testing.T) {
 		ownerOnly := encryptTestPDF(t, raw3, "", "owner-secret")
-		meta, err := InspectPDF(bytes.NewReader(ownerOnly), "application/pdf")
+		meta, err := InspectPDF(t.Context(), bytes.NewReader(ownerOnly), "application/pdf")
 		if err != nil {
 			t.Fatalf("InspectPDF(owner-only encrypted) = %v", err)
 		}
@@ -85,17 +85,22 @@ func TestInspectPDF(t *testing.T) {
 
 	t.Run("user-password encrypted PDF is rejected", func(t *testing.T) {
 		userLocked := encryptTestPDF(t, raw3, "user-secret", "owner-secret")
-		if _, err := InspectPDF(bytes.NewReader(userLocked), "application/pdf"); !errors.Is(err, ErrInvalidPDF) {
+		if _, err := InspectPDF(t.Context(), bytes.NewReader(userLocked), "application/pdf"); !errors.Is(err, ErrInvalidPDF) {
 			t.Fatalf("InspectPDF(user-locked) = %v, want ErrInvalidPDF", err)
 		}
 	})
 
-	t.Run("corrupt or mismatched MIME rejected", func(t *testing.T) {
-		if _, err := InspectPDF(bytes.NewReader([]byte("%PDF-1.4\nbad")), "application/pdf"); !errors.Is(err, ErrInvalidPDF) {
+	t.Run("corrupt, canceled ctx, or mismatched MIME rejected", func(t *testing.T) {
+		if _, err := InspectPDF(t.Context(), bytes.NewReader([]byte("%PDF-1.4\nbad")), "application/pdf"); !errors.Is(err, ErrInvalidPDF) {
 			t.Fatalf("InspectPDF(corrupt) = %v, want ErrInvalidPDF", err)
 		}
-		if _, err := InspectPDF(bytes.NewReader(raw3), "text/plain"); !errors.Is(err, ErrInvalidPDF) {
+		if _, err := InspectPDF(t.Context(), bytes.NewReader(raw3), "text/plain"); !errors.Is(err, ErrInvalidPDF) {
 			t.Fatalf("InspectPDF(wrong mime) = %v, want ErrInvalidPDF", err)
+		}
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		if _, err := InspectPDF(canceled, bytes.NewReader(raw3), "application/pdf"); !errors.Is(err, ErrInvalidPDF) {
+			t.Fatalf("InspectPDF(canceled) = %v, want ErrInvalidPDF", err)
 		}
 	})
 }

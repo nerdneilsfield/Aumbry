@@ -9,17 +9,17 @@ Aumbry 是一个面向 AI agent 与人工研究产出的自托管私有报告库
 
 ## 核心特性
 
-- **单二进制部署与内嵌阅读器**：`aumbry-server` 内嵌 Web 阅读器与管理控制台，单个二进制直接提供 `/d/<id>`、`/r/<id>`、`/p/<id>` 与 `/admin` 页面。
-- **前后端共享的 XML 校验器**：`aumbry` CLI 与 `aumbry-server` 执行同一套 XML 校验规则（`version="1.1"`），在上传前拦截未知标签、图表错误、超限代码块及越界符号链接图片。
-- **SQLite 元数据与全文检索**：目录关系、条目元数据与全文搜索索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 2 个字及以上的中文词直接检索（单字也可以）、其他 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
-- **目录级密码继承与私有对象存储代理分发**：未挂载目录的条目对访客返回 HTTP `403`；目录密码沿子树继承；保存在私有对象存储（默认 `local`，也支持 `webdav` / `s3` / `r2`）中的 XML 与图片仅通过服务端代理输出，并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
-- **随库分发的 Agent Skill**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档一起提供，规范 agent 发现目录、离线校验、保存草稿及幂等更新流程。
+- **单二进制部署与内嵌阅读器**：`aumbry-server` 内嵌 Web 阅读器与管理控制台，单个二进制直接提供 `/d/<id>`、`/r/<id>`、`/p/<id>`、`/admin`、`/feeds/` RSS/Podcast 订阅源，以及 `/mcp` Streamable HTTP MCP 服务。
+- **前后端共享的 XML 协议（`1.2`）与离线校验器**：`aumbry` CLI 与 `aumbry-server` 执行同一套 XML 校验规则（`version="1.2"`，同时向下兼容 `1.1`），支持 `<audio>` 章节/逐字稿、可选 `<attachment type="pdf">` Canvas 按需分页阅读（纯 Go `pdfcpu` 页数与 `#att-<id>:p=<N>` 校验）、带 SSRF 防护的公网 `<figure src="http(s)://...">` 自动转存，以及越界符号链接拦截。
+- **SQLite 元数据、修订历史、反向引用与全文检索**：目录关系、条目元数据、已发布修订快照（含前端分块高亮对比）、简报反向引用与 FTS5 索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 2 个字及以上的中文词直接检索（单字也可以）、其他 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
+- **目录分权、只读订阅 Token 与私有对象存储**：未挂载条目对访客返回 HTTP `403`；目录密码沿子树继承；目录只读 Token（`ad_...`）支持受保护 `/feeds/` 订阅及 `/mcp` 读取且不穿透独立设密的子目录；私有后端（`local`、`webdav`、`s3`、`r2`）对象仅经服务端鉴权代理输出（支持 HTTP `Range`）并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
+- **随库分发的 Agent Skill 与 MCP Server**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档分发，并内置 `/mcp` 端点（`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`）。
 
 ## 概述
 
-Aumbry 把“报告编写/校验”与“托管/权限控制”分开。AI agent 在本地生成结构化 XML 报告与相对路径配图，先运行 `aumbry validate` 通过本地校验，再使用 `api_tokens` 中的 Bearer token 推送到服务端 `POST /api/v1/ingest`。人类读者通过获分享的目录链接（`/d/<dir-id>`）或条目链接（`/r/<id>`、`/p/<id>`）访问内容，网站首页（`/`）不列出任何公开目录。
+Aumbry 把“报告编写/校验”与“托管/权限控制”分开。AI agent 在本地生成结构化 XML 报告与相对路径图片、音频或 PDF，先运行 `aumbry validate` 离线校验，再通过 `aumbry push`（`POST /api/v1/ingest`）或 `/mcp` 的 `push_item` 工具推送。人类读者通过获分享的目录链接（`/d/<dir-id>`）、条目链接（`/r/<id>`、`/p/<id>`）或订阅源（`/feeds/<dir-id>/rss.xml`、`podcast.xml`）访问内容，网站首页（`/`）不列出任何公开目录。
 
-项目基于 MIT 许可证开源（`github.com/nerdneilsfield/aumbry`），当前 `master` 分支实现 `1.1` 协议及配套功能。Aumbry 定位为单实例私有研究库，而不是多人公开 Wiki 或多副本集群，每个 `data_dir` 与对象存储同一时刻仅允许连接一个服务端进程。
+项目基于 MIT 许可证开源（`github.com/nerdneilsfield/aumbry`），当前 `master` 分支实现 `1.2` 协议及配套功能。Aumbry 定位为单实例私有研究库，而不是多人公开 Wiki 或多副本集群，每个 `data_dir` 与对象存储同一时刻仅允许连接一个服务端进程。
 
 ## 安装
 
@@ -171,6 +171,10 @@ npx skills add nerdneilsfield/aumbry --skill aumbry -g
 | `s3.*` | `AUMBRY_S3_*` | `storage = "s3"` 时必填 | 无 | 端点、区域、桶名、静态密钥与 `path_style` |
 | `r2.*` | `AUMBRY_R2_*` | `storage = "r2"` 时必填 | 无 | Cloudflare R2 `account_id`、桶名与静态密钥 |
 | `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | 否 | `[]` | 可信反向代理 IP 或 CIDR 列表 |
+| `public_url` | `AUMBRY_PUBLIC_URL` | 否 | `""` | 订阅源及非回环 `/mcp` Host/Origin 校验基址（`http(s)://host[:port]`） |
+| `revisions.max_per_item` | `AUMBRY_REVISIONS_MAX_PER_ITEM` | 否 | `20` | 单条目最多保留的已发布修订数（`0` 不限制） |
+| `ingest.max_body_mb` | `AUMBRY_INGEST_MAX_BODY_MB` | 否 | `200` | `/api/v1/ingest` 单次上传体上限（MiB，最小 `20`） |
+| `ingest.allow_remote_images` | `AUMBRY_INGEST_ALLOW_REMOTE_IMAGES` | 否 | `true` | 是否自动转存 `v1.2` 中的公网 `http(s)://` 外链插图 |
 
 完整字段约束、脱敏规则与容器 UID `65532` 权限配置见[服务端配置参考](docs/zh-CN/configuration.md)。
 
@@ -178,12 +182,12 @@ npx skills add nerdneilsfield/aumbry --skill aumbry -g
 
 | 文档 | 内容范围 |
 | :--- | :--- |
-| [部署与运维指南](docs/zh-CN/deployment.md) | Docker Compose（`.env` 与 TOML）、二进制运行、反向代理、WAL 安全备份、`verify-storage`、`gc` 与单实例限制 |
+| [部署与运维指南](docs/zh-CN/deployment.md) | Docker Compose（`.env` 与 TOML）、二进制运行、反向代理（`/mcp` 与 `/feeds/`）、WAL 安全备份、`verify-storage`、`gc`、`reindex` 与单实例限制 |
 | [服务端配置参考](docs/zh-CN/configuration.md) | 配置查找顺序、环境变量覆盖规则、全部配置键类型与约束、`htpasswd` 转义、`check-config` |
-| [目录与访问控制](docs/zh-CN/directories-and-access.md) | 目录树、密码设置/清除与继承、`protected` 与 `has_password` 差异、多目录可见性、未挂载草稿 |
-| [CLI 使用与配置参考](docs/zh-CN/cli.md) | profile 与环境变量、配置优先级、`validate`/`push`/`dirs`/`list`/`unpublish`/`delete` 命令与实测输出 |
-| [Agent 与 Skill 集成指南](docs/zh-CN/agents-and-skill.md) | Skill 安装、目标目录决策流程、草稿与发布授权约定、Token 与归属权 |
-| [XML 协议入门](docs/zh-CN/protocol.md) | 协议定位、`1.1` 结构规则、`aumbry schema` 与完整参考入口 |
+| [目录与访问控制](docs/zh-CN/directories-and-access.md) | 目录树、密码设置/清除与继承、`protected` 与 `has_password` 差异、`ad_` Token、历史修订双门权限与 `/mcp` 权限矩阵 |
+| [CLI 使用与配置参考](docs/zh-CN/cli.md) | profile 与环境变量、配置优先级、`validate`/`push`/`dirs`/`list`/`unpublish`/`delete` 及 `/mcp` 接口说明 |
+| [Agent 与 Skill 集成指南](docs/zh-CN/agents-and-skill.md) | Skill 安装、目标目录决策流程、草稿与发布授权约定、MCP 接入与 Token 归属 |
+| [XML 协议入门](docs/zh-CN/protocol.md) | 协议定位、`1.2`/`1.1` 结构规则（`<audio>`、`<attachment type="pdf">`、外链图片）、`aumbry schema` 与完整参考入口 |
 | [已知问题](docs/zh-CN/known-issues.md) | 已弄清、尚未修复的问题：什么情况下遇到、怎么处理 |
 
 问题反馈与讨论见 GitHub 仓库（`github.com/nerdneilsfield/Aumbry`）。
@@ -191,7 +195,8 @@ npx skills add nerdneilsfield/aumbry --skill aumbry -g
 ## 安全与运维要点
 
 - **严格单实例运行**：服务端对 SQLite 仅开放 1 条连接，并在进程内存中统计限流（密码解锁与管理员登录每 IP 每分钟 10 次；`/ingest` 与 `/agent/*` 每 IP 每分钟 120 次且同时最多 4 个 `/ingest` 上传请求）。同一 `data_dir` 与对象存储只能启动一个实例。
-- **反向代理与 Cookie**：`trusted_proxies` 默认为空，服务端忽略所有 `X-Forwarded-For` 与 `X-Forwarded-Proto`。配置代理网段后，按从右到左还原真实客户端 IP，并在到达 `X-Forwarded-Proto: https` 时为 Cookie（`aumbry_admin` 7 天、`aumbry_unlocked` 30 天，`HttpOnly`、`SameSite=Lax`）启用 `Secure` 标志。
+- **反向代理、Cookie 与 `/mcp`**：`trusted_proxies` 默认为空，服务端忽略所有 `X-Forwarded-For` 与 `X-Forwarded-Proto`。配置代理网段后，按从右到左还原真实客户端 IP，并在到达 `X-Forwarded-Proto: https` 时为 Cookie（`aumbry_admin` 7 天、`aumbry_unlocked` 30 天，`HttpOnly`、`SameSite=Lax`）启用 `Secure` 标志。若通过非回环地址或反向代理开放 `/mcp`，须设置 `public_url` 并透传完整 `Host`（含端口，如 nginx 使用 `proxy_set_header Host $http_host;`）。
+- **外链图片转存 SSRF 防线**：开启 `ingest.allow_remote_images`（默认）时，抓图客户端显式设定 `Proxy: nil`（不继承 `HTTP_PROXY`/`HTTPS_PROXY`），在建立连接与跳转前对 `.Unmap()` 后的真实远端 IP 做公网校验，并对 SVG 执行禁用 DTD 的良构 XML 解析。
 - **在线备份与离线 GC**：请使用 `aumbry-server backup --out <path>`（通过 SQLite `VACUUM INTO` 在线生成一致快照），不要在 WAL 模式下直接复制 `aumbry.db`。执行破坏性 `aumbry-server gc` 前必须先停止服务端；`gc` 仅清理未被引用的 Aumbry 命名规则对象。
 
 ## 开发与验证
