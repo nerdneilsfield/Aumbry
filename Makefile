@@ -6,13 +6,16 @@ date := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 ldflags := -X $(pkg)/internal/buildinfo.Version=$(version) -X $(pkg)/internal/buildinfo.Commit=$(commit) -X $(pkg)/internal/buildinfo.Date=$(date)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup frontend build build-server build-cli install run test clean fmt fmt-check vet lint check hooks release-check release-test skill-refs skill-check
+.PHONY: help setup test-web frontend build build-server build-cli install run test clean fmt fmt-check vet lint check hooks release-check release-test skill-refs skill-check
 
 help: ## list makefile targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-24s\033[0m %s\n", $$1, $$2}'
 
 setup: ## install frontend dependencies
 	cd web && npm ci
+
+test-web: ## run frontend unit tests
+	cd web && npm test
 
 frontend: ## build the Vue frontend for embedding
 	cd web && npm run build

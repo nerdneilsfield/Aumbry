@@ -38,7 +38,7 @@ jobs:
           version: v2.15.0
           args: -c .golangci.yml
       - name: Check Go
-        run: make setup build-server fmt-check vet test
+        run: make setup test-web build-server fmt-check vet test
       - name: Check Skill
         run: make skill-check
 
