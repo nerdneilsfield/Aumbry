@@ -69,10 +69,10 @@ CLI flags (--dir, --profile)  >  Environment variables (AUMBRY_SERVER, AUMBRY_TO
 
 `--profile <name>` selects the profile for that command without changing `active_profile`, and environment variables still override the non-empty fields inside that profile. Naming a profile that does not exist in `config.yaml` fails with exit code `1`.
 
-## Global flags and exit codes
+## Flags, version flag, and exit codes
 
-- `-v`, `--verbose`: writes debug logs to `stderr`.
-- `--version`: prints CLI version, short commit hash, and build time, then exits.
+- `-v`, `--verbose` (global): writes debug logs to `stderr`.
+- `--version` (root command only, e.g. `aumbry --version`, equivalent to `aumbry version`): prints CLI version, short commit hash, and build time, then exits.
 - Exit code `0`: command succeeded (or document is valid).
 - Exit code `1`: invalid arguments, local/remote validation failure, network error, or server error response.
 
@@ -351,7 +351,7 @@ aumbry delete MDUnpJpiAjMo --yes
   go: go1.27.4 linux/amd64
   ```
 
-- `aumbry status [--profile <name>] [--json]`: calls `GET /api/v1/agent/status` to inspect the remote server's version/build metadata, health and dependency checks, uptime, CPU usage and memory (process RSS / Go heap / goroutines), SQLite footprint, directory/item/revision/asset counts, and live ingest/MCP session concurrency (automatically notes CLI vs server version mismatches; pass `--json` for raw JSON):
+- `aumbry status [--profile <name>] [--json]`: calls `GET /api/v1/agent/status` to inspect the remote server's version/build metadata, health and dependency checks, uptime, CPU usage and memory (process RSS / Go heap / goroutines), storage backend type, live ingest/MCP session concurrency, and operational limits (automatically notes CLI vs server version mismatches; pass `--json` for raw JSON; full-repository content counts and SQLite footprint are exposed only to the admin console via `GET /api/v1/admin/status`):
 
   ```sh
   aumbry status
@@ -366,8 +366,7 @@ aumbry delete MDUnpJpiAjMo --yes
   Runtime:   go1.27.4 linux/amd64, goroutines=14, gc=5
   CPU:       3.5% across 8 cores (1.25s total)
   Memory:    rss 24.0 MB (heap 4.00 MB alloc / 6.00 MB in-use / 32.0 MB sys)
-  Storage:   local (sqlite 128 KB)
-  Content:   dirs=5 (2 protected), items=9 (7 published, 2 drafts), revisions=14, assets=6 (3.00 MB), dir_tokens=1
+  Storage:   local
   Activity:  ingest=1/4, mcp_sessions=3 (anon=2, anon_posts=0)
   Limits:    max_ingest=200 MB, max_revisions=20, remote_images=true, public_url=true, trusted_proxies=1
   ```

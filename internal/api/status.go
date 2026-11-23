@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"runtime"
-	"runtime/metrics"
 	"strings"
 	"sync"
 	"time"
@@ -18,17 +17,19 @@ import (
 )
 
 const (
-	cpuSampleMinWindow = 0.5
-	cpuBootMinWindow   = 0.05
+	cpuSampleMinWindow   = 0.5
+	cpuBootMinWindow     = 0.05
+	statusDBStatsTimeout = 2 * time.Second
 )
 
 type cpuSampler struct {
-	mu      sync.Mutex
-	bootAt  time.Time
-	bootCPU float64
-	prevAt  time.Time
-	prevCPU float64
-	lastPct float64
+	mu        sync.Mutex
+	bootAt    time.Time
+	bootCPU   float64
+	prevAt    time.Time
+	prevCPU   float64
+	lastPct   float64
+	hasSample bool
 }
 
 func newCPUSampler() *cpuSampler {
@@ -40,19 +41,6 @@ func newCPUSampler() *cpuSampler {
 		prevAt:  now,
 		prevCPU: cur,
 	}
-}
-
-func readProcessCPUSeconds() float64 {
-	sample := []metrics.Sample{{Name: "/cpu/classes/total:cpu-seconds"}}
-	metrics.Read(sample)
-	if sample[0].Value.Kind() != metrics.KindFloat64 {
-		return 0
-	}
-	v := sample[0].Value.Float64()
-	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-		return 0
-	}
-	return v
 }
 
 func clampRoundedCPUPercent(dCPU, dt float64) float64 {
@@ -83,9 +71,10 @@ func (c *cpuSampler) sample() (totalSeconds, percent float64) {
 		c.prevAt = now
 		c.prevCPU = cur
 		c.lastPct = pct
+		c.hasSample = true
 		return total, pct
 	}
-	if c.lastPct == 0 {
+	if !c.hasSample {
 		if bootDT := now.Sub(c.bootAt).Seconds(); bootDT > cpuBootMinWindow {
 			return total, clampRoundedCPUPercent(cur-c.bootCPU, bootDT)
 		}
@@ -93,7 +82,7 @@ func (c *cpuSampler) sample() (totalSeconds, percent float64) {
 	return total, c.lastPct
 }
 
-// RuntimeStatus captures pure-Go runtime CPU, memory, goroutine, and GC telemetry.
+// RuntimeStatus captures process CPU, memory, goroutine, and GC telemetry.
 type RuntimeStatus struct {
 	GoVersion       string  `json:"go_version"`
 	GOOS            string  `json:"goos"`
@@ -111,10 +100,10 @@ type RuntimeStatus struct {
 	ProcessRSSBytes uint64  `json:"process_rss_bytes,omitempty"`
 }
 
-// StorageStatus identifies the active object storage backend type and SQLite footprint.
+// StorageStatus identifies the active object storage backend type and optional SQLite footprint (admin only).
 type StorageStatus struct {
 	Backend     string `json:"backend"`
-	SQLiteBytes int64  `json:"sqlite_bytes"`
+	SQLiteBytes int64  `json:"sqlite_bytes,omitempty"`
 }
 
 // ContentCounts summarizes stored repository entities without exposing item titles or secret values.
@@ -149,13 +138,14 @@ type ConfigStatus struct {
 }
 
 // ServerStatus is the payload returned by GET /api/v1/admin/status and GET /api/v1/agent/status.
+// Full-repository counts and sqlite_bytes are populated only on the admin endpoint.
 type ServerStatus struct {
 	Status   string            `json:"status"`
 	Checks   map[string]string `json:"checks"`
 	Build    buildinfo.Info    `json:"build"`
 	Runtime  RuntimeStatus     `json:"runtime"`
 	Storage  StorageStatus     `json:"storage"`
-	Counts   ContentCounts     `json:"counts"`
+	Counts   *ContentCounts    `json:"counts,omitempty"`
 	Activity ActivityStatus    `json:"activity"`
 	Config   ConfigStatus      `json:"config"`
 }
@@ -230,7 +220,7 @@ func (s *Server) collectDBStats(ctx context.Context) (sqliteBytes int64, counts 
 	return sqliteBytes, counts, nil
 }
 
-func (s *Server) collectServerStatus(ctx context.Context) ServerStatus {
+func (s *Server) collectServerStatus(ctx context.Context, includeDBStats bool) ServerStatus {
 	rep := s.ready.Check(ctx)
 	status := "ok"
 	if !rep.Ready {
@@ -257,15 +247,7 @@ func (s *Server) collectServerStatus(ctx context.Context) ServerStatus {
 		mcpStats = s.mcpTracker.stats()
 	}
 
-	sqliteBytes, counts, dbErr := s.collectDBStats(ctx)
-	if dbErr != nil {
-		status = "degraded"
-		if s.logger != nil {
-			s.logger.Warn("collect server status db stats failed", "error", sanitizeError(dbErr))
-		}
-	}
-
-	return ServerStatus{
+	out := ServerStatus{
 		Status: status,
 		Checks: rep.Checks,
 		Build:  buildinfo.Current(),
@@ -286,10 +268,8 @@ func (s *Server) collectServerStatus(ctx context.Context) ServerStatus {
 			ProcessRSSBytes: readProcessRSSBytes(),
 		},
 		Storage: StorageStatus{
-			Backend:     inferStorageBackend(s.storageBackend, s.store),
-			SQLiteBytes: sqliteBytes,
+			Backend: inferStorageBackend(s.storageBackend, s.store),
 		},
-		Counts: counts,
 		Activity: ActivityStatus{
 			IngestInFlight:       len(s.ingestSem),
 			IngestLimit:          cap(s.ingestSem),
@@ -305,9 +285,37 @@ func (s *Server) collectServerStatus(ctx context.Context) ServerStatus {
 			TrustedProxiesCount: len(s.trustedProxies),
 		},
 	}
+
+	if includeDBStats {
+		var counts ContentCounts
+		if rep.Checks["sqlite"] == "ok" {
+			dbCtx, cancel := context.WithTimeout(ctx, statusDBStatsTimeout)
+			sqliteBytes, statsCounts, dbErr := s.collectDBStats(dbCtx)
+			cancel()
+			if dbErr != nil {
+				out.Status = "degraded"
+				if s.logger != nil {
+					s.logger.Warn("collect server status db stats failed", "error", sanitizeError(dbErr))
+				}
+			} else {
+				out.Storage.SQLiteBytes = sqliteBytes
+				counts = statsCounts
+			}
+		} else {
+			out.Status = "degraded"
+		}
+		out.Counts = &counts
+	}
+
+	return out
 }
 
-func (s *Server) serverStatusHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, s.collectServerStatus(r.Context()))
+	writeJSON(w, http.StatusOK, s.collectServerStatus(r.Context(), true))
+}
+
+func (s *Server) agentStatusHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, s.collectServerStatus(r.Context(), false))
 }

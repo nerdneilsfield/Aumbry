@@ -163,7 +163,7 @@ export interface RuntimeStatus {
 
 export interface StorageStatus {
   backend: string
-  sqlite_bytes: number
+  sqlite_bytes?: number
 }
 
 export interface ContentCounts {

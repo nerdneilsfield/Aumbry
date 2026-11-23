@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -91,7 +92,7 @@ type RuntimeStatus struct {
 // StorageStatus mirrors storage telemetry returned by GET /api/v1/agent/status.
 type StorageStatus struct {
 	Backend     string `json:"backend"`
-	SQLiteBytes int64  `json:"sqlite_bytes"`
+	SQLiteBytes int64  `json:"sqlite_bytes,omitempty"`
 }
 
 // ContentCounts mirrors content counts returned by GET /api/v1/agent/status.
@@ -132,7 +133,7 @@ type ServerStatus struct {
 	Build    BuildInfo         `json:"build"`
 	Runtime  RuntimeStatus     `json:"runtime"`
 	Storage  StorageStatus     `json:"storage"`
-	Counts   ContentCounts     `json:"counts"`
+	Counts   *ContentCounts    `json:"counts,omitempty"`
 	Activity ActivityStatus    `json:"activity"`
 	Config   ConfigStatus      `json:"config"`
 }
@@ -189,7 +190,7 @@ func Push(ctx context.Context, req PushRequest) ([]byte, error) {
 	}
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("push to %s: %w", endpoint, err)
+		return nil, formatRequestError("push to", endpoint, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
@@ -319,7 +320,7 @@ func doJSON(ctx context.Context, method, endpoint, token string, httpClient *htt
 	}
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", method, endpoint, err)
+		return nil, formatRequestError(method, endpoint, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
@@ -346,10 +347,45 @@ func ingestURL(server string) (string, error) {
 	return endpointURL(server, ingestPath)
 }
 
+// SanitizeURL strips credentials, query parameters, and fragments from a URL before display or logging.
+func SanitizeURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return strings.TrimRight(parsed.String(), "/")
+	}
+	if before, _, ok := strings.Cut(trimmed, "#"); ok {
+		trimmed = before
+	}
+	if before, _, ok := strings.Cut(trimmed, "?"); ok {
+		trimmed = before
+	}
+	if scheme, rest, ok := strings.Cut(trimmed, "://"); ok {
+		if at := strings.IndexByte(rest, '@'); at >= 0 {
+			trimmed = scheme + "://" + rest[at+1:]
+		}
+	}
+	return strings.TrimRight(trimmed, "/")
+}
+
+func formatRequestError(prefix, endpoint string, err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s %s: %w", prefix, SanitizeURL(endpoint), urlErr.Err)
+	}
+	return fmt.Errorf("%s %s: %w", prefix, SanitizeURL(endpoint), err)
+}
+
 func endpointURL(server string, elem ...string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(server))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", fmt.Errorf("invalid server URL %q: expected http(s)://host", server)
+		return "", fmt.Errorf("invalid server URL %q: expected http(s)://host", SanitizeURL(server))
 	}
 	return parsed.JoinPath(elem...).String(), nil
 }

@@ -59,8 +59,11 @@ func writeFormattedStatus(w io.Writer, serverURL string, st client.ServerStatus,
 		memSummary = fmt.Sprintf("rss %s (%s)", formatBytes(st.Runtime.ProcessRSSBytes), memSummary)
 	}
 
-	sqliteBytes := uint64(max(int64(0), st.Storage.SQLiteBytes))
-	assetBytes := uint64(max(int64(0), st.Counts.AssetBytes))
+	storageSummary := emptyFallback(st.Storage.Backend, "unknown")
+	if st.Storage.SQLiteBytes > 0 {
+		sqliteBytes := uint64(st.Storage.SQLiteBytes)
+		storageSummary = fmt.Sprintf("%s (sqlite %s)", storageSummary, formatBytes(sqliteBytes))
+	}
 	maxIngestBytes := uint64(max(int64(0), st.Config.MaxIngestBodyBytes))
 
 	revLimit := "unlimited"
@@ -69,7 +72,7 @@ func writeFormattedStatus(w io.Writer, serverURL string, st client.ServerStatus,
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Server:    %s\n", strings.TrimRight(strings.TrimSpace(serverURL), "/"))
+	fmt.Fprintf(&b, "Server:    %s\n", emptyFallback(client.SanitizeURL(serverURL), strings.TrimRight(strings.TrimSpace(serverURL), "/")))
 	fmt.Fprintf(&b, "Health:    %s (sqlite=%s storage=%s)\n", st.Status, sqliteCheck, storageCheck)
 	fmt.Fprintf(&b, "Uptime:    %s (started %s)\n", formatDurationSeconds(st.Runtime.UptimeSeconds), emptyFallback(st.Runtime.StartedAt, "unknown"))
 	fmt.Fprintf(&b, "ServerVer: %s (commit %s, built %s)\n", displayVersionTag(st.Build.Version), emptyFallback(st.Build.Commit, "none"), emptyFallback(st.Build.BuildTime, "unknown"))
@@ -80,14 +83,17 @@ func writeFormattedStatus(w io.Writer, serverURL string, st client.ServerStatus,
 	fmt.Fprintf(&b, "Runtime:   %s %s/%s, goroutines=%d, gc=%d\n", emptyFallback(st.Runtime.GoVersion, "unknown"), st.Runtime.GOOS, st.Runtime.GOARCH, st.Runtime.Goroutines, st.Runtime.GCCount)
 	fmt.Fprintf(&b, "CPU:       %.1f%% across %d cores (%.2fs total)\n", st.Runtime.CPUPercent, st.Runtime.NumCPU, st.Runtime.CPUSecondsTotal)
 	fmt.Fprintf(&b, "Memory:    %s\n", memSummary)
-	fmt.Fprintf(&b, "Storage:   %s (sqlite %s)\n", emptyFallback(st.Storage.Backend, "unknown"), formatBytes(sqliteBytes))
-	fmt.Fprintf(&b, "Content:   dirs=%d (%d protected), items=%d (%d published, %d drafts), revisions=%d, assets=%d (%s), dir_tokens=%d\n",
-		st.Counts.Directories, st.Counts.ProtectedDirectories,
-		st.Counts.Items, st.Counts.PublishedItems, st.Counts.DraftItems,
-		st.Counts.Revisions,
-		st.Counts.Assets, formatBytes(assetBytes),
-		st.Counts.DirectoryTokens,
-	)
+	fmt.Fprintf(&b, "Storage:   %s\n", storageSummary)
+	if st.Counts != nil {
+		assetBytes := uint64(max(int64(0), st.Counts.AssetBytes))
+		fmt.Fprintf(&b, "Content:   dirs=%d (%d protected), items=%d (%d published, %d drafts), revisions=%d, assets=%d (%s), dir_tokens=%d\n",
+			st.Counts.Directories, st.Counts.ProtectedDirectories,
+			st.Counts.Items, st.Counts.PublishedItems, st.Counts.DraftItems,
+			st.Counts.Revisions,
+			st.Counts.Assets, formatBytes(assetBytes),
+			st.Counts.DirectoryTokens,
+		)
+	}
 	fmt.Fprintf(&b, "Activity:  ingest=%d/%d, mcp_sessions=%d (anon=%d, anon_posts=%d)\n",
 		st.Activity.IngestInFlight, st.Activity.IngestLimit,
 		st.Activity.MCPActiveSessions, st.Activity.MCPAnonSessions, st.Activity.MCPAnonPostsInFlight,

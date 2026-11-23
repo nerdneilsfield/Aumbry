@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestStatusCommand(t *testing.T) {
 			Backend:     "local",
 			SQLiteBytes: 128 * 1024,
 		},
-		Counts: client.ContentCounts{
+		Counts: &client.ContentCounts{
 			Directories:          5,
 			ProtectedDirectories: 2,
 			Items:                9,
@@ -156,7 +157,38 @@ func TestStatusCommand(t *testing.T) {
 	if err := json.Unmarshal(jsonBuf.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode status --json: %v\n%s", err, jsonBuf.String())
 	}
-	if decoded.Build.Commit != "abcdef1" || decoded.Counts.Items != 9 || decoded.Activity.MCPActiveSessions != 3 {
+	if decoded.Build.Commit != "abcdef1" || decoded.Counts == nil || decoded.Counts.Items != 9 || decoded.Activity.MCPActiveSessions != 3 {
 		t.Fatalf("unexpected decoded status --json: %+v", decoded)
+	}
+
+	// Agent status without admin counts/sqlite_bytes omits the Content line cleanly,
+	// and configured URL userinfo/query/fragment are stripped from stdout and error messages.
+	payload.Counts = nil
+	payload.Storage.SQLiteBytes = 0
+
+	parsedSrv, _ := url.Parse(srv.URL)
+	dirtyURL := "http://alice:supersecret@" + parsedSrv.Host + "?token=queryleak#frag"
+	mustRun(t, "config", "set", "--server", dirtyURL, "--token", "amb_status_tok")
+
+	scopedOut := mustRun(t, "status")
+	if strings.Contains(scopedOut, "Content:") || strings.Contains(scopedOut, "sqlite ") {
+		t.Errorf("scoped agent status unexpectedly printed Content or sqlite size:\n%s", scopedOut)
+	}
+	for _, secret := range []string{"alice", "supersecret", "queryleak", "#frag"} {
+		if strings.Contains(scopedOut, secret) {
+			t.Errorf("status stdout leaked credential fragment %q:\n%s", secret, scopedOut)
+		}
+	}
+
+	// Simulate unreachable dirty server URL and ensure error output never prints userinfo/query/fragment.
+	srv.Close()
+	_, connErr := runCLI(t, "status")
+	if connErr == nil {
+		t.Fatal("expected connection error against closed server")
+	}
+	for _, secret := range []string{"alice", "supersecret", "queryleak", "#frag"} {
+		if strings.Contains(connErr.Error(), secret) {
+			t.Errorf("status error leaked credential fragment %q: %v", secret, connErr)
+		}
 	}
 }

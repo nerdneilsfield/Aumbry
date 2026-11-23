@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -190,12 +192,16 @@ func TestServerStatusEndpointsAndCounts(t *testing.T) {
 	if cc := agentResp.header.Get("Cache-Control"); cc != "no-store" {
 		t.Fatalf("agent status Cache-Control = %q, want no-store", cc)
 	}
+	rawAgent := string(agentResp.body)
+	if strings.Contains(rawAgent, `"counts"`) || strings.Contains(rawAgent, `"sqlite_bytes"`) {
+		t.Fatalf("agent status must omit admin repository counts and sqlite_bytes: %s", rawAgent)
+	}
 	var agentST ServerStatus
 	if err = json.Unmarshal(agentResp.body, &agentST); err != nil {
 		t.Fatal(err)
 	}
-	if agentST.Counts != st.Counts || agentST.Activity.MCPActiveSessions != 1 {
-		t.Fatalf("agent status mismatch: got %+v vs admin %+v", agentST, st)
+	if agentST.Counts != nil || agentST.Storage.SQLiteBytes != 0 || agentST.Activity.MCPActiveSessions != 1 {
+		t.Fatalf("unexpected scoped agent status: %+v", agentST)
 	}
 }
 
@@ -299,5 +305,53 @@ func TestStatusHandlesDegradedDBGracefully(t *testing.T) {
 	}
 	if resp.json()["status"] != "degraded" {
 		t.Fatalf("status = %v, want degraded", resp.json()["status"])
+	}
+}
+
+func TestCPUSamplerIdleIsNearZero(t *testing.T) {
+	before := readProcessCPUSeconds()
+	if before <= 0 {
+		t.Fatalf("readProcessCPUSeconds() = %v, want > 0", before)
+	}
+	s := newCPUSampler()
+	time.Sleep(600 * time.Millisecond)
+	total, pct := s.sample()
+	if total < math.Floor(before*100)/100 {
+		t.Fatalf("total CPU seconds regressed: got %v, before %v", total, before)
+	}
+	if pct >= 50.0 {
+		t.Fatalf("idle cpu_percent = %.1f%%, want < 50%% (must track consumed CPU, not GOMAXPROCS wall budget)", pct)
+	}
+	_, quickPct := s.sample()
+	if quickPct != pct {
+		t.Fatalf("follow-up cpu_percent = %.1f%%, want %.1f%%", quickPct, pct)
+	}
+}
+
+func TestStatusBusySQLiteDegradesQuickly(t *testing.T) {
+	e := newEnvWithOptions(t, RouterOptions{ReadyTimeout: 100 * time.Millisecond}, nil)
+	admin := e.admin()
+
+	tx, err := e.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	start := time.Now()
+	resp := admin.do(http.MethodGet, "/api/v1/admin/status", nil)
+	elapsed := time.Since(start)
+	if resp.status != http.StatusOK {
+		t.Fatalf("busy-sqlite admin status = %d %s", resp.status, resp.body)
+	}
+	if elapsed >= 1500*time.Millisecond {
+		t.Fatalf("busy-sqlite admin status took %v, expected fast degraded return", elapsed)
+	}
+	var st ServerStatus
+	if err = json.Unmarshal(resp.body, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != "degraded" || st.Checks["sqlite"] != "timeout" || st.Counts == nil {
+		t.Fatalf("unexpected busy-sqlite status payload: %+v", st)
 	}
 }

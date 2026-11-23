@@ -69,10 +69,10 @@ CLI 命令行参数（--dir、--profile） > 环境变量（AUMBRY_SERVER、AUMB
 
 `--profile <name>` 仅对当次命令生效，不修改 `active_profile`，且环境变量仍会覆盖该 profile 内的对应字段；若指定了配置文件中不存在的 profile 名称，命令直接报错退出（退出码 `1`）。
 
-## 全局参数与退出码
+## 参数、版本标志与退出码
 
-- `-v` / `--verbose`：将调试日志输出到 `stderr`。
-- `--version`：打印 CLI 版本号、短提交哈希与构建时间后退出。
+- `-v` / `--verbose`（全局参数）：将调试日志输出到 `stderr`。
+- `--version`（仅根命令参数，如 `aumbry --version`，等价于 `aumbry version`）：打印 CLI 版本号、短提交哈希与构建时间后退出。
 - 退出码 `0`：命令成功执行（或文档通过校验）。
 - 退出码 `1`：参数冲突、本地/服务端校验失败、网络异常或服务端返回错误状态码。
 
@@ -351,7 +351,7 @@ aumbry delete MDUnpJpiAjMo --yes
   go: go1.27.4 linux/amd64
   ```
 
-- `aumbry status [--profile <name>] [--json]`：调用 `GET /api/v1/agent/status` 查询远端服务端的版本号/构建信息、健康与依赖探针状态、运行时长、CPU 占用与内存（进程 RSS / Go Heap / Goroutines）、SQLite 与存储占用、目录/条目/修订/资产数量以及当前写入/MCP 会话并发情况（若本地 CLI 与服务端版本号不一致会自动提示；传 `--json` 返回原始 JSON）：
+- `aumbry status [--profile <name>] [--json]`：调用 `GET /api/v1/agent/status` 查询远端服务端的版本号/构建信息、健康与依赖探针状态、运行时长、CPU 占用与内存（进程 RSS / Go Heap / Goroutines）、存储后端类型、当前写入/MCP 会话并发与功能限制（若本地 CLI 与服务端版本号不一致会自动提示；传 `--json` 返回原始 JSON；全站目录/条目/修订/资产计数与 SQLite 体积仅对管理员控制台 `GET /api/v1/admin/status` 开放）：
 
   ```sh
   aumbry status
@@ -366,8 +366,7 @@ aumbry delete MDUnpJpiAjMo --yes
   Runtime:   go1.27.4 linux/amd64, goroutines=14, gc=5
   CPU:       3.5% across 8 cores (1.25s total)
   Memory:    rss 24.0 MB (heap 4.00 MB alloc / 6.00 MB in-use / 32.0 MB sys)
-  Storage:   local (sqlite 128 KB)
-  Content:   dirs=5 (2 protected), items=9 (7 published, 2 drafts), revisions=14, assets=6 (3.00 MB), dir_tokens=1
+  Storage:   local
   Activity:  ingest=1/4, mcp_sessions=3 (anon=2, anon_posts=0)
   Limits:    max_ingest=200 MB, max_revisions=20, remote_images=true, public_url=true, trusted_proxies=1
   ```

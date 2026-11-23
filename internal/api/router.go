@@ -142,7 +142,7 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 			r.Post("/ingest", s.ingest)
 			r.Route("/agent", func(r chi.Router) {
 				r.Use(s.requireAgentToken)
-				r.Get("/status", s.serverStatusHandler)
+				r.Get("/status", s.agentStatusHandler)
 				r.Get("/dirs", s.agentDirs)
 				r.Get("/items", s.agentListItems)
 				r.Delete("/items/{id}/mounts", s.agentUnpublishItem)
@@ -165,7 +165,7 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/admin/me", s.adminMe)
-			r.Get("/admin/status", s.serverStatusHandler)
+			r.Get("/admin/status", s.adminStatusHandler)
 			r.Get("/admin/tree", s.adminTree)
 			r.Post("/admin/dirs", s.adminCreateDir)
 			r.Patch("/admin/dirs/{id}", s.adminUpdateDir)

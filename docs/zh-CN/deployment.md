@@ -127,7 +127,7 @@
 
 - `GET /healthz`：进程存活探针，返回 HTTP `200` 与 `{"status":"ok"}`。
 - `GET /api/v1/version`：公开接口（带 `Cache-Control: no-store`），仅返回当前运行服务端的 `version`、`commit`（7 位短提交哈希）与 `build_time`（前端页脚亦展示这三项信息；服务端可执行 `aumbry-server version [--json]` 或 `aumbry-server --version`）。
-- `GET /api/v1/admin/status` 与 `GET /api/v1/agent/status`：分别面向管理员控制台（`/admin` 页面顶部的系统运行状态面板，支持手动刷新与 10 秒自动刷新）与 CLI（`aumbry status [--json]`）提供完整运行状态（均需认证且带 `Cache-Control: no-store`，绝不暴露路径、端点与密钥）：包含依赖健康状态、运行时长、CPU 占用与核数、进程 RSS（Linux）/ Go Heap / Goroutines / GC 次数、SQLite 体积、目录/条目/修订/资产统计、写入与 MCP 活跃会话并发，以及脱敏后的功能开关上限。此外，MCP 端点的 `server_info` 工具也会向 Agent 公布服务端版本、协议支持、调用角色与限制信息。
+- `GET /api/v1/admin/status` 与 `GET /api/v1/agent/status`：均需认证且带 `Cache-Control: no-store`（绝不暴露路径、端点与密钥），提供依赖健康状态、运行时长、CPU 占用与核数、进程 RSS（Linux）/ Go Heap / Goroutines / GC 次数、存储后端类型、写入与 MCP 活跃会话并发，以及脱敏后的功能开关上限。其中全站 SQLite 体积与目录/条目/修订/资产/Token 计数仅由面向 `/admin` 控制台的 `GET /api/v1/admin/status` 返回，面向 CLI `aumbry status [--json]` 的 `GET /api/v1/agent/status` 不暴露私有仓库统计变化。此外，MCP 端点的 `server_info` 工具也会向 Agent 公布服务端版本、协议支持、调用角色与限制信息。
 - `GET /readyz`：以 `2 s` 超时并发检测 SQLite 与当前配置的对象存储后端（`local` 在根目录创建并删除临时文件探针、`webdav` 发送 `PROPFIND /`、`s3`/`r2` 发送 `HeadBucket`），对并发探针去重并将存储检测结果在内存中缓存 `5 s`。两者均为 `"ok"` 时返回 HTTP `200`，任一返回 `"auth"`、`"timeout"` 或 `"unreachable"` 时返回 HTTP `503`（`"status":"unavailable"`）；响应中不含端点 URL、桶名、本地路径、访问密钥与签名：
 
   ```sh

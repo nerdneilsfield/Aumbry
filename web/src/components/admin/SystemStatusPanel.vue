@@ -117,7 +117,7 @@ const revLimitLabel = computed(() => {
           <Database class="size-3.5 text-violet-300" aria-hidden="true" />数据与存储
         </div>
         <dl class="space-y-1 text-gray-400">
-          <div class="flex justify-between gap-2"><dt>存储 / SQLite</dt><dd class="font-mono text-gray-200">{{ data.storage.backend }} · {{ formatBytes(data.storage.sqlite_bytes) }}</dd></div>
+          <div class="flex justify-between gap-2"><dt>存储 / SQLite</dt><dd class="font-mono text-gray-200">{{ data.storage.backend }} · {{ formatBytes(data.storage.sqlite_bytes ?? 0) }}</dd></div>
           <div class="flex justify-between gap-2"><dt>目录</dt><dd class="font-mono text-gray-200">{{ data.counts.directories }}（{{ data.counts.protected_directories }} 受保护）</dd></div>
           <div class="flex justify-between gap-2"><dt>条目</dt><dd class="font-mono text-gray-200">{{ data.counts.items }}（已发布 {{ data.counts.published_items }} / 草稿 {{ data.counts.draft_items }}）</dd></div>
           <div class="flex justify-between gap-2"><dt>修订 / 订阅 Token</dt><dd class="font-mono text-gray-200">{{ data.counts.revisions }} 版 / {{ data.counts.directory_tokens }} 个</dd></div>
