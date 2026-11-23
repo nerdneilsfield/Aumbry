@@ -223,6 +223,22 @@ Keep the `caddy-data` volume; it holds the certificates. Caddy sets `X-Forwarded
 
 Every maintenance command uses the same config resolution (`--config`, `AUMBRY_CONFIG`, `./aumbry.toml`, `/etc/aumbry/config.toml`, or environment variables).
 
+> **Running maintenance commands under Docker Compose:** Because the image `ENTRYPOINT` is `/usr/local/bin/aumbry-server`, one-off `docker compose run` containers inherit `.env`, `/data`, and (under `docker-compose.toml.yml`) `/etc/aumbry/config.toml`. Add `-f docker-compose.toml.yml` if you use the TOML compose file:
+>
+> ```sh
+> # Read-only / online checks (safe while the server runs)
+> docker compose run --rm --no-deps aumbry verify-storage
+> docker compose run --rm --no-deps aumbry gc --dry-run
+> docker compose run --rm --no-deps aumbry reindex --dry-run
+>
+> # Writing commands (destructive gc / reindex) require stopping the server first
+> docker compose stop aumbry
+> docker compose run --rm --no-deps aumbry reindex
+> docker compose up -d aumbry
+> ```
+>
+> When exporting a `backup` to the host, pre-create the directory and grant write ownership to container UID/GID `65532` (`nonroot`): `mkdir -p ./backups && sudo chown 65532:65532 ./backups && chmod 700 ./backups`.
+
 ### Back up SQLite safely online (`backup`)
 
 > **Caution — Do not copy `aumbry.db` directly:** In SQLite WAL mode, uncheckpointed transactions live in `aumbry.db-wal`. Copying `aumbry.db` directly can produce an inconsistent snapshot. `aumbry-server backup` runs SQLite `VACUUM INTO` into a pre-created `0600` file, which is safe while `aumbry-server` runs, and cleans up the target file if backup fails.
@@ -305,7 +321,7 @@ When an `ingest` request fails after uploading XML to object storage (or when up
 
 Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on the title, summary, tags, and `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from object storage, recomputes `plain_text` (including `<audio>` titles, chapters, and transcripts), rewrites `items_fts` / `items_fts_cjk`, rebuilds backlink edges (`item_links`) and `primary_audio_*` feed projections, and backfills baseline `rev = 1` snapshots for existing mounted items that have zero revisions.
 
-> **Upgrade sequence from `v0.1.3` / `v0.1.4`:** Because offline commands (`reindex`, `verify-storage`, `gc`) open SQLite without running migrations, you **must first start the new `aumbry-server`** (allowing `db.Open` to apply migrations `00004`–`00008`), **then stop `aumbry-server` and run `aumbry-server reindex`** once to populate `item_links`, `primary_audio_*`, and initial `rev = 1` revision baselines before resuming traffic.
+> **Upgrade sequence from `v0.1.3` / `v0.1.4`:** Because offline commands (`reindex`, `verify-storage`, `gc`) open SQLite without running migrations, you **must first start the new `aumbry-server`** (allowing `db.Open` to apply migrations `00004`–`00008`), **then stop `aumbry-server` and run `aumbry-server reindex`** once to populate `item_links`, `primary_audio_*`, and initial `rev = 1` revision baselines before resuming traffic. See [Upgrading (including direct `v0.1.3` to `v0.2.0`)](#upgrading-including-direct-v013-to-v020) below for ready-to-run Docker Compose commands.
 
 Run `reindex` in either of these cases:
 
@@ -355,6 +371,74 @@ If an item's XML cannot be read from object storage or is no longer valid XML, `
 ### Switching storage backends
 
 Aumbry does not ship a built-in migration command: stop `aumbry-server`, copy `xml/` and `assets/` from the old backend to the new backend with `rclone`, update your configuration, run `aumbry-server verify-storage`, and then start `aumbry-server`.
+
+## Upgrading (including direct `v0.1.3` to `v0.2.0`)
+
+Direct upgrades from `v0.1.3` straight to `v0.2.0` are supported without stepping through `v0.1.4`:
+
+- Starting the `v0.2.0` `aumbry-server` automatically applies database migrations `00004`–`00008` in order (`v0.1.4` upgrades only need `00008`).
+- New `v0.2.0` settings (`public_url`, `[revisions].max_per_item`, `[ingest].max_body_mb`, `[ingest].allow_remote_images`) all carry safe defaults, so existing `.env` or `aumbry.toml` configurations boot unchanged.
+- **Required order:** Because offline maintenance subcommands (`reindex`, `verify-storage`, `gc`) open SQLite without running migrations, always **start the new server once so migrations apply, stop it, run `reindex`, then start it again**.
+
+### Upgrading with Docker Compose
+
+Run these commands in the directory containing your Compose file (repo root or `examples/deploy/{traefik,nginx,caddy}`); if you use `docker-compose.toml.yml`, replace `docker compose` with `docker compose -f docker-compose.toml.yml`:
+
+1. **Back up SQLite online first** (if using `storage = "local"`, also snapshot your `aumbry-data` volume or object directory for a full point-in-time restore):
+
+   ```sh
+   mkdir -p ./backups
+   sudo chown 65532:65532 ./backups && chmod 700 ./backups
+   docker compose run --rm --no-deps -v "$PWD/backups:/backups" \
+     aumbry backup --out "/backups/aumbry-pre-v020-$(date +%Y%m%d-%H%M%S).db"
+   ```
+
+2. **Pull (or rebuild) `v0.2.0` and start `aumbry` once to run migrations `00004`–`00008`:**
+
+   - Using GHCR images (e.g., `examples/deploy/*`; pin `image: ghcr.io/nerdneilsfield/aumbry:v0.2.0` for production):
+
+     ```sh
+     docker compose pull aumbry
+     docker compose up -d aumbry
+     ```
+
+   - Building from source (repo root `docker-compose.yml` or `docker-compose.toml.yml`):
+
+     ```sh
+     git fetch --tags && git checkout v0.2.0
+     docker compose up -d --build aumbry
+     ```
+
+   Check startup logs to confirm migrations succeeded and the server is listening:
+
+   ```sh
+   docker compose logs --tail 50 aumbry
+   ```
+
+3. **Stop `aumbry` and run one-time `reindex`:**
+
+   This rebuilds `items_fts` / `items_fts_cjk`, backlink edges (`item_links`), `primary_audio_*` feed projections, and baseline `rev = 1` revision snapshots for existing mounted items (`rev = 1` baselines keep `author_verified = 0`, enforcing fail-closed B1 mount permissions on `/mcp`):
+
+   ```sh
+   docker compose stop aumbry
+   docker compose run --rm --no-deps aumbry reindex
+   ```
+
+4. **Restart the server and verify storage integrity:**
+
+   ```sh
+   docker compose up -d aumbry
+   docker compose run --rm --no-deps aumbry verify-storage
+   ```
+
+5. **Enable new `v0.2.0` features if needed (optional):**
+
+   - To access `/mcp` via a reverse proxy or non-loopback host, or emit canonical `/feeds/` URLs, set `AUMBRY_PUBLIC_URL=https://<your-domain>` in `.env` (or `public_url` in `aumbry.toml`). When unset, `/mcp` rejects non-loopback `Host` headers.
+   - If you run Nginx, sync your config with the updated [examples/deploy/nginx/aumbry.conf](../../examples/deploy/nginx/aumbry.conf) (`proxy_set_header Host $http_host;`, `proxy_http_version 1.1;`, `proxy_buffering off;` on `/mcp`, and token-redacted logging) and run `docker compose exec nginx nginx -s reload`.
+
+### Upgrading host binaries
+
+Follow the identical sequence on the host: **run `./aumbry-server backup --out ...` → replace the binary and start `./aumbry-server` once so migrations apply → stop it and run `./aumbry-server reindex` → restart `./aumbry-server` and confirm `verify-storage`**. Upgrade your client `aumbry` CLI binary to `v0.2.0` as well.
 
 ## First release: make the GHCR package public
 

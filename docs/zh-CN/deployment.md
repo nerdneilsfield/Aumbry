@@ -223,6 +223,22 @@ Traefik 把证书保存在 `traefik-letsencrypt` 卷中。它每 10 s 探测一�
 
 下列子命令均与服务端主进程遵循同一配置加载顺序（`--config`、`AUMBRY_CONFIG`、`./aumbry.toml`、`/etc/aumbry/config.toml` 或纯环境变量）。
 
+> **Docker Compose 下执行维护命令**：镜像 `ENTRYPOINT` 就是 `/usr/local/bin/aumbry-server`，所有配置卷（`/data` 及 TOML 模式下只读挂载的 `/etc/aumbry/config.toml`）与 `.env` 都会自动复用。直接通过一次性容器调用子命令即可（若使用 `docker-compose.toml.yml`，在 `compose` 后加上 `-f docker-compose.toml.yml`）：
+>
+> ```sh
+> # 在线检查或只读演练（无需停机）
+> docker compose run --rm --no-deps aumbry verify-storage
+> docker compose run --rm --no-deps aumbry gc --dry-run
+> docker compose run --rm --no-deps aumbry reindex --dry-run
+>
+> # 破坏性写入 / 重建前必须先停服释放 aumbry.lock
+> docker compose stop aumbry
+> docker compose run --rm --no-deps aumbry reindex
+> docker compose up -d aumbry
+> ```
+>
+> 执行 `backup` 导出到宿主机时，请预先创建目录并授予容器 `nonroot` 用户（UID/GID `65532`）写权限：`mkdir -p ./backups && sudo chown 65532:65532 ./backups && chmod 700 ./backups`。
+
 ### 在线安全备份（`backup`）
 
 > **注意：不要直接复制 `aumbry.db`。** 在 WAL 模式下，未刷回主库文件的提交仍位于 `aumbry.db-wal` 中，直接文件拷贝会造成快照缺页。请始终使用 `aumbry-server backup --out <path>`：该命令先以 `0600` 创建空目标文件，再通过 SQLite `VACUUM INTO` 在线生成完整快照，失败时自动清理半成品文件。
@@ -305,7 +321,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对标题、摘要、标签和 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从对象存储重新读取每个条目已存储的 XML，按当前版本的规则重新计算 `plain_text`（含 `<audio>` 标题/章节/逐字稿）、重写 `items_fts` / `items_fts_cjk`，并同步重建反向引用 `item_links`、首音频投影 `primary_audio_*`，以及为**已挂载但尚无历史记录（0 revision）的存量条目自动回填基线 `rev = 1`**（含当时挂载与资产关联）。
 
-> **从 `v0.1.3` / `v0.1.4` 升级必读顺序**：由于 `reindex` / `verify-storage` / `gc` 使用不执行迁移的只读 schema 打开逻辑，升级后请**先启动新版 `aumbry-server`**（由 `db.Open` 自动应用 `00004`–`00008` 迁移），**随后停服执行一次 `aumbry-server reindex`**，完成反向索引、首音频投影与存量 `rev = 1` 快照回填后再恢复对外服务。
+> **从 `v0.1.3` / `v0.1.4` 升级必读顺序**：由于 `reindex` / `verify-storage` / `gc` 使用不执行迁移的只读 schema 打开逻辑，升级后请**先启动新版 `aumbry-server`**（由 `db.Open` 自动应用 `00004`–`00008` 迁移），**随后停服执行一次 `aumbry-server reindex`**，完成反向索引、首音频投影与存量 `rev = 1` 快照回填后再恢复对外服务。Docker Compose 完整升级命令见下方 [升级版本](#升级版本支持从-v013-直接升至-v020) 一节。
 
 出现下列情况之一时运行 `reindex`：
 
@@ -355,6 +371,74 @@ storage OK: verified 1 xml and 0 asset objects
 ### 更换存储后端
 
 Aumbry 不提供内置的跨后端迁移命令：停机后使用 `rclone` 把旧后端的 `xml/` 与 `assets/` 目录复制到新后端，修改配置，先运行 `aumbry-server verify-storage` 核验完整性，确认无误后再启动服务。
+
+## 升级版本（支持从 `v0.1.3` 直接升至 `v0.2.0`）
+
+无需经过 `v0.1.4` 中转，可从 `v0.1.3` 直接升级到 `v0.2.0`：
+
+- 新版 `aumbry-server` 启动时会自动按顺序补齐 `00004`–`00008` 数据库迁移（`v0.1.4` 升级只需补跑 `00008`）。
+- `v0.2.0` 新增配置项（`public_url`、`[revisions].max_per_item`、`[ingest].max_body_mb`、`[ingest].allow_remote_images`）均有默认值，旧 `.env` 或 `aumbry.toml` 无需改动即可直接启动。
+- **核心原则**：由于离线子命令 `reindex` / `verify-storage` / `gc` 不会运行数据库迁移，升级时必须遵循「**先启动新版 `aumbry-server` 自动迁库 → 停服执行 `reindex` → 再恢复运行**」的顺序。
+
+### Docker Compose 升级步骤
+
+以下命令在 Compose 文件所在目录执行（例如仓库根目录或 `examples/deploy/nginx` 目录）；若采用 `docker-compose.toml.yml`，将每条 `docker compose` 替换为 `docker compose -f docker-compose.toml.yml`：
+
+1. **升级前在线备份 SQLite**（如使用 `local` 存储，建议同时备份 `aumbry-data` 卷或停机拷贝对象目录）：
+
+   ```sh
+   mkdir -p ./backups
+   sudo chown 65532:65532 ./backups && chmod 700 ./backups
+   docker compose run --rm --no-deps -v "$PWD/backups:/backups" \
+     aumbry backup --out "/backups/aumbry-pre-v020-$(date +%Y%m%d-%H%M%S).db"
+   ```
+
+2. **拉取（或重新构建）`v0.2.0` 并启动一次主服务以应用迁移 `00004`–`00008`**：
+
+   - 若使用 GHCR 预构建镜像（如 `examples/deploy/{traefik,nginx,caddy}`，建议把 `image:` 固定为 `ghcr.io/nerdneilsfield/aumbry:v0.2.0`）：
+
+     ```sh
+     docker compose pull aumbry
+     docker compose up -d aumbry
+     ```
+
+   - 若使用源码本地构建（根目录 `docker-compose.yml` / `docker-compose.toml.yml`）：
+
+     ```sh
+     git fetch --tags && git checkout v0.2.0
+     docker compose up -d --build aumbry
+     ```
+
+   查看日志确认新版容器已正常启动并完成监听：
+
+   ```sh
+   docker compose logs --tail 50 aumbry
+   ```
+
+3. **停服执行一次 `reindex` 完成存量回填**：
+
+   该步骤会为升级前已挂载的条目重建 `items_fts` / `items_fts_cjk`、反向链接 `item_links`、首音频投影 `primary_audio_*` 与基线 `rev = 1` 快照（旧快照保留 `author_verified = 0`，在 MCP 中统一按历史挂载 B1 鉴权）：
+
+   ```sh
+   docker compose stop aumbry
+   docker compose run --rm --no-deps aumbry reindex
+   ```
+
+4. **恢复服务并核验存储完整性**：
+
+   ```sh
+   docker compose up -d aumbry
+   docker compose run --rm --no-deps aumbry verify-storage
+   ```
+
+5. **按需启用 `v0.2.0` 新能力（可选）**：
+
+   - 若通过域名/反向代理公开 `/mcp` 或使用 `/feeds/`，在 `.env` 中补充 `AUMBRY_PUBLIC_URL=https://<你的域名>`（或在 `aumbry.toml` 设置 `public_url`）；否则 `/mcp` 只放行本机回环 `Host`。
+   - 若使用 Nginx，请对照更新版 [examples/deploy/nginx/aumbry.conf](../../examples/deploy/nginx/aumbry.conf) 同步 `/mcp` 长连接参数（`proxy_set_header Host $http_host;`、`proxy_http_version 1.1;`、`proxy_buffering off;`）及脱敏日志格式，然后执行 `docker compose exec nginx nginx -s reload`。
+
+### 宿主机二进制升级简述
+
+步骤顺序完全一致：**先使用新版 `./aumbry-server backup --out ...` 备份 → 替换二进制并启动一次新版 `./aumbry-server` 应用迁移 → 停服运行一次 `./aumbry-server reindex` → 重新启动服务并跑一次 `verify-storage`**。同时把客户端机器上的 `aumbry` CLI 升级到 `v0.2.0` 即可使用 `v1.2` PDF、外链转存与 MCP 相关命令。
 
 ## 首次发布：把 GHCR 包设为公开
 
