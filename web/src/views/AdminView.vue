@@ -12,6 +12,7 @@ import DirTokensDialog from '@/components/admin/DirTokensDialog.vue'
 import DirTree from '@/components/admin/DirTree.vue'
 import ItemDialog from '@/components/admin/ItemDialog.vue'
 import LoginForm from '@/components/admin/LoginForm.vue'
+import SystemStatusPanel from '@/components/admin/SystemStatusPanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ItemList from '@/components/ItemList.vue'
 import SelectBox from '@/components/SelectBox.vue'
@@ -91,6 +92,8 @@ const doRemoveDir = () => dirToRemove.value && removeDir.mutate(dirToRemove.valu
       <h1 class="text-2xl font-bold text-gray-50">管理控制台</h1>
       <button class="btn" @click="logout.mutate()"><LogOut class="size-4" />退出登录</button>
     </div>
+
+    <SystemStatusPanel class="mb-6" />
 
     <div class="grid items-start gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <aside class="card space-y-1 p-3 lg:sticky lg:top-6">

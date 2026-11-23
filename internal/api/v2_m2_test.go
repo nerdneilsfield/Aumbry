@@ -26,6 +26,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
+	"github.com/nerdneilsfield/aumbry/internal/buildinfo"
 	"github.com/nerdneilsfield/aumbry/internal/db"
 )
 
@@ -1500,6 +1501,36 @@ func TestV2M2ReviewRegressions(t *testing.T) {
 		}
 		if st := check("evil.example", ""); st != http.StatusForbidden {
 			t.Fatalf("non-loopback mismatched Host = %d, want 403", st)
+		}
+	})
+
+	t.Run("GET /api/v1/version exposes build metadata", func(t *testing.T) {
+		origVer, origCommit, origDate := buildinfo.Version, buildinfo.Commit, buildinfo.Date
+		t.Cleanup(func() {
+			buildinfo.Version, buildinfo.Commit, buildinfo.Date = origVer, origCommit, origDate
+		})
+		buildinfo.Version = "0.2.0"
+		buildinfo.Commit = "5ba6832d3d90301d70dce14eabd75256fb52b5a4"
+		buildinfo.Date = "2026-11-23T12:18:00Z"
+
+		e := newEnv(t)
+		resp, err := http.Get(e.srv.URL + "/api/v1/version")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /api/v1/version status = %d", resp.StatusCode)
+		}
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Fatalf("Cache-Control = %q, want no-store", cc)
+		}
+		var got buildinfo.Info
+		if decErr := json.NewDecoder(resp.Body).Decode(&got); decErr != nil {
+			t.Fatal(decErr)
+		}
+		if got.Version != "0.2.0" || got.Commit != "5ba6832" || got.BuildTime != "2026-11-23T12:18:00Z" {
+			t.Fatalf("GET /api/v1/version = %+v", got)
 		}
 	})
 }

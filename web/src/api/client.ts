@@ -11,6 +11,8 @@ import type {
   ItemDetail,
   ItemRevisionsResponse,
   SearchPage,
+  ServerStatus,
+  ServerVersion,
 } from './types'
 
 export interface ErrorBody {
@@ -47,6 +49,7 @@ const http = ofetch.create({
 const enc = encodeURIComponent
 
 export const api = {
+  version: () => http<ServerVersion>('/version'),
   dir: (id: string) => http<Directory>(`/dirs/${enc(id)}`),
   unlock: (id: string, password: string) => http(`/dirs/${enc(id)}/unlock`, { method: 'POST', body: { password } }),
   searchDir: (id: string, p: DirSearchParams, limit: number, offset: number) =>
@@ -67,6 +70,7 @@ export const api = {
         if (e instanceof ApiError && e.status === 401) return { admin: false }
         throw e
       }),
+    status: () => http<ServerStatus>('/admin/status'),
     tree: () => http<AdminTree>('/admin/tree'),
     createDir: (body: { parent_id: string | null; name: string; description?: string; password?: string }) =>
       http<{ id: string }>('/admin/dirs', { method: 'POST', body }),

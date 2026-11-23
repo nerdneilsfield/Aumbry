@@ -137,3 +137,70 @@ export interface DirPatch {
   password?: string
   sort_order?: number
 }
+
+export interface ServerVersion {
+  version: string
+  commit: string
+  build_time: string
+}
+
+export interface RuntimeStatus {
+  go_version: string
+  goos: string
+  goarch: string
+  num_cpu: number
+  goroutines: number
+  uptime_seconds: number
+  started_at: string
+  cpu_seconds_total: number
+  cpu_percent: number
+  heap_alloc_bytes: number
+  heap_inuse_bytes: number
+  sys_bytes: number
+  gc_count: number
+  process_rss_bytes?: number
+}
+
+export interface StorageStatus {
+  backend: string
+  sqlite_bytes: number
+}
+
+export interface ContentCounts {
+  directories: number
+  protected_directories: number
+  items: number
+  published_items: number
+  draft_items: number
+  revisions: number
+  assets: number
+  asset_bytes: number
+  directory_tokens: number
+}
+
+export interface ActivityStatus {
+  ingest_in_flight: number
+  ingest_limit: number
+  mcp_active_sessions: number
+  mcp_anon_sessions: number
+  mcp_anon_posts_in_flight: number
+}
+
+export interface ConfigStatus {
+  max_ingest_body_bytes: number
+  max_revisions_per_item: number
+  allow_remote_images: boolean
+  public_url_configured: boolean
+  trusted_proxies_count: number
+}
+
+export interface ServerStatus {
+  status: 'ok' | 'degraded' | string
+  checks: Record<string, string>
+  build: ServerVersion
+  runtime: RuntimeStatus
+  storage: StorageStatus
+  counts: ContentCounts
+  activity: ActivityStatus
+  config: ConfigStatus
+}

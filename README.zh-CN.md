@@ -13,7 +13,7 @@ Aumbry 是一个面向 AI agent 与人工研究产出的自托管私有报告库
 - **前后端共享的 XML 协议（`1.2`）与离线校验器**：`aumbry` CLI 与 `aumbry-server` 执行同一套 XML 校验规则（`version="1.2"`，同时向下兼容 `1.1`），支持 `<audio>` 章节/逐字稿、可选 `<attachment type="pdf">` Canvas 按需分页阅读（纯 Go `pdfcpu` 页数与 `#att-<id>:p=<N>` 校验）、带 SSRF 防护的公网 `<figure src="http(s)://...">` 自动转存，以及越界符号链接拦截。
 - **SQLite 元数据、修订历史、反向引用与全文检索**：目录关系、条目元数据、已发布修订快照（含前端分块高亮对比）、简报反向引用与 FTS5 索引保存在 `<data_dir>/aumbry.db`（SQLite WAL 模式），支持 2 个字及以上的中文词直接检索（单字也可以）、其他 3 个字符及以上的全文检索，以及更短检索词的子串匹配。
 - **目录分权、只读订阅 Token 与私有对象存储**：未挂载条目对访客返回 HTTP `403`；目录密码沿子树继承；目录只读 Token（`ad_...`）支持受保护 `/feeds/` 订阅及 `/mcp` 读取且不穿透独立设密的子目录；私有后端（`local`、`webdav`、`s3`、`r2`）对象仅经服务端鉴权代理输出（支持 HTTP `Range`）并附加 `Content-Security-Policy: default-src 'none'; sandbox`。
-- **随库分发的 Agent Skill 与 MCP Server**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档分发，并内置 `/mcp` 端点（`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`）。
+- **随库分发的 Agent Skill、运行可观测性与 MCP Server**：[skills/aumbry/](skills/aumbry/SKILL.md) 随仓库与 Release 归档分发，并内置 `/mcp` 端点（`server_info`、`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`）、CLI `aumbry status` / `version` 及 `/admin` 运行状态监控面板。
 
 ## 概述
 

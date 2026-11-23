@@ -21,11 +21,13 @@ import (
 )
 
 const (
-	ingestPath     = "/api/v1/ingest"
-	agentDirsPath  = "/api/v1/agent/dirs"
-	agentItemsPath = "/api/v1/agent/items"
-	defaultTimeout = 5 * time.Minute
-	maxResponse    = 1 << 20
+	ingestPath      = "/api/v1/ingest"
+	agentDirsPath   = "/api/v1/agent/dirs"
+	agentItemsPath  = "/api/v1/agent/items"
+	agentStatusPath = "/api/v1/agent/status"
+	defaultTimeout  = 5 * time.Minute
+	statusTimeout   = 15 * time.Second
+	maxResponse     = 1 << 20
 )
 
 // Asset is one local media file and the normalized src it is referenced by in the XML.
@@ -59,6 +61,80 @@ type AgentDir struct {
 	HasPassword bool    `json:"has_password"`
 	Protected   bool    `json:"protected"`
 	ItemCount   int     `json:"item_count"`
+}
+
+// BuildInfo mirrors the build metadata inside ServerStatus.
+type BuildInfo struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildTime string `json:"build_time"`
+}
+
+// RuntimeStatus mirrors runtime resource telemetry returned by GET /api/v1/agent/status.
+type RuntimeStatus struct {
+	GoVersion       string  `json:"go_version"`
+	GOOS            string  `json:"goos"`
+	GOARCH          string  `json:"goarch"`
+	NumCPU          int     `json:"num_cpu"`
+	Goroutines      int     `json:"goroutines"`
+	UptimeSeconds   int64   `json:"uptime_seconds"`
+	StartedAt       string  `json:"started_at"`
+	CPUSecondsTotal float64 `json:"cpu_seconds_total"`
+	CPUPercent      float64 `json:"cpu_percent"`
+	HeapAllocBytes  uint64  `json:"heap_alloc_bytes"`
+	HeapInuseBytes  uint64  `json:"heap_inuse_bytes"`
+	SysBytes        uint64  `json:"sys_bytes"`
+	GCCount         uint32  `json:"gc_count"`
+	ProcessRSSBytes uint64  `json:"process_rss_bytes,omitempty"`
+}
+
+// StorageStatus mirrors storage telemetry returned by GET /api/v1/agent/status.
+type StorageStatus struct {
+	Backend     string `json:"backend"`
+	SQLiteBytes int64  `json:"sqlite_bytes"`
+}
+
+// ContentCounts mirrors content counts returned by GET /api/v1/agent/status.
+type ContentCounts struct {
+	Directories          int   `json:"directories"`
+	ProtectedDirectories int   `json:"protected_directories"`
+	Items                int   `json:"items"`
+	PublishedItems       int   `json:"published_items"`
+	DraftItems           int   `json:"draft_items"`
+	Revisions            int   `json:"revisions"`
+	Assets               int   `json:"assets"`
+	AssetBytes           int64 `json:"asset_bytes"`
+	DirectoryTokens      int   `json:"directory_tokens"`
+}
+
+// ActivityStatus mirrors active concurrency counters returned by GET /api/v1/agent/status.
+type ActivityStatus struct {
+	IngestInFlight       int `json:"ingest_in_flight"`
+	IngestLimit          int `json:"ingest_limit"`
+	MCPActiveSessions    int `json:"mcp_active_sessions"`
+	MCPAnonSessions      int `json:"mcp_anon_sessions"`
+	MCPAnonPostsInFlight int `json:"mcp_anon_posts_in_flight"`
+}
+
+// ConfigStatus mirrors non-secret server operational limits returned by GET /api/v1/agent/status.
+type ConfigStatus struct {
+	MaxIngestBodyBytes  int64 `json:"max_ingest_body_bytes"`
+	MaxRevisionsPerItem int   `json:"max_revisions_per_item"`
+	AllowRemoteImages   bool  `json:"allow_remote_images"`
+	PublicURLConfigured bool  `json:"public_url_configured"`
+	TrustedProxiesCount int   `json:"trusted_proxies_count"`
+}
+
+// ServerStatus mirrors GET /api/v1/agent/status.
+type ServerStatus struct {
+	Status   string            `json:"status"`
+	Checks   map[string]string `json:"checks"`
+	Build    BuildInfo         `json:"build"`
+	Runtime  RuntimeStatus     `json:"runtime"`
+	Storage  StorageStatus     `json:"storage"`
+	Counts   ContentCounts     `json:"counts"`
+	Activity ActivityStatus    `json:"activity"`
+	Config   ConfigStatus      `json:"config"`
 }
 
 // ListItemsRequest filters GET /api/v1/agent/items.
@@ -145,6 +221,26 @@ func FullURL(server, relURL string) string {
 	base.RawQuery = ref.RawQuery
 	base.Fragment = ref.Fragment
 	return base.String()
+}
+
+// GetStatus calls GET /api/v1/agent/status and returns the parsed payload plus raw JSON.
+func GetStatus(ctx context.Context, server, token string, httpClient *http.Client) (ServerStatus, []byte, error) {
+	endpoint, err := endpointURL(server, agentStatusPath)
+	if err != nil {
+		return ServerStatus{}, nil, err
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: statusTimeout}
+	}
+	raw, err := doJSON(ctx, http.MethodGet, endpoint, token, httpClient)
+	if err != nil {
+		return ServerStatus{}, nil, err
+	}
+	var st ServerStatus
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return ServerStatus{}, nil, fmt.Errorf("decode status response: %w", err)
+	}
+	return st, raw, nil
 }
 
 // ListDirs calls GET /api/v1/agent/dirs and returns the parsed slice plus raw JSON.

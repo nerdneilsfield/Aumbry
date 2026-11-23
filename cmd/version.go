@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-	"runtime"
+	"encoding/json"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -10,17 +10,22 @@ import (
 )
 
 func newVersionCommand() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			loggerFrom(command).Debug("printing version")
-			_, err := fmt.Fprintf(command.OutOrStdout(),
-				"aumbry %s\ncommit: %s\nbuilt: %s\ngo: %s %s/%s\n",
-				buildinfo.Version, buildinfo.Commit, buildinfo.Date,
-				runtime.Version(), runtime.GOOS, runtime.GOARCH)
+			if asJSON {
+				enc := json.NewEncoder(command.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(buildinfo.Current())
+			}
+			_, err := io.WriteString(command.OutOrStdout(), buildinfo.Format("aumbry"))
 			return err
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output version metadata as JSON")
+	return cmd
 }

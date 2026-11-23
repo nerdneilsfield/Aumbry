@@ -72,6 +72,7 @@ CLI flags (--dir, --profile)  >  Environment variables (AUMBRY_SERVER, AUMBRY_TO
 ## Global flags and exit codes
 
 - `-v`, `--verbose`: writes debug logs to `stderr`.
+- `--version`: prints CLI version, short commit hash, and build time, then exits.
 - Exit code `0`: command succeeded (or document is valid).
 - Exit code `1`: invalid arguments, local/remote validation failure, network error, or server error response.
 
@@ -334,10 +335,10 @@ aumbry delete MDUnpJpiAjMo --yes
 }
 ```
 
-### `aumbry schema` and `aumbry version`
+### `aumbry schema`, `aumbry version`, and `aumbry status`
 
 - `aumbry schema [--format md|json]`: prints the built-in XML protocol specification (`md` default).
-- `aumbry version`: prints binary version, commit hash, build timestamp, Go toolchain version, OS, and architecture:
+- `aumbry version [--json]` (or `aumbry --version`): prints local binary version, 7-character short commit hash, build timestamp, Go toolchain version, OS, and architecture (pass `--json` for structured output):
 
   ```sh
   aumbry version
@@ -350,6 +351,27 @@ aumbry delete MDUnpJpiAjMo --yes
   go: go1.27.4 linux/amd64
   ```
 
+- `aumbry status [--profile <name>] [--json]`: calls `GET /api/v1/agent/status` to inspect the remote server's version/build metadata, health and dependency checks, uptime, CPU usage and memory (process RSS / Go heap / goroutines), SQLite footprint, directory/item/revision/asset counts, and live ingest/MCP session concurrency (automatically notes CLI vs server version mismatches; pass `--json` for raw JSON):
+
+  ```sh
+  aumbry status
+  ```
+
+  ```text
+  Server:    http://127.0.0.1:8080
+  Health:    ok (sqlite=ok storage=ok)
+  Uptime:    1h 2m 5s (started 2026-11-23T11:27:55Z)
+  ServerVer: v0.2.1 (commit abcdef1, built 2026-11-23T12:30:00Z)
+  CLIVer:    v0.2.1 (commit abcdef1, built 2026-11-23T12:30:00Z)
+  Runtime:   go1.27.4 linux/amd64, goroutines=14, gc=5
+  CPU:       3.5% across 8 cores (1.25s total)
+  Memory:    rss 24.0 MB (heap 4.00 MB alloc / 6.00 MB in-use / 32.0 MB sys)
+  Storage:   local (sqlite 128 KB)
+  Content:   dirs=5 (2 protected), items=9 (7 published, 2 drafts), revisions=14, assets=6 (3.00 MB), dir_tokens=1
+  Activity:  ingest=1/4, mcp_sessions=3 (anon=2, anon_posts=0)
+  Limits:    max_ingest=200 MB, max_revisions=20, remote_images=true, public_url=true, trusted_proxies=1
+  ```
+
 ## MCP server endpoint (`/mcp`)
 
 `aumbry-server` serves a Streamable HTTP MCP endpoint at **`/mcp`** (`POST`, `GET` SSE, `DELETE`), enabling MCP-capable agents to discover, search, read, validate, and publish text or remote-figure XML reports directly:
@@ -358,6 +380,7 @@ aumbry delete MDUnpJpiAjMo --yes
   1. Unauthenticated (anonymous): public directories and their published items/revisions only.
   2. `Authorization: Bearer ad_<...>` (directory read token): subtree authorized for that token without penetrating child passwords.
   3. `Authorization: Bearer <api_token>` with optional `X-Aumbry-Dir-Tokens: ad_...,ad_...`: public directories, token-authorized subtrees, plus the caller token's own drafts, protected items, and revisions (`created_by == digest`); **`push_item` requires an API token**.
-- **Available tools (`6`):** `list_dirs`, `list_items`, `search_items`, `get_item`, `validate_xml`, `push_item`.
+- **Available tools (`7`):** `server_info`, `list_dirs`, `list_items`, `search_items`, `get_item`, `validate_xml`, `push_item`.
+  - `server_info` reports server version, short commit hash, build timestamp, supported XML protocol versions (`1.1`, `1.2`), caller role (`anonymous`, `dir_token`, `api_token`), `can_push`, and active size/revision limits; callers using an API token also receive live dependency health and uptime.
   - `list_items` and `search_items` omit `xml` and `plain_text`, strip unreadable mounts from `dirs`, and intersect explicit `dir_id` filters with caller visibility (so drafts or out-of-subtree items never bypass `dir_id`).
   - `push_item` shares `/api/v1/ingest` idempotency keys, rate limits, and SSRF-safe remote image localization under two separate size caps (`16 MiB` raw JSON-RPC POST body vs. `10 MiB` decoded XML); use CLI `aumbry push` for documents referencing local relative binary assets (`invalid_request`) or heavily JSON-escaped XML approaching `10 MiB` whose encoded JSON exceeds `16 MiB` (HTTP `413`).

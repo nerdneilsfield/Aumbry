@@ -19,6 +19,7 @@ import (
 	"github.com/unrolled/secure"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
+	"github.com/nerdneilsfield/aumbry/internal/buildinfo"
 	"github.com/nerdneilsfield/aumbry/internal/storage"
 	"github.com/nerdneilsfield/aumbry/internal/webembed"
 )
@@ -38,6 +39,7 @@ type RouterOptions struct {
 	ReadyCacheTTL          time.Duration
 	ReadyTimeout           time.Duration
 	PublicURL              string
+	StorageBackend         string
 	MaxRevisionsPerItem    *int
 	MaxIngestBodyBytes     int64
 	AllowRemoteImages      *bool
@@ -52,6 +54,10 @@ type Server struct {
 	auth                   *auth.Sessions
 	logger                 *slog.Logger
 	ready                  *ReadinessChecker
+	startedAt              time.Time
+	storageBackend         string
+	cpu                    *cpuSampler
+	mcpTracker             *mcpSessionTracker
 	publicURL              string
 	maxRevisions           int
 	maxIngestBody          int64
@@ -92,6 +98,10 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		auth:                   sessions,
 		logger:                 logger,
 		ready:                  NewReadinessChecker(database, store, logger, opt.ReadyCacheTTL, opt.ReadyTimeout),
+		startedAt:              time.Now().UTC(),
+		storageBackend:         inferStorageBackend(opt.StorageBackend, store),
+		cpu:                    newCPUSampler(),
+		mcpTracker:             newMCPSessionTracker(),
 		publicURL:              strings.TrimRight(strings.TrimSpace(opt.PublicURL), "/"),
 		maxRevisions:           maxRevs,
 		maxIngestBody:          maxIngest,
@@ -126,11 +136,13 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 	router.Head("/feeds/{dir_id}/assets/{hash}", s.getFeedAsset)
 
 	router.Route("/api/v1", func(r chi.Router) {
+		r.Get("/version", versionInfo)
 		r.Group(func(r chi.Router) {
 			r.Use(writeRL.Handler)
 			r.Post("/ingest", s.ingest)
 			r.Route("/agent", func(r chi.Router) {
 				r.Use(s.requireAgentToken)
+				r.Get("/status", s.serverStatusHandler)
 				r.Get("/dirs", s.agentDirs)
 				r.Get("/items", s.agentListItems)
 				r.Delete("/items/{id}/mounts", s.agentUnpublishItem)
@@ -153,6 +165,7 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/admin/me", s.adminMe)
+			r.Get("/admin/status", s.serverStatusHandler)
 			r.Get("/admin/tree", s.adminTree)
 			r.Post("/admin/dirs", s.adminCreateDir)
 			r.Patch("/admin/dirs/{id}", s.adminUpdateDir)
@@ -250,6 +263,11 @@ func newWriteRateLimiter() *httprate.RateLimiter {
 
 func health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func versionInfo(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, buildinfo.Current())
 }
 
 func frontendHandler(frontend fs.FS) http.Handler {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/nerdneilsfield/aumbry/internal/api"
 	"github.com/nerdneilsfield/aumbry/internal/auth"
+	"github.com/nerdneilsfield/aumbry/internal/buildinfo"
 	"github.com/nerdneilsfield/aumbry/internal/config"
 	"github.com/nerdneilsfield/aumbry/internal/db"
 	"github.com/nerdneilsfield/aumbry/internal/storage"
@@ -820,5 +821,53 @@ func TestV2MaintenanceProtectsRevisionsAndAudioAssets(t *testing.T) {
 	}
 	if ok, _ := store.Exists(ctx, oldAudioPath); ok {
 		t.Fatalf("oldAudioPath still exists after revision delete + gc")
+	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	origVer, origCommit, origDate := buildinfo.Version, buildinfo.Commit, buildinfo.Date
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit, buildinfo.Date = origVer, origCommit, origDate
+	})
+
+	buildinfo.Version = "0.2.0"
+	buildinfo.Commit = "5ba6832d3d90301d70dce14eabd75256fb52b5a4"
+	buildinfo.Date = "2026-11-23T12:18:00Z"
+
+	var textBuf bytes.Buffer
+	cmd := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cmd.SetOut(&textBuf)
+	cmd.SetArgs([]string{"version"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if !strings.Contains(textBuf.String(), "aumbry-server 0.2.0\ncommit: 5ba6832\nbuilt: 2026-11-23T12:18:00Z\n") {
+		t.Fatalf("unexpected text output: %q", textBuf.String())
+	}
+
+	var jsonBuf bytes.Buffer
+	cmdJSON := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cmdJSON.SetOut(&jsonBuf)
+	cmdJSON.SetArgs([]string{"version", "--json"})
+	if err := cmdJSON.Execute(); err != nil {
+		t.Fatalf("version --json: %v", err)
+	}
+	var got buildinfo.Info
+	if err := json.Unmarshal(jsonBuf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal json: %v (%s)", err, jsonBuf.String())
+	}
+	if got.Version != "0.2.0" || got.Commit != "5ba6832" || got.BuildTime != "2026-11-23T12:18:00Z" {
+		t.Fatalf("json output = %+v", got)
+	}
+
+	var flagBuf bytes.Buffer
+	cmdFlag := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cmdFlag.SetOut(&flagBuf)
+	cmdFlag.SetArgs([]string{"--version"})
+	if err := cmdFlag.Execute(); err != nil {
+		t.Fatalf("--version: %v", err)
+	}
+	if !strings.Contains(flagBuf.String(), "aumbry-server 0.2.0\ncommit: 5ba6832\nbuilt: 2026-11-23T12:18:00Z\n") {
+		t.Fatalf("unexpected --version output: %q", flagBuf.String())
 	}
 }

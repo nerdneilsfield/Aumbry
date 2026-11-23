@@ -270,9 +270,15 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <p v-if="docError" class="rounded border border-red-800/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">
-      {{ docError }}
-    </p>
+    <div
+      v-if="docError"
+      class="flex flex-wrap items-center justify-between gap-2 rounded border border-red-800/60 bg-red-950/30 px-3 py-2 text-sm text-red-300"
+    >
+      <span>{{ docError }}</span>
+      <button type="button" class="btn !px-2 !py-0.5 text-xs" :disabled="loading" @click="retryCurrentPage()">
+        重试加载
+      </button>
+    </div>
     <div v-else class="relative space-y-2 overflow-x-auto rounded-lg border border-gray-700/80 bg-gray-950/60 p-3 text-center print:hidden">
       <div
         v-if="pageError"

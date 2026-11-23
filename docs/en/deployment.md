@@ -123,9 +123,11 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 - **Response headers & feed privacy:** Every HTTP response includes `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`. Raw XML and asset downloads also send `Content-Security-Policy: default-src 'none'; sandbox`. Protected directory feeds (`/feeds/{dir_id}/rss.xml`, `podcast.xml`, `/feeds/{dir_id}/assets/{hash}`) and admin token issue/rotate responses send `Cache-Control: private, no-store`, and query `?token=` values are redacted to `REDACTED` before `httplog` writes access logs.
 - **Podcast client caveats:** `.wav` may not be supported by Apple Podcasts (prefer `.mp3` or `.m4a` for Apple Podcasts subscribers). Cloud-polling podcast apps (such as Pocket Casts or Overcast) store subscription URLs including `?token=` on their servers and require a publicly reachable `public_url`.
 
-## Health and readiness endpoints
+## Health, version, readiness, and runtime status
 
 - `GET /healthz`: lightweight liveness endpoint; returns HTTP `200` and `{"status":"ok"}`.
+- `GET /api/v1/version`: unauthenticated minimal endpoint (`Cache-Control: no-store`) returning running `version`, 7-character `commit`, and `build_time` (the web UI displays these in the footer, and the server binary supports `aumbry-server version [--json]` and `aumbry-server --version`).
+- `GET /api/v1/admin/status` and `GET /api/v1/agent/status`: authenticated status endpoints (`Cache-Control: no-store`, never exposing paths, remote URLs, buckets, or secrets) powering the `/admin` runtime status dashboard (with manual and 10 s auto-refresh) and CLI `aumbry status [--json]`. Returns dependency checks, uptime, CPU usage and core count, process RSS (Linux) / Go heap / goroutines / GC count, SQLite size, directory/item/revision/asset counts, live ingest and MCP session concurrency, and sanitized operational bounds. The MCP `server_info` tool also exposes server build metadata, supported protocol versions, caller role, and limits (plus health and uptime for API token callers).
 - `GET /readyz`: concurrently probes SQLite and the configured object storage backend (`local` temporary file write/delete probe, `webdav` `PROPFIND /`, `s3`/`r2` `HeadBucket`) with a `2 s` timeout, deduplicating concurrent checks and caching storage probe results for `5 s`. Returns HTTP `200` when both report `"ok"`, or HTTP `503` (`"status":"unavailable"`) when either reports `"auth"`, `"timeout"`, or `"unreachable"`. Responses exclude endpoint URLs, bucket names, local paths, access keys, and signatures:
 
   ```sh
@@ -226,6 +228,9 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
 > **Running maintenance commands under Docker Compose:** Because the image `ENTRYPOINT` is `/usr/local/bin/aumbry-server`, one-off `docker compose run` containers inherit `.env`, `/data`, and (under `docker-compose.toml.yml`) `/etc/aumbry/config.toml`. Add `-f docker-compose.toml.yml` if you use the TOML compose file:
 >
 > ```sh
+> # Inspect running server version, short commit hash, and build time
+> docker compose run --rm --no-deps aumbry version
+>
 > # Read-only / online checks (safe while the server runs)
 > docker compose run --rm --no-deps aumbry verify-storage
 > docker compose run --rm --no-deps aumbry gc --dry-run

@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/nerdneilsfield/aumbry/internal/api"
 	"github.com/nerdneilsfield/aumbry/internal/auth"
+	"github.com/nerdneilsfield/aumbry/internal/buildinfo"
 	"github.com/nerdneilsfield/aumbry/internal/config"
 	"github.com/nerdneilsfield/aumbry/internal/db"
 	"github.com/nerdneilsfield/aumbry/internal/storage"
@@ -38,6 +40,7 @@ func main() {
 
 func newRootCmd(logger *slog.Logger) *cobra.Command {
 	var configPath string
+	var showVersion bool
 	root := &cobra.Command{
 		Use:           "aumbry-server",
 		Short:         "Run and maintain the Aumbry server",
@@ -45,11 +48,17 @@ func newRootCmd(logger *slog.Logger) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if showVersion {
+				_, err := io.WriteString(cmd.OutOrStdout(), buildinfo.Format("aumbry-server"))
+				return err
+			}
 			return runServer(cmd.Context(), configPath, logger)
 		},
 	}
+	root.Flags().BoolVar(&showVersion, "version", false, "print version information and exit")
 	root.PersistentFlags().StringVar(&configPath, "config", "", "path to TOML configuration file")
 	root.AddCommand(
+		newVersionCmd(),
 		newCheckConfigCmd(&configPath),
 		newBackupCmd(&configPath),
 		newVerifyStorageCmd(&configPath),
@@ -57,6 +66,26 @@ func newRootCmd(logger *slog.Logger) *cobra.Command {
 		newReindexCmd(&configPath),
 	)
 	return root
+}
+
+func newVersionCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if asJSON {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(buildinfo.Current())
+			}
+			_, err := io.WriteString(cmd.OutOrStdout(), buildinfo.Format("aumbry-server"))
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output version metadata as JSON")
+	return cmd
 }
 
 func newCheckConfigCmd(configPath *string) *cobra.Command {
@@ -141,6 +170,7 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 	router, err := api.NewRouter(database, store, sessions, logger, api.RouterOptions{
 		TrustedProxies:      cfg.TrustedProxyPrefixes,
 		PublicURL:           cfg.PublicURL,
+		StorageBackend:      cfg.Storage,
 		MaxRevisionsPerItem: cfg.Revisions.MaxPerItem,
 		MaxIngestBodyBytes:  cfg.ResolvedMaxIngestBodyBytes(),
 		AllowRemoteImages:   cfg.Ingest.AllowRemoteImages,
@@ -154,9 +184,15 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	bi := buildinfo.Current()
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("server listening", "address", cfg.ListenAddr)
+		logger.Info("server listening",
+			"address", cfg.ListenAddr,
+			"version", bi.Version,
+			"commit", bi.Commit,
+			"build_time", bi.BuildTime,
+		)
 		serverErrors <- server.ListenAndServe()
 	}()
 

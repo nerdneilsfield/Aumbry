@@ -72,6 +72,7 @@ CLI 命令行参数（--dir、--profile） > 环境变量（AUMBRY_SERVER、AUMB
 ## 全局参数与退出码
 
 - `-v` / `--verbose`：将调试日志输出到 `stderr`。
+- `--version`：打印 CLI 版本号、短提交哈希与构建时间后退出。
 - 退出码 `0`：命令成功执行（或文档通过校验）。
 - 退出码 `1`：参数冲突、本地/服务端校验失败、网络异常或服务端返回错误状态码。
 
@@ -334,10 +335,10 @@ aumbry delete MDUnpJpiAjMo --yes
 }
 ```
 
-### `aumbry schema` 与 `aumbry version`
+### `aumbry schema`、`aumbry version` 与 `aumbry status`
 
 - `aumbry schema [--format md|json]`：输出内置 XML 协议完整规范（默认为 `md`）。
-- `aumbry version`：输出版本号、提交哈希、构建时间、Go 版本及平台架构：
+- `aumbry version [--json]`（或 `aumbry --version`）：输出 CLI 本地版本号、7 位短提交哈希、构建时间、Go 版本及平台架构（支持 `--json` 输出）：
 
   ```sh
   aumbry version
@@ -350,6 +351,27 @@ aumbry delete MDUnpJpiAjMo --yes
   go: go1.27.4 linux/amd64
   ```
 
+- `aumbry status [--profile <name>] [--json]`：调用 `GET /api/v1/agent/status` 查询远端服务端的版本号/构建信息、健康与依赖探针状态、运行时长、CPU 占用与内存（进程 RSS / Go Heap / Goroutines）、SQLite 与存储占用、目录/条目/修订/资产数量以及当前写入/MCP 会话并发情况（若本地 CLI 与服务端版本号不一致会自动提示；传 `--json` 返回原始 JSON）：
+
+  ```sh
+  aumbry status
+  ```
+
+  ```text
+  Server:    http://127.0.0.1:8080
+  Health:    ok (sqlite=ok storage=ok)
+  Uptime:    1h 2m 5s (started 2026-11-23T11:27:55Z)
+  ServerVer: v0.2.1 (commit abcdef1, built 2026-11-23T12:30:00Z)
+  CLIVer:    v0.2.1 (commit abcdef1, built 2026-11-23T12:30:00Z)
+  Runtime:   go1.27.4 linux/amd64, goroutines=14, gc=5
+  CPU:       3.5% across 8 cores (1.25s total)
+  Memory:    rss 24.0 MB (heap 4.00 MB alloc / 6.00 MB in-use / 32.0 MB sys)
+  Storage:   local (sqlite 128 KB)
+  Content:   dirs=5 (2 protected), items=9 (7 published, 2 drafts), revisions=14, assets=6 (3.00 MB), dir_tokens=1
+  Activity:  ingest=1/4, mcp_sessions=3 (anon=2, anon_posts=0)
+  Limits:    max_ingest=200 MB, max_revisions=20, remote_images=true, public_url=true, trusted_proxies=1
+  ```
+
 ## MCP Server 接入（`/mcp`）
 
 服务端内置基于官方 Streamable HTTP 协议的 **`/mcp`** 端点（支持 `POST`、`GET` SSE、`DELETE`），供支持 MCP 的 Agent 直接检索、阅读、校验并推送纯文本或公网外链插图 XML 文档：
@@ -358,6 +380,7 @@ aumbry delete MDUnpJpiAjMo --yes
   1. 无凭据（匿名）：仅可读公开目录及其已发布条目/公开修订。
   2. `Authorization: Bearer ad_<...>`（目录只读 Token）：仅可读对应目录及未单独设密子目录内的已发布条目。
   3. `Authorization: Bearer <api_token>`（可附带 `X-Aumbry-Dir-Tokens: ad_...,ad_...`）：可读公开目录、已授权子树、以及自己创建（`created_by == digest`）的草稿/受保护条目与自建修订；**仅 API Token 有权调用 `push_item`**。
-- **6 个内置工具**：`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`。
+- **7 个内置工具**：`server_info`、`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`。
+  - `server_info` 返回服务端版本、短提交哈希、构建时间、支持的 XML 协议版本（`1.1`/`1.2`）、调用方角色（`anonymous`/`dir_token`/`api_token`）、是否可推送以及各项请求/XML 大小限制；当使用 API Token 调用时还会附带依赖健康状态与运行时长。
   - `list_items` 与 `search_items` 仅返回元数据（绝不返回 `xml`/`plain_text`），并把多挂载目录 `dirs` 过滤为调用方可见子集；传入 `dir_id` 时严格与调用方权限求交（自建草稿与跨目录条目不会越权绕过 `dir_id`）。
   - `push_item` 复用 `/api/v1/ingest` 权限、限流、外链图片 SSRF 自动转存规则与两道独立上限（传输层 JSON-RPC 请求体 ≤ `16 MiB`、解码后 XML ≤ `10 MiB`；若接近 `10 MiB` 的多转义 XML 编码后超出 `16 MiB` 将在传输层返回 HTTP `413`，且包含本地相对路径媒体或 PDF 附件的 XML 会返回 `invalid_request` 工具错误），遇以上两类情况请改用 CLI `aumbry push`。

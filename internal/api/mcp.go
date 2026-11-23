@@ -24,6 +24,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/nerdneilsfield/aumbry/internal/auth"
+	"github.com/nerdneilsfield/aumbry/internal/buildinfo"
 	"github.com/nerdneilsfield/aumbry/internal/storage"
 	"github.com/nerdneilsfield/aumbry/pkg/schema"
 )
@@ -233,6 +234,29 @@ func (tr *mcpSessionTracker) remove(sid string) {
 	delete(tr.sessions, sid)
 }
 
+type mcpSessionStats struct {
+	activeSessions    int
+	anonSessions      int
+	anonPostsInFlight int
+}
+
+func (tr *mcpSessionTracker) stats() mcpSessionStats {
+	now := tr.now()
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.pruneLocked(now)
+	st := mcpSessionStats{
+		activeSessions:    len(tr.sessions),
+		anonPostsInFlight: tr.anonPostsTotal,
+	}
+	for _, rec := range tr.sessions {
+		if rec.anonIP != "" {
+			st.anonSessions++
+		}
+	}
+	return st
+}
+
 type mcpStatusCaptureWriter struct {
 	http.ResponseWriter
 	status     int
@@ -290,7 +314,7 @@ func exactClientIP(r *http.Request) string {
 func (s *Server) newMCPHTTPHandler() http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "aumbry",
-		Version: "0.2.0",
+		Version: buildinfo.Current().Version,
 	}, nil)
 
 	s.registerMCPTools(server)
@@ -314,7 +338,10 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 			http.Error(w, "anonymous MCP rate limit exceeded", http.StatusTooManyRequests)
 		}),
 	)
-	tracker := newMCPSessionTracker()
+	tracker := s.mcpTracker
+	if tracker == nil {
+		tracker = newMCPSessionTracker()
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.allowMCPHostAndOrigin(r) {
@@ -711,7 +738,38 @@ type mcpPushItemInput struct {
 	CreateOnly  bool     `json:"create_only,omitempty" jsonschema:"Fail with conflict if external_key already exists"`
 }
 
+type mcpServerInfoInput struct{}
+
+type mcpServerLimits struct {
+	MaxXMLBytes         int64 `json:"max_xml_bytes"`
+	MaxMCPBodyBytes     int64 `json:"max_mcp_body_bytes"`
+	MaxIngestBodyBytes  int64 `json:"max_ingest_body_bytes"`
+	MaxRevisionsPerItem int   `json:"max_revisions_per_item"`
+	AllowRemoteImages   bool  `json:"allow_remote_images"`
+}
+
+type mcpServerHealth struct {
+	Status        string            `json:"status"`
+	Checks        map[string]string `json:"checks"`
+	UptimeSeconds int64             `json:"uptime_seconds"`
+}
+
+type mcpServerInfoOutput struct {
+	Build            buildinfo.Info   `json:"build"`
+	ProtocolVersions []string         `json:"protocol_versions"`
+	CallerRole       string           `json:"caller_role"`
+	CanPush          bool             `json:"can_push"`
+	Limits           mcpServerLimits  `json:"limits"`
+	Tools            []string         `json:"tools"`
+	Health           *mcpServerHealth `json:"health,omitempty"`
+}
+
 func (s *Server) registerMCPTools(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "server_info",
+		Description: "Return Aumbry server version, build metadata, protocol support, caller role, and active ingest/MCP limits.",
+	}, s.mcpServerInfo)
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_dirs",
 		Description: "List visible directories (with optional parent_id). Protected child directories omit descriptions until authorized.",
@@ -741,6 +799,74 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 		Name:        "push_item",
 		Description: "Validate and ingest a text/remote-figure XML document (requires API Bearer token; rejects local relative binary assets).",
 	}, s.mcpPushItem)
+}
+
+func (s *Server) resolveMCPCallerKind(ctx context.Context, hdr http.Header) (mcpAuthKind, error) {
+	authHdr := strings.TrimSpace(hdr.Get("Authorization"))
+	if authHdr == "" {
+		return mcpAuthAnon, nil
+	}
+	scheme, rawTok, ok := strings.Cut(authHdr, " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return 0, mcpToolError("unauthorized", "invalid Authorization header")
+	}
+	kind, _, _, _, err := s.authenticateMCPToken(ctx, s.db, rawTok)
+	if errors.Is(err, mcpauth.ErrInvalidToken) {
+		return 0, mcpToolError("unauthorized", "bearer token is invalid or revoked")
+	}
+	if err != nil {
+		return 0, err
+	}
+	return kind, nil
+}
+
+func (s *Server) mcpServerInfo(ctx context.Context, req *mcp.CallToolRequest, _ mcpServerInfoInput) (*mcp.CallToolResult, mcpServerInfoOutput, error) {
+	var zero mcpServerInfoOutput
+	kind, err := s.resolveMCPCallerKind(ctx, requestHeaders(req))
+	if err != nil {
+		return nil, zero, err
+	}
+	role := "anonymous"
+	canPush := false
+	tools := []string{"server_info", "list_dirs", "list_items", "search_items", "get_item", "validate_xml"}
+	var health *mcpServerHealth
+	switch kind {
+	case mcpAuthDirToken:
+		role = "dir_token"
+	case mcpAuthAPIToken:
+		role = "api_token"
+		canPush = true
+		tools = append(tools, "push_item")
+		rep := s.ready.Check(ctx)
+		st := "ok"
+		if !rep.Ready {
+			st = "degraded"
+		}
+		uptime := int64(0)
+		if !s.startedAt.IsZero() {
+			uptime = max(int64(0), int64(time.Since(s.startedAt).Seconds()))
+		}
+		health = &mcpServerHealth{
+			Status:        st,
+			Checks:        rep.Checks,
+			UptimeSeconds: uptime,
+		}
+	}
+	return nil, mcpServerInfoOutput{
+		Build:            buildinfo.Current(),
+		ProtocolVersions: []string{"1.1", "1.2"},
+		CallerRole:       role,
+		CanPush:          canPush,
+		Limits: mcpServerLimits{
+			MaxXMLBytes:         int64(maxXMLSize),
+			MaxMCPBodyBytes:     int64(mcpMaxRequestBodyBytes),
+			MaxIngestBodyBytes:  s.maxIngestBody,
+			MaxRevisionsPerItem: s.maxRevisions,
+			AllowRemoteImages:   s.allowRemoteImages,
+		},
+		Tools:  tools,
+		Health: health,
+	}, nil
 }
 
 func (s *Server) mcpListDirs(ctx context.Context, req *mcp.CallToolRequest, in mcpListDirsInput) (*mcp.CallToolResult, mcpListDirsOutput, error) {

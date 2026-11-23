@@ -50,7 +50,7 @@ description: Use when publishing, structuring, validating, or managing research 
 
 > 第 1 轮仅有单个 `<stage>` 时不要放指向未建未来 `<stage>` 的 `<next-steps>`（会报 `INVALID_TARGET`）；全量标签、属性与 Chart JSON 字段见 [xml-tags.md](references/xml-tags.md)。
 >
-> **MCP 接入（`/mcp`）**：除 CLI 外，Agent 还可通过 Streamable HTTP 连接服务端的 `/mcp` 端点（支持 `list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml` 与 API Token 专属的 `push_item`；`push_item` 仅接受纯文本与公网外链 `<figure src>` 的 XML，含本地相对路径资产时拒绝并提示改用 CLI `aumbry push`）。
+> **MCP 接入（`/mcp`）**：除 CLI 外，Agent 还可通过 Streamable HTTP 连接服务端的 `/mcp` 端点（支持 `server_info`、`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml` 与 API Token 专属的 `push_item`；`push_item` 仅接受纯文本与公网外链 `<figure src>` 的 XML，含本地相对路径资产时拒绝并提示改用 CLI `aumbry push`）；排查版本或服务状态可用 `aumbry version`、`aumbry status`。
 
 ## 发布目录决策与 CLI 认证速查
 
