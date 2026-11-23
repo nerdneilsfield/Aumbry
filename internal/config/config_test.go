@@ -496,14 +496,95 @@ func TestLoadValidationErrors(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("public_url, revisions.max_per_item, and ingest.max_body_mb defaults and validation", func(t *testing.T) {
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		res, err := load("", nil, os.Environ())
+		if err != nil {
+			t.Fatalf("defaults load() = %v", err)
+		}
+		if res.Config.PublicURL != "" || res.Config.ResolvedMaxRevisionsPerItem() != 20 || res.Config.ResolvedMaxIngestBodyBytes() != 200*1024*1024 {
+			t.Fatalf("unexpected defaults: %+v", res.Config)
+		}
+
+		// Trailing slash trimmed on valid public_url; zero max_per_item and 20MB min ingest allowed.
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_PUBLIC_URL", "https://reports.example.com/")
+		t.Setenv("AUMBRY_REVISIONS_MAX_PER_ITEM", "0")
+		t.Setenv("AUMBRY_INGEST_MAX_BODY_MB", "20")
+		res, err = load("", nil, os.Environ())
+		if err != nil {
+			t.Fatalf("valid overrides load() = %v", err)
+		}
+		if res.Config.PublicURL != "https://reports.example.com" {
+			t.Fatalf("PublicURL = %q, want trimmed URL", res.Config.PublicURL)
+		}
+		if res.Config.ResolvedMaxRevisionsPerItem() != 0 {
+			t.Fatalf("MaxRevisions = %d, want 0 (unlimited)", res.Config.ResolvedMaxRevisionsPerItem())
+		}
+		if res.Config.ResolvedMaxIngestBodyBytes() != 20*1024*1024 {
+			t.Fatalf("MaxIngestBodyBytes = %d, want 20MiB", res.Config.ResolvedMaxIngestBodyBytes())
+		}
+
+		// Invalid public_url rejected.
+		for _, badURL := range []string{
+			"https://example.com/sub",
+			"https://example.com?q=1",
+			"https://example.com#frag",
+			"https://user:pass@example.com",
+			"ftp://example.com",
+		} {
+			clearConfigEnv(t)
+			setBaseEnvironment(t)
+			t.Setenv("AUMBRY_PUBLIC_URL", badURL)
+			if _, err = load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "public_url") {
+				t.Fatalf("public_url %q: err = %v, want public_url error", badURL, err)
+			}
+		}
+
+		// Negative revisions.max_per_item rejected via env and TOML.
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_REVISIONS_MAX_PER_ITEM", "-1")
+		if _, err = load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "revisions.max_per_item") {
+			t.Fatalf("negative max_per_item err = %v", err)
+		}
+
+		// ingest.max_body_mb 1..19 rejected.
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		t.Setenv("AUMBRY_INGEST_MAX_BODY_MB", "19")
+		if _, err = load("", nil, os.Environ()); err == nil || !strings.Contains(err.Error(), "ingest.max_body_mb") {
+			t.Fatalf("19 MiB max_body_mb err = %v", err)
+		}
+
+		// TOML overrides for zero and default fallback.
+		clearConfigEnv(t)
+		setBaseEnvironment(t)
+		cfgFile := filepath.Join(t.TempDir(), "aumbry.toml")
+		tomlBody := "public_url = \"http://localhost:8080/\"\n[revisions]\nmax_per_item = 0\n[ingest]\nmax_body_mb = 500\n"
+		if writeErr := os.WriteFile(cfgFile, []byte(tomlBody), 0o600); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		res, err = load(cfgFile, nil, os.Environ())
+		if err != nil {
+			t.Fatalf("TOML load() = %v", err)
+		}
+		if res.Config.PublicURL != "http://localhost:8080" || res.Config.ResolvedMaxRevisionsPerItem() != 0 || res.Config.ResolvedMaxIngestBodyBytes() != 500*1024*1024 {
+			t.Fatalf("unexpected TOML config: %+v", res.Config)
+		}
+	})
 }
 
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"AUMBRY_CONFIG", "AUMBRY_LISTEN_ADDR", "AUMBRY_DATA_DIR", "AUMBRY_STORAGE",
+		"AUMBRY_CONFIG", "AUMBRY_LISTEN_ADDR", "AUMBRY_PUBLIC_URL", "AUMBRY_DATA_DIR", "AUMBRY_STORAGE",
 		"AUMBRY_ADMIN_USER", "AUMBRY_ADMIN_PASSWORD_HASH", "AUMBRY_API_TOKENS",
-		"AUMBRY_COOKIE_SECRET", "AUMBRY_TRUSTED_PROXIES", "AUMBRY_LOCAL_PATH",
+		"AUMBRY_COOKIE_SECRET", "AUMBRY_TRUSTED_PROXIES", "AUMBRY_REVISIONS_MAX_PER_ITEM",
+		"AUMBRY_INGEST_MAX_BODY_MB", "AUMBRY_LOCAL_PATH",
 		"AUMBRY_WEBDAV_URL", "AUMBRY_WEBDAV_USER", "AUMBRY_WEBDAV_PASS",
 		"AUMBRY_S3_ENDPOINT", "AUMBRY_S3_REGION", "AUMBRY_S3_BUCKET",
 		"AUMBRY_S3_ACCESS_KEY_ID", "AUMBRY_S3_SECRET_ACCESS_KEY", "AUMBRY_S3_PATH_STYLE",

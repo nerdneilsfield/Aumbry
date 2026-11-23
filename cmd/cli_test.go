@@ -180,7 +180,7 @@ func TestValidateHintAndSchemaCommand(t *testing.T) {
 		t.Fatalf("text hint missing: err=%v out=%s", err, outText)
 	}
 
-	// Only version="1.1" is accepted; anything else exits via ValidationFailedError with UNSUPPORTED_VERSION.
+	// Versions outside 1.1/1.2 exit via ValidationFailedError with UNSUPPORTED_VERSION.
 	oldVersion := filepath.Join(dir, "version10.xml")
 	xmlOld := `<document version="1.0"><meta><title>T</title><type>report</type><date>2026-11-20</date><summary>S</summary><source-agent>a</source-agent></meta><body><md>x</md></body></document>`
 	if err = os.WriteFile(oldVersion, []byte(xmlOld), 0o600); err != nil {
@@ -197,8 +197,8 @@ func TestValidateHintAndSchemaCommand(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &spec); err != nil {
 		t.Fatalf("unmarshal schema json: %v\n%s", err, jsonOut)
 	}
-	if spec.Version != "1.1" {
-		t.Fatalf("schema json version = %q, want 1.1", spec.Version)
+	if spec.Version != "1.2" {
+		t.Fatalf("schema json version = %q, want 1.2", spec.Version)
 	}
 	if len(spec.Elements) == 0 || len(spec.ErrorCodes) == 0 {
 		t.Fatalf("schema json missing elements/error_codes: %+v", spec)

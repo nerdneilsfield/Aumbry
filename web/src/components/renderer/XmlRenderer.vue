@@ -6,9 +6,10 @@ import { provideReading, readerBridge, type ReaderBridge } from '@/composables/u
 import ContainerBody from './ContainerBody.vue'
 
 // storageKey: identifies the document for persisted reading state (unlocked stages, quiz answers).
-const props = withDefaults(defineProps<{ body: Element; storageKey?: string }>(), { storageKey: 'doc' })
+// readOnly: isolates `?rev=N` historical views from reading or writing localStorage.
+const props = withDefaults(defineProps<{ body: Element; storageKey?: string; readOnly?: boolean }>(), { storageKey: 'doc', readOnly: false })
 const route = useRoute()
-const reading = provideReading(() => props.body, props.storageKey)
+const reading = provideReading(() => props.body, props.storageKey, { readOnly: props.readOnly })
 const { reveal, navigate, canReveal } = provideAnchors(() => props.body, reading)
 
 // Direct loads / back-forward with #fig-x, #eq-x, #ref-x, #stage-x: open whatever hides the target, then scroll.

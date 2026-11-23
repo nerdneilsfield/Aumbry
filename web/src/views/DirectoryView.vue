@@ -2,8 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/vue-query'
-import { useTitle } from '@vueuse/core'
-import { ChevronRight, FileQuestion, Folder, Lock, Search, X } from 'lucide-vue-next'
+import { useClipboard, useTitle } from '@vueuse/core'
+import { Check, ChevronRight, FileQuestion, Folder, Lock, Podcast, Rss, Search, X } from 'lucide-vue-next'
 import { ApiError, api, errorMessage } from '@/api/client'
 import ItemList from '@/components/ItemList.vue'
 import PasswordGate from '@/components/PasswordGate.vue'
@@ -50,6 +50,18 @@ const searchBusy = computed(() => !settled.value || searchQuery.isFetching.value
 
 // A search 401 means the unlock session lapsed: re-check the directory, which shows the gate.
 watch(searchQuery.error, (e) => e instanceof ApiError && e.status === 401 && dirQuery.refetch())
+
+const { copy } = useClipboard({ legacy: true })
+const copiedFeed = ref<'rss' | 'podcast' | null>(null)
+function copyFeedUrl(kind: 'rss' | 'podcast') {
+  const path = kind === 'rss' ? 'rss.xml' : 'podcast.xml'
+  void copy(`${location.origin}/feeds/${encodeURIComponent(id.value)}/${path}`).then(() => {
+    copiedFeed.value = kind
+    setTimeout(() => {
+      if (copiedFeed.value === kind) copiedFeed.value = null
+    }, 2000)
+  })
+}
 </script>
 
 <template>
@@ -69,8 +81,22 @@ watch(searchQuery.error, (e) => e instanceof ApiError && e.status === 401 && dir
       </template>
     </nav>
 
-    <h1 class="text-2xl font-bold text-gray-50">{{ dir.name }}</h1>
-    <p v-if="dir.description" class="mt-1 text-gray-400">{{ dir.description }}</p>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-50">{{ dir.name }}</h1>
+        <p v-if="dir.description" class="mt-1 text-gray-400">{{ dir.description }}</p>
+      </div>
+      <div v-if="!dir.protected" class="flex flex-wrap items-center gap-2">
+        <button type="button" class="btn !py-1.5 text-xs" @click="copyFeedUrl('rss')">
+          <component :is="copiedFeed === 'rss' ? Check : Rss" class="size-3.5" aria-hidden="true" />
+          {{ copiedFeed === 'rss' ? '已复制 RSS' : '复制 RSS' }}
+        </button>
+        <button type="button" class="btn !py-1.5 text-xs" @click="copyFeedUrl('podcast')">
+          <component :is="copiedFeed === 'podcast' ? Check : Podcast" class="size-3.5" aria-hidden="true" />
+          {{ copiedFeed === 'podcast' ? '已复制 Podcast' : '复制 Podcast' }}
+        </button>
+      </div>
+    </div>
 
     <div class="relative mt-6">
       <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-500" />

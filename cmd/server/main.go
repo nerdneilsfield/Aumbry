@@ -139,7 +139,10 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 	}
 
 	router, err := api.NewRouter(database, store, sessions, logger, api.RouterOptions{
-		TrustedProxies: cfg.TrustedProxyPrefixes,
+		TrustedProxies:      cfg.TrustedProxyPrefixes,
+		PublicURL:           cfg.PublicURL,
+		MaxRevisionsPerItem: cfg.Revisions.MaxPerItem,
+		MaxIngestBodyBytes:  cfg.ResolvedMaxIngestBodyBytes(),
 	})
 	if err != nil {
 		return err

@@ -138,6 +138,14 @@ func verifyStorage(ctx context.Context, database *sqlx.DB, store storage.Store, 
 	if err := database.SelectContext(ctx, &items, `SELECT id, xml_storage_path FROM items ORDER BY id`); err != nil {
 		return fmt.Errorf("query items: %w", err)
 	}
+	var revisions []struct {
+		ItemID  string `db:"item_id"`
+		Rev     int    `db:"rev"`
+		XMLPath string `db:"xml_storage_path"`
+	}
+	if err := database.SelectContext(ctx, &revisions, `SELECT item_id, rev, xml_storage_path FROM item_revisions ORDER BY item_id, rev`); err != nil {
+		return fmt.Errorf("query item_revisions: %w", err)
+	}
 	var assets []struct {
 		Hash        string `db:"hash"`
 		StoragePath string `db:"storage_path"`
@@ -147,13 +155,34 @@ func verifyStorage(ctx context.Context, database *sqlx.DB, store storage.Store, 
 	}
 
 	var missing []string
+	verifiedXML := make(map[string]bool, len(items)+len(revisions))
 	for _, item := range items {
+		verifiedXML[item.XMLPath] = false
+	}
+	for _, item := range items {
+		if verifiedXML[item.XMLPath] {
+			continue
+		}
 		ok, err := store.Exists(ctx, item.XMLPath)
 		if err != nil {
 			return fmt.Errorf("check xml %s for item %s: %w", item.XMLPath, item.ID, err)
 		}
+		verifiedXML[item.XMLPath] = true
 		if !ok {
 			missing = append(missing, fmt.Sprintf("missing xml (item %s): %s", item.ID, item.XMLPath))
+		}
+	}
+	for _, rv := range revisions {
+		if verifiedXML[rv.XMLPath] {
+			continue
+		}
+		ok, err := store.Exists(ctx, rv.XMLPath)
+		if err != nil {
+			return fmt.Errorf("check revision xml %s for item %s rev %d: %w", rv.XMLPath, rv.ItemID, rv.Rev, err)
+		}
+		verifiedXML[rv.XMLPath] = true
+		if !ok {
+			missing = append(missing, fmt.Sprintf("missing revision xml (item %s rev %d): %s", rv.ItemID, rv.Rev, rv.XMLPath))
 		}
 	}
 	for _, asset := range assets {
@@ -169,7 +198,7 @@ func verifyStorage(ctx context.Context, database *sqlx.DB, store storage.Store, 
 	if len(missing) > 0 {
 		return fmt.Errorf("storage verification failed: %d missing object(s):\n%s", len(missing), strings.Join(missing, "\n"))
 	}
-	_, err := fmt.Fprintf(out, "storage OK: verified %d xml and %d asset objects\n", len(items), len(assets))
+	_, err := fmt.Fprintf(out, "storage OK: verified %d xml (%d revisions) and %d asset objects\n", len(verifiedXML), len(revisions), len(assets))
 	return err
 }
 
@@ -182,15 +211,17 @@ var (
 	// Generated in internal/api/ingest.go: /xml/<12-char-id>-<64-hex>.xml
 	managedXMLPathRe = regexp.MustCompile(`^/xml/[A-Za-z0-9_-]{12}-[0-9a-f]{64}\.xml$`)
 	// Generated in internal/api/ingest.go: /assets/<64-hex>.<ext>
-	managedAssetPathRe = regexp.MustCompile(`^/assets/[0-9a-f]{64}\.(png|jpg|webp|svg)$`)
+	managedAssetPathRe = regexp.MustCompile(`^/assets/[0-9a-f]{64}\.(png|jpg|webp|svg|mp3|wav|m4a|pdf)$`)
 )
 
 func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun bool, out io.Writer) error {
-	liveXML, err := selectPathSet(ctx, database, `SELECT xml_storage_path FROM items`)
+	liveXML, err := selectPathSet(ctx, database, `SELECT xml_storage_path FROM items UNION SELECT xml_storage_path FROM item_revisions`)
 	if err != nil {
 		return fmt.Errorf("query live xml paths: %w", err)
 	}
-	liveAssets, err := selectPathSet(ctx, database, `SELECT DISTINCT a.storage_path FROM assets a JOIN item_assets ia ON ia.asset_hash = a.hash`)
+	liveAssets, err := selectPathSet(ctx, database, `SELECT DISTINCT a.storage_path FROM assets a
+		WHERE EXISTS (SELECT 1 FROM item_assets ia WHERE ia.asset_hash = a.hash)
+		   OR EXISTS (SELECT 1 FROM item_revision_assets ira WHERE ira.asset_hash = a.hash)`)
 	if err != nil {
 		return fmt.Errorf("query live asset paths: %w", err)
 	}
@@ -213,7 +244,10 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 
 	var orphanDBAssets []orphanAssetRow
 	if err = database.SelectContext(ctx, &orphanDBAssets,
-		`SELECT a.hash, a.storage_path FROM assets a WHERE NOT EXISTS (SELECT 1 FROM item_assets ia WHERE ia.asset_hash = a.hash) ORDER BY a.hash`); err != nil {
+		`SELECT a.hash, a.storage_path FROM assets a
+		 WHERE NOT EXISTS (SELECT 1 FROM item_assets ia WHERE ia.asset_hash = a.hash)
+		   AND NOT EXISTS (SELECT 1 FROM item_revision_assets ira WHERE ira.asset_hash = a.hash)
+		 ORDER BY a.hash`); err != nil {
 		return fmt.Errorf("query orphan asset rows: %w", err)
 	}
 
@@ -281,9 +315,11 @@ func runGC(ctx context.Context, database *sqlx.DB, store storage.Store, dryRun b
 		if failed[row.StoragePath] != nil {
 			continue
 		}
-		res, err := tx.ExecContext(ctx, `DELETE FROM assets WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM item_assets WHERE asset_hash = ?)`, row.Hash, row.Hash)
-		if err != nil {
-			return errors.Join(append(deleteErrs, fmt.Errorf("delete asset row %s: %w", row.Hash, err))...)
+		res, execErr := tx.ExecContext(ctx, `DELETE FROM assets WHERE hash = ?
+			AND NOT EXISTS (SELECT 1 FROM item_assets WHERE asset_hash = ?)
+			AND NOT EXISTS (SELECT 1 FROM item_revision_assets WHERE asset_hash = ?)`, row.Hash, row.Hash, row.Hash)
+		if execErr != nil {
+			return errors.Join(append(deleteErrs, fmt.Errorf("delete asset row %s: %w", row.Hash, execErr))...)
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			deletedRows++

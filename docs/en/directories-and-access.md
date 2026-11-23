@@ -134,3 +134,10 @@ Behavior when viewing a multi-mounted item:
   ```json
   {"error":"forbidden","message":"this item is not accessible"}
   ```
+
+## Directory feeds, read tokens, and revision isolation
+
+- **RSS & Podcast feeds:** Every directory exposes `GET /feeds/{dir_id}/rss.xml` and `GET /feeds/{dir_id}/podcast.xml` (up to 50 visible items). Public directories allow anonymous access with enclosures pointing directly to `/api/v1/assets/{hash}`. Protected directories ignore browser admin/visitor cookies and require a directory-scoped read token (`?token=ad_...`) issued in `/admin`, respond with `Cache-Control: private, no-store`, and proxy audio enclosures via `/feeds/{dir_id}/assets/{hash}?token=...`.
+- **Child-lock boundary & password decoupling:** An `ad_` token issued for directory `D` grants read/feed access to `D` and its unprotected descendants, never penetrating a descendant `C` with its own independent password (issue a dedicated token for `C`). Changing a directory's visitor password does not revoke issued `ad_` tokens; rotate or revoke tokens explicitly in `/admin`.
+- **Dual-gate revision history privacy:** Reading historical snapshots (`GET /api/v1/items/{id}/revisions` and `?rev=N`) and revision-exclusive assets enforces both gates for non-admins: the item must currently be readable, and the requested revision's `item_revision_mounts` must still include at least one directory currently accessible to the caller (prior private revisions never leak if an item is later republished to a public directory, and clearing a directory's password later does not retroactively expose historical snapshots recorded while it was protected).
+- **Filtered backlinks:** `referenced_by` on `GET /api/v1/items/{id}` omits unmounted drafts and any citing report stored only in directories locked to the current caller.

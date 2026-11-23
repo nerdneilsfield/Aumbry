@@ -118,9 +118,10 @@
 ## 数据目录、容量上限与安全响应头
 
 - **`data_dir` 结构**：服务端以 `0700` 权限创建 `data_dir`，锁定 `aumbry.lock` 防止多实例同时启动，并初始化处于 SQLite WAL 模式的 `aumbry.db`（启动时自动完成数据库结构迁移）。
-- **对象布局、权限与超时**：条目正文放在 `/xml/<12位ID>-<64位小写十六进制>.xml`；图片放在 `/assets/<64位小写十六进制>.<ext>`（按文件内容 MIME 识别，仅允许 `.png`、`.jpg`、`.webp`、`.svg`）。使用 `storage = "local"` 时，服务端在启动时创建 `local.path`（默认 `<data_dir>/objects`，权限 `0700`），对象文件以原子写入方式落盘并设为 `0600`。远程存储后端（`webdav`、`s3`、`r2`）建立 TCP 连接超时为 `5 s`，等待响应头超时为 `30 s`，大对象流式读取不设整体超时。
-- **上传与限流上限**：`POST /api/v1/ingest` 单次请求上限 `100 MiB`，XML 正文上限 `10 MiB`，单张图片上限 `20 MiB`，并发上传上限为 `4`；`/api/v1/ingest` 与 `/api/v1/agent/*` 共享同 IP 每分钟 `120` 次限流。管理员登录与目录密码解锁接口限流为同 IP 每分钟 `10` 次。
-- **默认安全响应头**：所有 HTTP 响应均带 `Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff` 与 `X-Frame-Options: DENY`；XML 与图片代理响应额外带 `Cache-Control: private` 与 `Content-Security-Policy: default-src 'none'; sandbox`。
+- **对象布局、权限与超时**：条目正文放在 `/xml/<12位ID>-<64位小写十六进制>.xml`（`aumbry validate` / `ingest` 每次更新都会生成新快照路径，删除条目和淘汰历史不再直接 `DELETE` 存储对象，统一由离线 `gc` 清理）；媒体资产放在 `/assets/<64位小写十六进制>.<ext>`（按文件内容与容器校验，图片支持 `.png`/`.jpg`/`.webp`/`.svg`，音频支持 `.mp3`/`.wav`/`.m4a`，`/api/v1/assets/{hash}` 支持 HTTP `Range` 分片与 `HEAD` 请求）。使用 `storage = "local"` 时，服务端在启动时创建 `local.path`（默认 `<data_dir>/objects`，权限 `0700`），对象文件以原子写入方式落盘并设为 `0600`。远程存储后端（`webdav`、`s3`、`r2`）建立 TCP 连接超时为 `5 s`，等待响应头超时为 `30 s`，大对象流式读取不设整体超时。WebDAV 上传先写入 `.tmp-*` 临时对象再通过 HTTP `MOVE` 原子切换。
+- **上传、临时盘与限流上限**：`POST /api/v1/ingest` 默认总请求体上限为 `200 MiB`（通过 `ingest.max_body_mb` / `AUMBRY_INGEST_MAX_BODY_MB` 可调，最小 `20 MiB`），XML 正文上限 `10 MiB`，单图上限 `20 MiB`，单音频上限 `100 MiB`，并发上传上限为 `4`。超过 `32 MiB` 的 multipart 媒体部分会流式落盘到临时目录，请为服务器临时目录预留至少 `4 × max_body_mb`（默认至少 `800 MiB`）磁盘空间。`/api/v1/ingest` 与 `/api/v1/agent/*` 共享同 IP 每分钟 `120` 次限流；管理员登录与目录密码解锁限流为同 IP 每分钟 `10` 次。
+- **默认安全响应头与订阅源隐私**：所有 HTTP 响应均带 `Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff` 与 `X-Frame-Options: DENY`；XML 与资产代理响应带 `Content-Security-Policy: default-src 'none'; sandbox`；受保护目录的 `/feeds/{dir_id}/rss.xml`、`podcast.xml`、`/feeds/{dir_id}/assets/{hash}` 以及后台 Token 生成/轮换接口一律返回 `Cache-Control: private, no-store`，Go HTTP 日志中间件会在到达 `httplog` 前将 `?token=...` 脱敏为 `REDACTED`。
+- **Podcast 客户端兼容性提示**：WAV 格式在 Apple Podcasts 中可能不被支持（面向 Apple Podcasts 订阅建议优先推送 `.mp3` 或 `.m4a`）。使用 Pocket Casts / Overcast 等云端拉取型播客客户端订阅受保护目录时，其云端服务器会持有 URL 中的 `?token=`，且须配置外部可访问的 `public_url`。
 
 ## 健康检查与就绪探针
 
@@ -142,7 +143,7 @@
 在 Nginx、Caddy 或 Traefik 后运行时按下面步骤配置：
 
 1. 将代理服务器 IP 或网段写入 `trusted_proxies`（例如 `trusted_proxies = ["127.0.0.1", "10.0.0.0/8"]`，或环境变量 `AUMBRY_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8`）。服务端只信任直接 TCP 来源命中该列表的请求，并从右向左跳过可信代理跳数提取真实客户端 IP。
-2. 在代理端转发 `X-Forwarded-For`、`X-Forwarded-Proto` 与 `Host`，并将代理最大请求体调至不少于 `100 MiB`（例如 Nginx 设置 `client_max_body_size 100m;`），防止多图推送在代理层被截断。
+2. 在代理端转发 `X-Forwarded-For`、`X-Forwarded-Proto`、`X-Forwarded-Host` 与 `Host`，将代理最大请求体调至大于 `ingest.max_body_mb`（默认 `200 MiB`，例如 Nginx 设置 `client_max_body_size 201m;`），确保 **绝不缓存 `/feeds/`**（受保护目录 Feed 内含 `?token=` 凭据），并在代理访问日志中移除或脱敏 `?token=` 查询参数（以及关闭对 `/api/v1/assets/*` 与 `/feeds/*/assets/*` 的 Range 压缩破坏）。
 
 `examples/deploy/traefik`、`examples/deploy/nginx` 与 `examples/deploy/caddy` 目录提供了这三种代理的 Compose 示例，可直接复制使用。三个示例中，Aumbry 与代理位于同一个 Docker 网络，Aumbry 不发布任何端口。每个 Compose 文件把该网络固定为子网 `172.31.250.0/24`，并把同一个 CIDR 作为 `AUMBRY_TRUSTED_PROXIES` 传给 Aumbry，因此 Aumbry 只信任来自该网络内容器的转发头。如果宿主机已经使用该网段，在 `.env` 中设置 `PROXY_SUBNET` 即可换成其他网段，子网与 `AUMBRY_TRUSTED_PROXIES` 会同时跟随。不要在 `.env` 中设置 `AUMBRY_TRUSTED_PROXIES`，因为 Compose 文件中的值优先。
 
@@ -196,7 +197,7 @@ Traefik 把证书保存在 `traefik-letsencrypt` 卷中。它每 10 s 探测一�
 
 每次证书续期后，把新文件复制到 `certs/`，再执行 `docker compose exec nginx nginx -s reload`。
 
-`aumbry.conf` 设置了 `Host`、`X-Forwarded-For` 与 `X-Forwarded-Proto`。`client_max_body_size` 设为 `101m`（nginx 的 `m` 表示 MiB），比 Aumbry 拒绝的 100 MiB 请求体上限大 1 MiB，因此超限的推送会收到 Aumbry 返回的 JSON `413` 响应，而不是 nginx 的错误页。`proxy_send_timeout` 与 `proxy_read_timeout` 均为 `120s`。这两个超时只计算相邻两次写入或读取之间的间隔，而 Aumbry 在把 ingest 请求的对象上传到对象存储之前不会返回任何响应。
+`aumbry.conf` 已经在 HTTP（80）和 HTTPS（443）两个入口启用了 `aumbry_no_query` 日志格式（使用 `$uri` 而非 `$request_uri`，避免 `?token=ad_...` 写入 nginx 访问日志），并设置了 `Host`、`X-Forwarded-For` 与 `X-Forwarded-Proto`。`client_max_body_size` 设为 `201m`（nginx 的 `m` 表示 MiB），比 Aumbry 默认拒绝的 `200 MiB` 请求体上限（`ingest.max_body_mb`）大 1 MiB，因此超限推送会收到 Aumbry 返回的 JSON `413` 响应，而不是 nginx 的错误页。若开启反向代理缓存，请勿缓存 `/feeds/`。`proxy_send_timeout` 与 `proxy_read_timeout` 均为 `120s`。这两个超时只计算相邻两次写入或读取之间的间隔，而 Aumbry 在把 ingest 请求的对象上传到对象存储之前不会返回任何响应。
 
 ### 用 Caddy 部署
 
@@ -246,7 +247,7 @@ Traefik 把证书保存在 `traefik-letsencrypt` 卷中。它每 10 s 探测一�
 
 ### 核验对象引用完整性（`verify-storage`）
 
-`verify-storage` 逐条检查 `aumbry.db` 中记录的所有条目 XML 文件与引用图片是否仍存在于对象存储（使用 `local` 时，根目录必须已存在，命令不会自动创建缺失目录；否则以非零退出码返回）：
+`verify-storage` 逐条检查 `aumbry.db` 中记录的所有现行条目、历史修订（`item_revisions`）的 XML 文件以及全部当前与历史引用资产（图片与音频）是否仍存在于对象存储（使用 `local` 时，根目录必须已存在，命令不会自动创建缺失目录；否则以非零退出码返回）：
 
 ```sh
 aumbry-server verify-storage --config ./aumbry.toml
@@ -260,7 +261,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 清理无引用对象（`gc`）
 
-当 `ingest` 写完对象后事务失败（如并发争用），或更新条目后旧 XML 与旧图片不再被任何条目引用时，孤儿对象会留在对象存储等待离线回收。`gc` 仅匹配 Aumbry 生成的路径格式（`/xml/<12位ID>-<64位小写十六进制>.xml` 与 `/assets/<64位小写十六进制>.(png|jpg|webp|svg)`），运维手工放置在 `/xml/README.txt` 或 `/assets/manual.png` 等非托管路径不会被列出或删除。使用 `local` 时，配置的对象根目录必须已存在（`gc` 与 `gc --dry-run` 均不会创建缺失目录，遇到不存在时直接报错）。
+当 `ingest` 写完对象后事务失败、更新/淘汰修订版本或删除条目使旧 XML 与旧媒体不再被 `items` 或 `item_revisions` 引用时，孤儿对象会留在对象存储等待离线回收。`gc` 仅匹配 Aumbry 生成的路径格式（`/xml/<12位ID>-<64位小写十六进制>.xml` 与 `/assets/<64位小写十六进制>.(png|jpg|webp|svg|mp3|wav|m4a|pdf)`），运维手工放置在 `/xml/README.txt` 或 `/assets/manual.png` 等非托管路径不会被列出或删除。使用 `local` 时，配置的对象根目录必须已存在（`gc` 与 `gc --dry-run` 均不会创建缺失目录，遇到不存在时直接报错）。
 
 1. 在服务运行期间先用 `--dry-run` 查看待清理清单（只读、安全）：
 
@@ -296,7 +297,9 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### 重建搜索索引（`reindex`）
 
-2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对标题、摘要、标签和 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从对象存储重新读取每个条目已存储的 XML，按当前版本的规则重新计算索引文本，并同时重写这三处，使各条检索路径保持一致。
+2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对标题、摘要、标签和 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从对象存储重新读取每个条目已存储的 XML，按当前版本的规则重新计算 `plain_text`（含 `<audio>` 标题/章节/逐字稿）、重写 `items_fts` / `items_fts_cjk`，并同步重建反向引用 `item_links`、首音频投影 `primary_audio_*`，以及为**已挂载但尚无历史记录（0 revision）的存量条目自动回填基线 `rev = 1`**（含当时挂载与资产关联）。
+
+> **从 `v0.1.3` 升级到 `v0.1.4` 必读顺序**：由于 `reindex` / `verify-storage` / `gc` 使用不执行迁移的只读schema打开逻辑，升级后请**先启动新版 `aumbry-server`**（由 `db.Open` 自动应用 `00004`–`00007` 迁移），**随后停服执行一次 `aumbry-server reindex`**，完成反向索引、首音频投影与存量 `rev = 1` 快照回填后再恢复对外服务。
 
 出现下列情况之一时运行 `reindex`：
 

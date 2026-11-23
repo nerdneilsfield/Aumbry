@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/lestrrat-go/helium"
 	"github.com/lestrrat-go/helium/xpath1"
 )
+
+var storedAssetURLRe = regexp.MustCompile(`^/api/v1/assets/([0-9a-f]{64})$`)
 
 // find evaluates a constant XPath expression. The expressions in this package are fixed
 // strings, so a compile or evaluation error is a programming error.
@@ -54,6 +57,10 @@ func parseTree(input []byte) (*helium.Document, *ValidationError) {
 }
 
 func (d *Document) readMeta() {
+	if root := d.tree.DocumentElement(); root != nil {
+		ver, _ := root.GetAttribute("version")
+		d.Version = strings.TrimSpace(ver)
+	}
 	field := func(name string) string {
 		if values := texts(d.tree, "/document/meta/"+name+"[1]"); len(values) > 0 {
 			return values[0]
@@ -67,7 +74,7 @@ func (d *Document) readMeta() {
 	}
 }
 
-// RewriteAssets returns the XML with every <figure src> replaced via mapping,
+// RewriteAssets returns the XML with every <figure src> and <audio src> replaced via mapping,
 // which is keyed by normalized path. Everything else, CDATA sections included, is
 // carried over by the XML tree round trip; empty elements are written in the self-closing form
 // and an XML declaration is only written if the input had one.
@@ -77,15 +84,15 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 	if issue != nil {
 		return nil, errors.New(issue.Message)
 	}
-	for _, n := range find(tree, figureXPath) {
-		fig := n.(*helium.Element)
-		src, _ := fig.GetAttribute("src")
+	for _, n := range find(tree, assetXPath) {
+		el := n.(*helium.Element)
+		src, _ := el.GetAttribute("src")
 		normalized, _ := NormalizeAssetPath(src)
 		replacement, ok := mapping[normalized]
 		if !ok {
-			return nil, fmt.Errorf("no replacement for figure src %q", src)
+			return nil, fmt.Errorf("no replacement for %s src %q", el.Name(), src)
 		}
-		if err := fig.SetAttribute("src", replacement); err != nil {
+		if err := el.SetAttribute("src", replacement); err != nil {
 			return nil, err
 		}
 	}
@@ -96,10 +103,101 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 	return []byte(out.String()), nil
 }
 
+// OutgoingLinks returns deduplicated outbound item references from <news-item detail-id>
+// and <paper-card related-id> in document order.
+func (d *Document) OutgoingLinks() []OutgoingLink {
+	if d == nil || d.tree == nil {
+		return nil
+	}
+	type linkKey struct {
+		target string
+		kind   string
+	}
+	seen := make(map[linkKey]bool)
+	var links []OutgoingLink
+	for _, n := range find(d.tree, "//news-item[@detail-id] | //paper-card[@related-id]") {
+		el, ok := n.(*helium.Element)
+		if !ok {
+			continue
+		}
+		var target, kind string
+		switch el.Name() {
+		case "news-item":
+			target, _ = el.GetAttribute("detail-id")
+			kind = "news_detail"
+		case "paper-card":
+			target, _ = el.GetAttribute("related-id")
+			kind = "paper_related"
+		default:
+			continue
+		}
+		if !itemIDRe.MatchString(target) {
+			continue
+		}
+		key := linkKey{target: target, kind: kind}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		links = append(links, OutgoingLink{
+			TargetItemID: target,
+			Kind:         kind,
+		})
+	}
+	return links
+}
+
+// PrimaryAudio returns metadata for the first <audio> block in document body order, or nil if absent.
+func (d *Document) PrimaryAudio() *AudioInfo {
+	if d == nil || d.tree == nil {
+		return nil
+	}
+	nodes := find(d.tree, "/document/body//audio")
+	if len(nodes) == 0 {
+		return nil
+	}
+	el, ok := nodes[0].(*helium.Element)
+	if !ok {
+		return nil
+	}
+	rawSrc, _ := el.GetAttribute("src")
+	title, _ := el.GetAttribute("title")
+	info := &AudioInfo{
+		Title:    strings.TrimSpace(title),
+		Chapters: make([]AudioChapter, 0),
+	}
+	if m := storedAssetURLRe.FindStringSubmatch(rawSrc); m != nil {
+		info.Src = rawSrc
+		info.Hash = m[1]
+	} else if norm, normOK := NormalizeAssetPath(rawSrc); normOK {
+		info.Src = norm
+	} else {
+		info.Src = rawSrc
+	}
+	for cur := el.FirstChild(); cur != nil; cur = cur.NextSibling() {
+		if cur.Type() != helium.ElementNode || cur.Name() != "chapter" {
+			continue
+		}
+		chEl, okCh := cur.(*helium.Element)
+		if !okCh {
+			continue
+		}
+		start, _ := chEl.GetAttribute("start")
+		chTitle, _ := chEl.GetAttribute("title")
+		target, _ := chEl.GetAttribute("target")
+		info.Chapters = append(info.Chapters, AudioChapter{
+			Start:  strings.TrimSpace(start),
+			Title:  strings.TrimSpace(chTitle),
+			Target: strings.TrimSpace(target),
+		})
+	}
+	return info
+}
+
 var cdataTextElements = map[string]bool{
 	"md": true, "callout": true, "mermaid": true, "chart": true,
 	"equation": true, "code-block": true, "claim": true, "quote": true,
-	"paper-card": true, "repo-card": true, "detail": true,
+	"paper-card": true, "repo-card": true, "detail": true, "transcript": true,
 }
 
 // detectMissingCDATAHint checks whether an XML parse error occurs inside (or on the closing

@@ -33,10 +33,15 @@ export interface DirChild extends DirRef {
 
 export interface Directory extends DirRef {
   description: string
+  protected: boolean
   parent_id: string | null
   breadcrumb: DirRef[]
   children: DirChild[]
   items: ItemSummary[]
+}
+
+export interface ReferencingItem extends ItemSummary {
+  link_kinds: string[]
 }
 
 /** Previous (earlier) and next (later) item in one directory the caller may open; either is null at the ends. */
@@ -52,8 +57,48 @@ export interface ItemDetail extends ItemSummary {
   updated_at: string
   dirs: DirRef[]
   related: ItemSummary[]
+  referenced_by: ReferencingItem[]
+  revision_count: number
+  current_rev: number
   /** null when the item has no mount the caller can open (e.g. an unmounted item seen by the admin). */
   neighbors: Neighbors | null
+}
+
+export interface ItemRevisionSummary {
+  rev: number
+  title: string
+  summary: string
+  date: string
+  created_at: string
+  is_current: boolean
+}
+
+export interface ItemRevisionsResponse {
+  item_id: string
+  current_rev: number
+  revisions: ItemRevisionSummary[]
+}
+
+export interface DirTokenInfo {
+  id: string
+  directory_id: string
+  label: string
+  created_at: string
+}
+
+export interface DirTokensResponse {
+  directory_id: string
+  tokens: DirTokenInfo[]
+}
+
+export interface DirTokenCreated extends DirTokenInfo {
+  token: string
+}
+
+export interface DirTokenRotated {
+  id: string
+  directory_id: string
+  token: string
 }
 
 export interface DirNode extends DirRef {

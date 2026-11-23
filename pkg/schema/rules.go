@@ -1,8 +1,10 @@
 package schema
 
 import (
+	"math"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -11,6 +13,10 @@ const (
 	maxSectionDepth     = 3
 	maxMermaidBlocks    = 10
 	maxChartBlocks      = 10
+	maxAudioBlocks      = 4
+	maxAudioChapters    = 100
+	maxAudioTitleRunes  = 200
+	maxTranscriptBytes  = 512 * 1024
 	maxStagesGroups     = 8
 	maxTotalStages      = 40
 	maxStagesPerGroup   = 8
@@ -38,6 +44,7 @@ var (
 	itemIDRe        = regexp.MustCompile(`^[A-Za-z0-9_-]{12}$`)
 	doiRe           = regexp.MustCompile(`^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$`)
 	highlightPartRe = regexp.MustCompile(`^(\d+)(?:-(\d+))?$`)
+	chapterStartRe  = regexp.MustCompile(`^(\d{2,}):([0-5]\d):([0-5]\d)$`)
 )
 
 var (
@@ -61,8 +68,29 @@ var anchorPrefixes = map[string]string{
 	"stage":    "stage-",
 	"quiz":     "quiz-",
 	"figure":   "fig-",
+	"audio":    "audio-",
 	"equation": "eq-",
 	"ref":      "ref-",
+}
+
+func parseChapterTimestamp(raw string) (int64, bool) {
+	m := chapterStartRe.FindStringSubmatch(strings.TrimSpace(raw))
+	if m == nil {
+		return 0, false
+	}
+	hours, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || hours < 0 || hours > (math.MaxInt64-3600)/3600 {
+		return 0, false
+	}
+	mins, err := strconv.ParseInt(m[2], 10, 64)
+	if err != nil || mins < 0 || mins > 59 {
+		return 0, false
+	}
+	secs, err := strconv.ParseInt(m[3], 10, 64)
+	if err != nil || secs < 0 || secs > 59 {
+		return 0, false
+	}
+	return hours*3600 + mins*60 + secs, true
 }
 
 func isValidYMD(raw string) bool {

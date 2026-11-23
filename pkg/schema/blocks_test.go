@@ -852,6 +852,11 @@ func TestInvalidXMLCDATAHint(t *testing.T) {
 			xml:      doc(`<md><![CDATA[Vec<T> & ok]]></md><section>`),
 			wantHint: false,
 		},
+		{
+			name:     "bare ampersand inside transcript suggests CDATA",
+			xml:      doc12(`<audio src="a.mp3" title="T"><transcript>Host & Guest</transcript></audio>`),
+			wantHint: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -863,6 +868,112 @@ func TestInvalidXMLCDATAHint(t *testing.T) {
 			hasCDATA := strings.Contains(issues[0].Hint, "CDATA")
 			if hasCDATA != tc.wantHint {
 				t.Fatalf("Hint = %q, wantHint=%v (issue=%+v)", issues[0].Hint, tc.wantHint, issues[0])
+			}
+		})
+	}
+}
+
+func TestV12AudioValidationErrors(t *testing.T) {
+	always := Options{HasAsset: func(string) bool { return true }}
+
+	t.Run("audio in v1.1 reports INVALID_AUDIO with version 1.2 upgrade hint", func(t *testing.T) {
+		_, issues := Parse([]byte(doc(`<audio src="a.mp3" title="T"/>`)), always)
+		if got := codes(issues); !slices.Equal(got, []string{"INVALID_AUDIO"}) {
+			t.Fatalf("codes = %v, want [INVALID_AUDIO] (%+v)", got, issues)
+		}
+		if !strings.Contains(issues[0].Hint, `version="1.2"`) {
+			t.Fatalf("expected upgrade hint mentioning version=\"1.2\", got %+v", issues[0])
+		}
+	})
+
+	cases := []struct {
+		name      string
+		body      string
+		wantCodes []string
+	}{
+		{
+			name:      "valid audio extensions and shared id namespace",
+			body:      `<section id="s1" title="S"><audio id="a1" src="./x.m4a" title="M4A"/><audio src="./x.wav" title="WAV"/></section>`,
+			wantCodes: nil,
+		},
+		{
+			name:      "more than 4 audio blocks fails INVALID_AUDIO",
+			body:      strings.Repeat(`<audio src="a.mp3" title="Ep"/>`, 5),
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "missing src fails INVALID_AUDIO",
+			body:      `<audio title="Ep"/>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "blank title fails INVALID_AUDIO",
+			body:      `<audio src="a.mp3" title="   "/>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "title exceeding 200 runes fails INVALID_AUDIO",
+			body:      `<audio src="a.mp3" title="` + strings.Repeat("音", 201) + `"/>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "bad audio extension rejected",
+			body:      `<audio src="a.ogg" title="Ogg"/>`,
+			wantCodes: []string{"INVALID_ASSET_TYPE"},
+		},
+		{
+			name:      "duplicate id shared with figure rejected",
+			body:      `<figure id="dup" src="a.png"/><audio id="dup" src="a.mp3" title="T"/>`,
+			wantCodes: []string{"DUPLICATE_ID"},
+		},
+		{
+			name:      "decreasing chapter start rejected",
+			body:      `<audio src="a.mp3" title="T"><chapter start="00:05:00" title="A"/><chapter start="00:04:59" title="B"/></audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "invalid chapter minute rejected",
+			body:      `<audio src="a.mp3" title="T"><chapter start="00:60:00" title="A"/></audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "invalid chapter target rejected",
+			body:      `<audio src="a.mp3" title="T"><chapter start="00:00:00" title="A" target="#s-missing"/></audio>`,
+			wantCodes: []string{"INVALID_TARGET"},
+		},
+		{
+			name:      "too many chapters (>100) rejected",
+			body:      `<audio src="a.mp3" title="T">` + strings.Repeat(`<chapter start="00:00:00" title="A"/>`, 101) + `</audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "blank transcript rejected",
+			body:      `<audio src="a.mp3" title="T"><transcript>   </transcript></audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "multiple transcripts rejected",
+			body:      `<audio src="a.mp3" title="T"><transcript>a</transcript><transcript>b</transcript></audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "oversize transcript (>512KB) rejected",
+			body:      `<audio src="a.mp3" title="T"><transcript><![CDATA[` + strings.Repeat("a", maxTranscriptBytes+1) + `]]></transcript></audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+		{
+			name:      "transcript nested XML tag rejected",
+			body:      `<audio src="a.mp3" title="T"><transcript><p>bad</p></transcript></audio>`,
+			wantCodes: []string{"INVALID_AUDIO"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, issues := Parse([]byte(doc12(tc.body)), always)
+			got := codes(issues)
+			if strings.Join(got, ",") != strings.Join(tc.wantCodes, ",") {
+				t.Fatalf("codes = %v, want %v (%+v)", got, tc.wantCodes, issues)
 			}
 		})
 	}

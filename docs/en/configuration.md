@@ -43,6 +43,9 @@ Loader guarantees:
 | `api_tokens` | `AUMBRY_API_TOKENS` | list of string (TOML array or CSV env) | Yes | None | Non-empty list of Bearer tokens accepted on `/api/v1/ingest` and `/api/v1/agent/*`. Blank entries are discarded. |
 | `cookie_secret` | `AUMBRY_COOKIE_SECRET` | string | Yes | None | Root secret used to sign and encrypt session cookies. Minimum length: `32` bytes; rotating invalidates all existing admin and visitor sessions. |
 | `trusted_proxies` | `AUMBRY_TRUSTED_PROXIES` | list of string (TOML array or CSV env) | No | `[]` | Single IPs or CIDRs (`127.0.0.1`, `10.0.0.0/8`) allowed to supply `X-Forwarded-For` and `X-Forwarded-Proto`. Invalid entries fail startup. |
+| `public_url` | `AUMBRY_PUBLIC_URL` | string | No | `""` | Canonical origin (`http(s)://host[:port]`, no path, query, fragment, or userinfo) for `/feeds/` RSS and Podcast links/enclosures. Derived from request host/forwarded headers when empty. |
+| `revisions.max_per_item` | `AUMBRY_REVISIONS_MAX_PER_ITEM` | integer | No | `20` | Maximum published revisions retained per item; pruned oldest-first (`rev ASC`). `0` disables pruning; negative values fail startup. |
+| `ingest.max_body_mb` | `AUMBRY_INGEST_MAX_BODY_MB` | integer | No | `200` | Maximum multipart body size in MiB for `POST /api/v1/ingest`. Minimum `20` (`1..19` fails startup; `<= 0` uses default `200`). Reserve at least `4 × max_body_mb` temp disk space. |
 
 ### Storage backend settings
 

@@ -16,10 +16,12 @@ type pendingTarget struct {
 }
 
 type blockState struct {
-	issues []ValidationError
+	docVersion string
+	issues     []ValidationError
 
 	mermaidCount int
 	chartCount   int
+	audioCount   int
 	stagesCount  int
 	totalStages  int
 
@@ -37,9 +39,10 @@ func (d *Document) checkBlocks() []ValidationError {
 		return nil
 	}
 	st := &blockState{
-		seenIDs:   make(map[string]bool),
-		anchors:   make(map[string]bool),
-		equations: make(map[string]bool),
+		docVersion: d.Version,
+		seenIDs:    make(map[string]bool),
+		anchors:    make(map[string]bool),
+		equations:  make(map[string]bool),
 	}
 	st.walk(body, 0, false)
 	st.checkPendingRefs()
@@ -121,6 +124,8 @@ func (s *blockState) walk(el *helium.Element, sectionDepth int, inStage bool) {
 			if id, has := child.GetAttribute("id"); has {
 				s.registerID(child.Line(), "figure", id)
 			}
+		case "audio":
+			s.checkAudio(child)
 		case "claim":
 			level, _ := child.GetAttribute("level")
 			if !contains(claimLevels, level) {
@@ -192,12 +197,95 @@ func (s *blockState) walk(el *helium.Element, sectionDepth int, inStage bool) {
 func (s *blockState) checkPendingRefs() {
 	for _, pt := range s.pendingTargets {
 		if !targetRe.MatchString(pt.value) || !s.anchors[pt.value] {
-			s.addIssue(pt.line, "INVALID_TARGET", pt.field, fmt.Sprintf("target %q does not match an existing anchor id in this document", pt.value), "use a prefix anchor like #s-..., #stages-..., #stage-..., #quiz-..., #fig-..., #eq-... or #ref-...")
+			s.addIssue(pt.line, "INVALID_TARGET", pt.field, fmt.Sprintf("target %q does not match an existing anchor id in this document", pt.value), "use a prefix anchor like #s-..., #stages-..., #stage-..., #quiz-..., #fig-..., #audio-..., #eq-... or #ref-...")
 		}
 	}
 	for _, pe := range s.pendingEqRefs {
 		if !s.equations[pe.value] {
 			s.addIssue(pe.line, "INVALID_TARGET", pe.field, fmt.Sprintf("eq target %q does not match any <equation id>", pe.value), "reference an existing <equation id=\"...\"> raw id")
+		}
+	}
+}
+
+func (s *blockState) checkAudio(el *helium.Element) {
+	if s.docVersion == "1.1" {
+		// Upgrade diagnostic is emitted by protocol.sch v12-features pattern.
+		return
+	}
+	s.audioCount++
+	if s.audioCount == maxAudioBlocks+1 {
+		s.addIssue(el.Line(), "INVALID_AUDIO", "audio", fmt.Sprintf("at most %d <audio> blocks allowed per document", maxAudioBlocks), "")
+	}
+	s.rejectDirectText(el, "audio")
+	if id, has := el.GetAttribute("id"); has {
+		s.registerID(el.Line(), "audio", id)
+	}
+	if src, _ := el.GetAttribute("src"); strings.TrimSpace(src) == "" {
+		s.addIssue(el.Line(), "INVALID_AUDIO", "audio.src", `<audio> requires a non-empty "src" attribute`, `add src="..." pointing to a local .mp3, .wav or .m4a file`)
+	}
+	title, _ := el.GetAttribute("title")
+	trimmedTitle := strings.TrimSpace(title)
+	if trimmedTitle == "" {
+		s.addIssue(el.Line(), "INVALID_AUDIO", "audio.title", `<audio> requires a non-empty "title" attribute`, `add title="..." to <audio>`)
+	} else if runes := utf8.RuneCountInString(trimmedTitle); runes > maxAudioTitleRunes {
+		s.addIssue(el.Line(), "INVALID_AUDIO", "audio.title", fmt.Sprintf(`<audio> title exceeds %d Unicode runes (%d)`, maxAudioTitleRunes, runes), "")
+	}
+
+	chapters := 0
+	transcripts := 0
+	hasPrevStart := false
+	var prevStart int64
+
+	for _, child := range childElements(el) {
+		switch child.Name() {
+		case "chapter":
+			chapters++
+			if chapters == maxAudioChapters+1 {
+				s.addIssue(child.Line(), "INVALID_AUDIO", "audio.chapter", fmt.Sprintf("<audio> may contain at most %d <chapter> elements", maxAudioChapters), "")
+			}
+			if hasChildElements(child) {
+				s.addIssue(child.Line(), "INVALID_AUDIO", "audio.chapter", "<chapter> cannot contain child elements", "")
+			}
+			rawStart, _ := child.GetAttribute("start")
+			secs, ok := parseChapterTimestamp(rawStart)
+			if !ok {
+				s.addIssue(child.Line(), "INVALID_AUDIO", "audio.chapter.start", fmt.Sprintf("chapter start %q must use HH:MM:SS format with 00-59 minutes/seconds", rawStart), `use HH:MM:SS such as "00:02:15"`)
+			} else {
+				if hasPrevStart && secs < prevStart {
+					s.addIssue(child.Line(), "INVALID_AUDIO", "audio.chapter.start", fmt.Sprintf("chapter start %q must be >= previous chapter start", rawStart), "order <chapter> timestamps monotonically")
+				}
+				prevStart = secs
+				hasPrevStart = true
+			}
+			if chapTitle, _ := child.GetAttribute("title"); strings.TrimSpace(chapTitle) == "" {
+				s.addIssue(child.Line(), "INVALID_AUDIO", "audio.chapter.title", `<chapter> requires a non-empty "title" attribute`, "")
+			}
+			if target, has := child.GetAttribute("target"); has {
+				s.pendingTargets = append(s.pendingTargets, pendingTarget{
+					line:  child.Line(),
+					field: "audio.chapter.target",
+					value: target,
+				})
+			}
+		case "transcript":
+			transcripts++
+			if transcripts > 1 {
+				s.addIssue(child.Line(), "INVALID_AUDIO", "audio.transcript", "<audio> may contain at most 1 <transcript>", "")
+			}
+			hasCh := hasChildElements(child)
+			if hasCh {
+				s.addIssue(child.Line(), "INVALID_AUDIO", "audio.transcript", "<transcript> cannot contain child elements", "wrap plain transcript text in <![CDATA[ ... ]]>")
+			}
+			if !hasCh {
+				trimmed := strings.TrimSpace(string(child.Content()))
+				if trimmed == "" {
+					s.addIssue(child.Line(), "INVALID_AUDIO", "audio.transcript", "<transcript> must not be empty", "")
+				} else if len(trimmed) > maxTranscriptBytes {
+					s.addIssue(child.Line(), "INVALID_AUDIO", "audio.transcript", fmt.Sprintf("<transcript> exceeds %d bytes (%d bytes)", maxTranscriptBytes, len(trimmed)), "")
+				}
+			}
+		default:
+			s.addIssue(child.Line(), "UNKNOWN_TAG", "audio", fmt.Sprintf("<%s> is not allowed inside <audio>", child.Name()), "")
 		}
 	}
 }

@@ -247,8 +247,9 @@ func TestAdminDeleteItemCleansUp(t *testing.T) {
 	if got := len(admin.do("GET", "/api/v1/admin/search?q=uniqueword", nil).json()["results"].([]any)); got != 0 {
 		t.Errorf("deleted item still searchable")
 	}
-	if n := e.store.count("/xml/"); n != 0 {
-		t.Errorf("xml file not removed from storage")
+	// Per PRD §4.1 Rule 6, item delete removes DB/FTS rows and leaves XML reclamation to offline gc.
+	if n := e.store.count("/xml/"); n == 0 {
+		t.Errorf("xml object deleted inline; expected offline gc cleanup")
 	}
 	if got := admin.do("DELETE", "/api/v1/admin/items/"+id, nil).status; got != http.StatusNotFound {
 		t.Errorf("second delete = %d, want 404", got)

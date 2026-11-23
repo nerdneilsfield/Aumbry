@@ -118,9 +118,10 @@ Two standalone compose files ship in the repository root. Pick the `.env` workfl
 ## Storage layout, limits, and security headers
 
 - **`data_dir` contents:** `aumbry-server` creates `data_dir` with mode `0700`, locks `aumbry.lock` to prevent concurrent instances, and initializes `aumbry.db` in SQLite WAL mode (applying schema migrations automatically on startup).
-- **Object layout, permissions, and timeouts:** Item XML files live at `/xml/<12-char-id>-<64-hex>.xml`; uploaded images live at `/assets/<64-hex>.<ext>` (`.png`, `.jpg`, `.webp`, `.svg` detected by content MIME sniffing). Under `storage = "local"`, the server creates `local.path` (default `<data_dir>/objects`) on startup with directory mode `0700` and writes files atomically with mode `0600`. Remote backends (`webdav`, `s3`, `r2`) time out after `5 s` on TCP dial and `30 s` waiting for response headers, with no overall timeout on streaming downloads.
-- **Upload and rate bounds:** `POST /api/v1/ingest` enforces `100 MiB` total request body, `10 MiB` XML payload, `20 MiB` per figure, max `4` concurrent ingest requests, and `120 requests/min` per client IP across `/api/v1/ingest` and `/api/v1/agent/*`. Admin login and directory password unlock endpoints allow `10 requests/min` per client IP.
-- **Response headers:** Every HTTP response includes `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`. Raw XML and asset downloads also send `Cache-Control: private` and `Content-Security-Policy: default-src 'none'; sandbox`.
+- **Object layout, permissions, and timeouts:** Item XML files live at `/xml/<12-char-id>-<64-hex>.xml` (updated/evicted/deleted item XML objects are retained until offline `gc` reclaims unreferenced objects); uploaded media assets live at `/assets/<64-hex>.<ext>` (`.png`, `.jpg`, `.webp`, `.svg`, `.mp3`, `.wav`, `.m4a` verified by content sniffing and container inspection; `/api/v1/assets/{hash}` serves byte ranges via HTTP `Range` and `HEAD`). Under `storage = "local"`, the server creates `local.path` (default `<data_dir>/objects`) on startup with directory mode `0700` and writes files atomically with mode `0600`. Remote backends (`webdav`, `s3`, `r2`) time out after `5 s` on TCP dial and `30 s` waiting for response headers, with no overall timeout on streaming downloads. WebDAV writes stage `.tmp-*` objects before atomic `MOVE`.
+- **Upload, temp storage, and rate bounds:** `POST /api/v1/ingest` defaults to `200 MiB` total request body (`ingest.max_body_mb` / `AUMBRY_INGEST_MAX_BODY_MB`, minimum `20 MiB`), `10 MiB` XML payload, `20 MiB` per figure, `100 MiB` per audio asset, max `4` concurrent ingest requests, and `120 requests/min` per client IP across `/api/v1/ingest` and `/api/v1/agent/*`. Multipart parts above `32 MiB` spill to temp files; keep at least `4 × max_body_mb` (`>= 800 MiB` by default) free on the server temp filesystem. Admin login and directory password unlock endpoints allow `10 requests/min` per client IP.
+- **Response headers & feed privacy:** Every HTTP response includes `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`. Raw XML and asset downloads also send `Content-Security-Policy: default-src 'none'; sandbox`. Protected directory feeds (`/feeds/{dir_id}/rss.xml`, `podcast.xml`, `/feeds/{dir_id}/assets/{hash}`) and admin token issue/rotate responses send `Cache-Control: private, no-store`, and query `?token=` values are redacted to `REDACTED` before `httplog` writes access logs.
+- **Podcast client caveats:** `.wav` may not be supported by Apple Podcasts (prefer `.mp3` or `.m4a` for Apple Podcasts subscribers). Cloud-polling podcast apps (such as Pocket Casts or Overcast) store subscription URLs including `?token=` on their servers and require a publicly reachable `public_url`.
 
 ## Health and readiness endpoints
 
@@ -142,7 +143,7 @@ By default `trusted_proxies` is empty (`[]`), so `aumbry-server` ignores `X-Forw
 To run behind Nginx, Caddy, or Traefik:
 
 1. Set `trusted_proxies` to your proxy IPs or CIDRs, for example `trusted_proxies = ["127.0.0.1", "10.0.0.0/8"]` (or `AUMBRY_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8`). Only requests whose direct TCP peer matches an entry in `trusted_proxies` honor `X-Forwarded-For` (resolved right-to-left skipping trusted proxies) and `X-Forwarded-Proto: https`.
-2. Ensure the reverse proxy passes `X-Forwarded-For`, `X-Forwarded-Proto`, and `Host`, and allows request bodies of at least `100 MiB` (for example `client_max_body_size 100m;` in Nginx) so multi-figure `aumbry push` requests are not truncated before reaching Aumbry.
+2. Ensure the reverse proxy passes `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, and `Host`, raises max request body above `ingest.max_body_mb` (default `200 MiB`, e.g. `client_max_body_size 201m;` in Nginx), **never caches `/feeds/`**, redacts `?token=` query strings from proxy access logs, and avoids compressing byte-range asset responses.
 
 The directories `examples/deploy/traefik`, `examples/deploy/nginx`, and `examples/deploy/caddy` contain ready-to-copy Compose setups for these proxies. In all three, Aumbry and the proxy share one Docker network and Aumbry publishes no port. Each Compose file fixes that network to the subnet `172.31.250.0/24` and passes the same CIDR to Aumbry as `AUMBRY_TRUSTED_PROXIES`, so Aumbry honors forwarded headers only from containers on that network. If your host already uses that range, set `PROXY_SUBNET` in `.env` to another one; the subnet and `AUMBRY_TRUSTED_PROXIES` both follow it. Do not set `AUMBRY_TRUSTED_PROXIES` in `.env`, because the value in the Compose file takes precedence.
 
@@ -196,7 +197,7 @@ The files are `examples/deploy/nginx/docker-compose.yml`, `aumbry.conf`, and `.e
 
 After each certificate renewal, copy the new files into `certs/` and run `docker compose exec nginx nginx -s reload`.
 
-`aumbry.conf` sets `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. It sets `client_max_body_size 101m` because Aumbry rejects request bodies above 100 MiB (nginx counts `m` as MiB); with the larger nginx limit, an oversized push receives Aumbry's JSON `413` response instead of an nginx error page. `proxy_send_timeout` and `proxy_read_timeout` are `120s`. They apply between two successive writes or reads, and Aumbry sends no response until it has uploaded the objects of an ingest request to object storage.
+`aumbry.conf` actively configures the `aumbry_no_query` log format (logging `$uri` without query strings so `?token=ad_...` is never written to nginx access logs) on both the HTTP (80) and HTTPS (443) server blocks, and sets `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. It sets `client_max_body_size 201m` because Aumbry defaults to rejecting request bodies above `200 MiB` (`ingest.max_body_mb`; nginx counts `m` as MiB); with the larger nginx limit, an oversized push receives Aumbry's JSON `413` response instead of an nginx error page. If enabling proxy caching, exclude `/feeds/` from caching. `proxy_send_timeout` and `proxy_read_timeout` are `120s`. They apply between two successive writes or reads, and Aumbry sends no response until it has uploaded the objects of an ingest request to object storage.
 
 ### Deploy with Caddy
 
@@ -246,7 +247,7 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
 
 ### Verify object storage (`verify-storage`)
 
-`verify-storage` checks that every item XML file and referenced image asset recorded in `aumbry.db` exists in object storage (for `local`, the root directory must already exist and will not be created if missing; non-zero exit otherwise):
+`verify-storage` checks that every current item XML, every historical revision XML (`item_revisions`), and every current or historical asset recorded in `aumbry.db` exists in object storage (for `local`, the root directory must already exist and will not be created if missing; non-zero exit otherwise):
 
 ```sh
 aumbry-server verify-storage --config ./aumbry.toml
@@ -260,7 +261,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 ### Garbage collect orphan objects (`gc`)
 
-When an `ingest` request fails after uploading XML to object storage (or when an update leaves the previous XML object or old assets unreferenced), unreferenced objects remain in storage so concurrent uploads cannot delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched. For `local`, the configured root directory must already exist (`gc` and `gc --dry-run` fail instead of creating an empty directory).
+When an `ingest` request fails after uploading XML to object storage (or when updates, evicted revisions, or item deletions leave older XML objects or assets unreferenced by `items` or `item_revisions`), unreferenced objects remain in storage so concurrent requests never delete live objects. `gc` restricts deletion to paths matching Aumbry's generated naming patterns (`/xml/<12-char-id>-<64-hex>.xml` and `/assets/<64-hex>.(png|jpg|webp|svg|mp3|wav|m4a|pdf)`); manual files such as `/xml/README.txt` or `/assets/manual.png` are excluded and left untouched. For `local`, the configured root directory must already exist (`gc` and `gc --dry-run` fail instead of creating an empty directory).
 
 1. List orphan objects safely while `aumbry-server` is running:
 
@@ -296,7 +297,9 @@ When an `ingest` request fails after uploading XML to object storage (or when an
 
 ### Rebuild the search index (`reindex`)
 
-Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on the title, summary, tags, and `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from object storage, recomputes the indexed text with the rules of the installed version, and rewrites all three, so the search paths stay consistent.
+Chinese, Japanese, and Korean search terms of 2 or more characters, such as `模型`, use the SQLite full-text index `items_fts_cjk`. Other terms of 3 or more characters use `items_fts`. Single CJK characters and other terms shorter than 3 characters use substring matching on the title, summary, tags, and `items.plain_text`. Every `POST /api/v1/ingest` writes `items.plain_text`, `items_fts`, and `items_fts_cjk` in one transaction. `reindex` re-reads the stored XML of every item from object storage, recomputes `plain_text` (including `<audio>` titles, chapters, and transcripts), rewrites `items_fts` / `items_fts_cjk`, rebuilds backlink edges (`item_links`) and `primary_audio_*` feed projections, and backfills baseline `rev = 1` snapshots for existing mounted items that have zero revisions.
+
+> **Upgrade sequence from `v0.1.3` to `v0.1.4`:** Because offline commands (`reindex`, `verify-storage`, `gc`) open SQLite without running migrations, you **must first start the new `aumbry-server`** (allowing `db.Open` to apply migrations `00004`–`00007`), **then stop `aumbry-server` and run `aumbry-server reindex`** once to populate `item_links`, `primary_audio_*`, and initial `rev = 1` revision baselines before resuming traffic.
 
 Run `reindex` in either of these cases:
 

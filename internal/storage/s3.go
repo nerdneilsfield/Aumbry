@@ -179,6 +179,40 @@ func (s *S3) Open(ctx context.Context, name string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
+// OpenRange reads the inclusive byte range [start, end] from name.
+func (s *S3) OpenRange(ctx context.Context, name string, start, end int64) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRange(start, end); err != nil {
+		return nil, err
+	}
+	key, err := normalizeObjectPath(name)
+	if err != nil {
+		return nil, err
+	}
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end)
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(rangeHeader),
+	})
+	if err != nil {
+		return nil, mapS3Err(err)
+	}
+	if aws.ToString(out.ContentRange) == "" && start > 0 {
+		// Defensive fallback if an S3-compatible proxy ignores Range and sends 200 OK.
+		if skipErr := discardWithContext(ctx, out.Body, start); skipErr != nil {
+			_ = out.Body.Close()
+			return nil, skipErr
+		}
+	}
+	return &limitedReadCloser{
+		r: io.LimitReader(out.Body, end-start+1),
+		c: out.Body,
+	}, nil
+}
+
 // Exists checks object metadata with HeadObject; 403 maps to ErrAuth while 404 returns (false, nil).
 func (s *S3) Exists(ctx context.Context, name string) (bool, error) {
 	if err := ctx.Err(); err != nil {

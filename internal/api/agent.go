@@ -212,8 +212,8 @@ func (s *Server) agentUnpublishItem(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	digest := agentTokenDigest(r)
 
-	var createdBy sql.NullString
-	err := s.db.GetContext(ctx, &createdBy, `SELECT created_by FROM items WHERE id = ?`, id)
+	var preXMLPath string
+	err := s.db.GetContext(ctx, &preXMLPath, `SELECT xml_storage_path FROM items WHERE id = ?`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "not_found", "item not found")
 		return
@@ -222,11 +222,44 @@ func (s *Server) agentUnpublishItem(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	if !createdBy.Valid || createdBy.String != digest {
+	liveSHA := s.resolveXMLSHA256(ctx, preXMLPath)
+
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var row struct {
+		CreatedBy sql.NullString `db:"created_by"`
+		XMLPath   string         `db:"xml_storage_path"`
+	}
+	err = tx.GetContext(ctx, &row, `SELECT created_by, xml_storage_path FROM items WHERE id = ?`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "item not found")
+		return
+	}
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if !row.CreatedBy.Valid || row.CreatedBy.String != digest {
 		writeError(w, http.StatusForbidden, "not_owner", "only the creating token may unpublish this item")
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM directory_items WHERE item_id = ?`, id); err != nil {
+	if row.XMLPath != preXMLPath {
+		liveSHA = xmlSHA256FromPath(row.XMLPath)
+	}
+	if baseErr := s.ensureBaselineRevisionTx(ctx, tx, id, liveSHA); baseErr != nil {
+		internalError(w, r, baseErr)
+		return
+	}
+	if _, execErr := tx.ExecContext(ctx, `DELETE FROM directory_items WHERE item_id = ?`, id); execErr != nil {
+		internalError(w, r, execErr)
+		return
+	}
+	if err = tx.Commit(); err != nil {
 		internalError(w, r, err)
 		return
 	}
@@ -262,20 +295,17 @@ func (s *Server) agentDeleteItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not_owner", "only the creating token may delete this item")
 		return
 	}
-	if err := db.DeleteItemFTS(ctx, tx, id); err != nil {
-		internalError(w, r, err)
+	if ftsErr := db.DeleteItemFTS(ctx, tx, id); ftsErr != nil {
+		internalError(w, r, ftsErr)
 		return
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id); err != nil {
-		internalError(w, r, err)
+	if _, execErr := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id); execErr != nil {
+		internalError(w, r, execErr)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	if err = tx.Commit(); err != nil {
 		internalError(w, r, err)
 		return
-	}
-	if err := s.store.Delete(ctx, row.XMLPath); err != nil {
-		s.logger.WarnContext(ctx, "delete item content from storage", "item", id, "path", row.XMLPath, "error", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

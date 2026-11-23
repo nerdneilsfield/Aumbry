@@ -79,7 +79,7 @@ CLI 命令行参数（--dir、--profile） > 环境变量（AUMBRY_SERVER、AUMB
 
 ### `aumbry validate`
 
-完全离线校验 Aumbry XML（`version="1.1"`）。`<figure src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。
+完全离线校验 Aumbry XML（`version="1.2"` 与 legacy `version="1.1"`）。`<figure src>` 与 `<audio src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -111,7 +111,7 @@ valid: examples/minimal-report.xml
 
 ### `aumbry push`
 
-先在本地完成与服务端同源的 XML 与资产校验，再打包上传到 `POST /api/v1/ingest`。
+先在本地完成与服务端同源的 XML 与媒体资产（图片与音频）校验，再流式打包上传到 `POST /api/v1/ingest`（默认上传超时 `5` 分钟）。
 
 ```sh
 aumbry push <file.xml> [--dir <dir-id>]... [--key <external_key>] [--id <item-id>] [--draft] [--create-only] [--dry-run] [--profile <name>]
@@ -321,7 +321,7 @@ aumbry unpublish MDUnpJpiAjMo
 
 ### `aumbry delete`
 
-> **注意：不可恢复删除。** `aumbry delete <id> --yes` 永久删除该条目的元数据、全文搜索索引、目录挂载记录以及对象存储中的 XML 正文对象（`DELETE /api/v1/agent/items/{id}`），操作无法撤销。未传入 `--yes` 时 CLI 在本地直接拒绝执行；同样仅创建者 token 有权删除（非创建者返回 `403 not_owner`）。
+> **注意：不可恢复删除。** `aumbry delete <id> --yes` 永久删除该条目的元数据、全文搜索索引、修订记录与目录挂载记录（`DELETE /api/v1/agent/items/{id}`），操作无法撤销；不再使用的 XML 与资产对象文件交由离线 `aumbry-server gc` 统一清理。未传入 `--yes` 时 CLI 在本地直接拒绝执行；同样仅创建者 token 有权删除（非创建者返回 `403 not_owner`）。
 
 ```sh
 aumbry delete MDUnpJpiAjMo --yes

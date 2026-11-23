@@ -29,6 +29,7 @@ import NextSteps from './NextSteps.vue'
 import SearchLog from './SearchLog.vue'
 import TldrBlock from './TldrBlock.vue'
 import NewsItem from './NewsItem.vue'
+import AudioBlock from './AudioBlock.vue'
 import DuplicateId from './DuplicateId.vue'
 import { useAnchors } from '@/composables/useAnchors'
 
@@ -66,6 +67,7 @@ const block = (tag: string): Component | undefined => ({
   'search-log': SearchLog,
   tldr: TldrBlock,
   'news-item': NewsItem,
+  audio: AudioBlock,
 })[tag]
 </script>
 

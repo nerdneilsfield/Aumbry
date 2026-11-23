@@ -79,7 +79,7 @@ CLI flags (--dir, --profile)  >  Environment variables (AUMBRY_SERVER, AUMBRY_TO
 
 ### `aumbry validate`
 
-Validate an Aumbry XML file (`version="1.1"`) offline. Relative `<figure src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected.
+Validate an Aumbry XML file (`version="1.2"` or legacy `version="1.1"`) offline. Relative `<figure src>` and `<audio src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected.
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -111,7 +111,7 @@ valid: examples/minimal-report.xml
 
 ### `aumbry push`
 
-Validate an XML document locally and upload it with referenced images to `POST /api/v1/ingest`.
+Validate an XML document locally and stream it together with referenced images/audio assets to `POST /api/v1/ingest` (CLI default upload timeout: `5m`).
 
 ```sh
 aumbry push <file.xml> [--dir <dir-id>]... [--key <external_key>] [--id <item-id>] [--draft] [--create-only] [--dry-run] [--profile <name>]
@@ -321,7 +321,7 @@ aumbry unpublish MDUnpJpiAjMo
 
 ### `aumbry delete`
 
-> **Caution — Permanent deletion:** `aumbry delete <id> --yes` permanently deletes the item's metadata, search index entry, directory mounts, and XML content object in object storage (`DELETE /api/v1/agent/items/{id}`). This cannot be undone. Without `--yes`, the CLI refuses to execute locally. Only the creating API token is authorized (`403 not_owner` otherwise).
+> **Caution — Permanent deletion:** `aumbry delete <id> --yes` permanently deletes the item's metadata, search index entry, revision records, and directory mounts (`DELETE /api/v1/agent/items/{id}`). This cannot be undone; orphaned XML and asset objects are reclaimed by offline `aumbry-server gc`. Without `--yes`, the CLI refuses to execute locally. Only the creating API token is authorized (`403 not_owner` otherwise).
 
 ```sh
 aumbry delete MDUnpJpiAjMo --yes

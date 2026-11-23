@@ -151,6 +151,50 @@ func (l *Local) Open(ctx context.Context, name string) (io.ReadCloser, error) {
 	return f, nil
 }
 
+// OpenRange reads the inclusive byte range [start, end] from name.
+func (l *Local) OpenRange(ctx context.Context, name string, start, end int64) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRange(start, end); err != nil {
+		return nil, err
+	}
+	rel, err := normalizeObjectPath(name)
+	if err != nil {
+		return nil, err
+	}
+	root, err := l.openRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
+	f, err := root.Open(rel)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	info, statErr := f.Stat()
+	if statErr != nil {
+		_ = f.Close()
+		return nil, statErr
+	}
+	if info.IsDir() {
+		_ = f.Close()
+		return nil, ErrNotFound
+	}
+	if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
+		_ = f.Close()
+		return nil, seekErr
+	}
+	return &limitedReadCloser{
+		r: io.LimitReader(f, end-start+1),
+		c: f,
+	}, nil
+}
+
 // Exists reports whether a regular object at name exists.
 func (l *Local) Exists(ctx context.Context, name string) (bool, error) {
 	if err := ctx.Err(); err != nil {

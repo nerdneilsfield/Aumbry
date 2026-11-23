@@ -78,3 +78,74 @@ func TestConcurrentDirMovesNeverCreateACycle(t *testing.T) {
 		t.Fatalf("%d of 2 directories reachable from the roots: a cycle was created", reachable)
 	}
 }
+
+func TestAccessibleByDirTokenSubtreeAndCorruptTrees(t *testing.T) {
+	tree := testTree(
+		dirRec{ID: "parent"},
+		dirRec{ID: "sibling"},
+		dirRec{ID: "D", ParentID: "parent", PasswordHash: "pwD"},
+		dirRec{ID: "U", ParentID: "D"},
+		dirRec{ID: "C", ParentID: "D", PasswordHash: "pwC"},
+		dirRec{ID: "CU", ParentID: "C"},
+	)
+
+	// Token on D grants D and unprotected child U, but NEVER penetrates C or CU, nor reaches parent/sibling.
+	for _, wantTrue := range []string{"D", "U"} {
+		if !tree.accessibleByDirToken("D", wantTrue) {
+			t.Errorf("accessibleByDirToken(D, %q) = false, want true", wantTrue)
+		}
+	}
+	for _, wantFalse := range []string{"", "unknown", "parent", "sibling", "C", "CU"} {
+		if tree.accessibleByDirToken("D", wantFalse) {
+			t.Errorf("accessibleByDirToken(D, %q) = true, want false", wantFalse)
+		}
+	}
+
+	// Token on C grants C and CU, nothing outside.
+	for _, wantTrue := range []string{"C", "CU"} {
+		if !tree.accessibleByDirToken("C", wantTrue) {
+			t.Errorf("accessibleByDirToken(C, %q) = false, want true", wantTrue)
+		}
+	}
+	for _, wantFalse := range []string{"D", "U", "parent", "sibling"} {
+		if tree.accessibleByDirToken("C", wantFalse) {
+			t.Errorf("accessibleByDirToken(C, %q) = true, want false", wantFalse)
+		}
+	}
+
+	// Broken parent chain or cycle above D must still fail closed even when accessing D or U.
+	corrupt := testTree(
+		dirRec{ID: "orphanD", ParentID: "missingParent", PasswordHash: "pw"},
+		dirRec{ID: "orphanU", ParentID: "orphanD"},
+		dirRec{ID: "cycA", ParentID: "cycB", PasswordHash: "pw"},
+		dirRec{ID: "cycB", ParentID: "cycA"},
+		dirRec{ID: "cycChild", ParentID: "cycA"},
+	)
+	for _, pair := range [][2]string{
+		{"orphanD", "orphanD"},
+		{"orphanD", "orphanU"},
+		{"cycA", "cycA"},
+		{"cycA", "cycChild"},
+	} {
+		if corrupt.accessibleByDirToken(pair[0], pair[1]) {
+			t.Errorf("corrupt tree accessibleByDirToken(%q, %q) = true, want false", pair[0], pair[1])
+		}
+	}
+
+	// Cyclic directory trees must never cause unbounded recursion / stack overflow in subtree helpers.
+	if got := corrupt.subtreeVisibleByDirToken("cycA"); len(got) != 0 {
+		t.Errorf("corrupt subtreeVisibleByDirToken(cycA) = %v, want empty", got)
+	}
+	if got := corrupt.publicSubtree("cycA"); len(got) != 0 {
+		t.Errorf("corrupt publicSubtree(cycA) = %v, want empty", got)
+	}
+	cyclicSubtree := testTree(
+		dirRec{ID: "cycRoot", PasswordHash: "pw"},
+		dirRec{ID: "cyc1", ParentID: "cycRoot"},
+		dirRec{ID: "cyc2", ParentID: "cyc1"},
+	)
+	cyclicSubtree.kids["cyc2"] = append(cyclicSubtree.kids["cyc2"], "cyc1")
+	if got := cyclicSubtree.subtreeVisibleByDirToken("cycRoot"); len(got) != 3 {
+		t.Errorf("cyclic descendant subtreeVisibleByDirToken = %v, want 3 unique dirs", got)
+	}
+}

@@ -37,15 +37,16 @@ const (
 
 // memStore is an in-memory storage.Store.
 type memStore struct {
-	mu         sync.Mutex
-	files      map[string][]byte
-	probeErr   error
-	existsErr  error
-	putErr     error
-	probeCalls atomic.Int32
-	onProbe    func()
-	onPut      func()
-	onPutPath  func(name string)
+	mu             sync.Mutex
+	files          map[string][]byte
+	probeErr       error
+	existsErr      error
+	putErr         error
+	probeCalls     atomic.Int32
+	openRangeCalls atomic.Int32
+	onProbe        func()
+	onPut          func()
+	onPutPath      func(name string)
 }
 
 func (m *memStore) Put(_ context.Context, name string, body io.ReadSeeker) error {
@@ -73,6 +74,27 @@ func (m *memStore) Open(_ context.Context, name string) (io.ReadCloser, error) {
 		return nil, storage.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (m *memStore) OpenRange(ctx context.Context, name string, start, end int64) (io.ReadCloser, error) {
+	m.openRangeCalls.Add(1)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if start < 0 || end < start {
+		return nil, fmt.Errorf("invalid range [%d, %d]", start, end)
+	}
+	m.mu.Lock()
+	data, ok := m.files[name]
+	m.mu.Unlock()
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if start >= int64(len(data)) {
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+	hi := min(end+1, int64(len(data)))
+	return io.NopCloser(bytes.NewReader(data[start:hi])), nil
 }
 
 func (m *memStore) Exists(_ context.Context, name string) (bool, error) {

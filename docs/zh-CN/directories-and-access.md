@@ -134,3 +134,10 @@ Aumbry 以目录树组织所有访问权限，不提供公开全站首页索引�
   ```json
   {"error":"forbidden","message":"this item is not accessible"}
   ```
+
+## 目录订阅源、只读 Token 与修订隐私边界
+
+- **RSS / Podcast 订阅源**：每个目录提供 `GET /feeds/{dir_id}/rss.xml` 与 `GET /feeds/{dir_id}/podcast.xml`（返回最多 50 条可见条目）。公开目录可匿名访问，enclosure 直指 `/api/v1/assets/{hash}`；受保护目录**不接受**浏览器管理员或访客 Cookie，必须携带经 `/admin` 为该目录签发的只读 Token（`?token=ad_...`），此时响应携带 `Cache-Control: private, no-store`，且音频 enclosure 经由 `/feeds/{dir_id}/assets/{hash}?token=...` 代理交付。
+- **不穿透子锁与凭证解耦**：针对目录 `D` 签发的 `ad_` Token 可以读取 `D` 及其未单独设密的子目录，但**不会穿透**下级独立设密的子目录 `C`（需为 `C` 另行签发 Token）。修改目录的访客密码不会吊销已签发的 `ad_` Token；如需撤销订阅权，可在 `/admin` 执行**轮换**或**吊销**。
+- **历史修订双门隔离**：阅读历史快照（`GET /api/v1/items/{id}/revisions` 与 `?rev=N`）及其独占历史资产遵循双门检查——非管理员读取第 `R` 版时，条目当前必须可见，且第 `R` 版发布时的挂载目录集合中至少有一项对当前调用者仍可见（曾发布于私有目录、日后脱敏公开重发的条目，其旧私密版不会随现行条目一并公开；后续即使管理员清空该旧私有目录的密码，曾在该目录受保护期间发布的历史快照也不会因此变成匿名公开可读）。
+- **反向引用过滤**：`GET /api/v1/items/{id}` 返回的 `referenced_by` 同样按调用者权限过滤并过滤掉未挂载草稿，不会泄露受保护简报的标题与 ID。

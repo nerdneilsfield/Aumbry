@@ -306,4 +306,105 @@ func TestParseStoredAssetsSkipsFigureChecks(t *testing.T) {
 	if !strings.Contains(parsed.PlainText(), "needle text") {
 		t.Errorf("PlainText = %q, want it to contain the md text", parsed.PlainText())
 	}
+
+	audioStored := `<document version="1.2">` + metaBlock + `<body><audio src="/api/v1/assets/` + strings.Repeat("b", 64) + `" title="StoredEp"/></body></document>`
+	if _, aIssues := Parse([]byte(audioStored), Options{StoredAssets: true}); len(aIssues) != 0 {
+		t.Fatalf("StoredAssets audio: issues = %+v, want none", aIssues)
+	}
+}
+
+func doc12(body string) string {
+	return `<document version="1.2">` + metaBlock + `<body>` + body + `</body></document>`
+}
+
+func TestV12AudioAssetsOutgoingLinksAndPrimaryAudio(t *testing.T) {
+	always := Options{HasAsset: func(string) bool { return true }}
+
+	xml := doc12(
+		`<section id="intro" title="Overview">` +
+			`<figure src="./imgs/chart.png" caption="Chart"/>` +
+			`<audio id="ep1" src="./audio/ep1.mp3" title="EpisodeTitleTok">` +
+			`<chapter start="00:00:00" title="ChapIntroTok" target="#s-intro"/>` +
+			`<chapter start="00:01:30" title="ChapSameStartA"/>` +
+			`<chapter start="00:01:30" title="ChapSameStartB" target="#audio-ep1"/>` +
+			`<chapter start="100:05:59" title="LongRun"/>` +
+			`<transcript><![CDATA[Spoken transcript needle & details.]]></transcript>` +
+			`</audio>` +
+			`<audio src="./audio/ep2.wav" title="EpisodeTwo"/>` +
+			`<news-item title="N1" detail-id="Item00000001">S1</news-item>` +
+			`<news-item title="N2" detail-id="Item00000001">S2</news-item>` +
+			`<paper-card title="P1" url="https://example.org/p1" related-id="Item00000002">P</paper-card>` +
+			`</section>`,
+	)
+
+	d, issues := Parse([]byte(xml), always)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %+v", issues)
+	}
+	if d.Version != "1.2" {
+		t.Fatalf("Version = %q, want 1.2", d.Version)
+	}
+	wantAssets := []string{"imgs/chart.png", "audio/ep1.mp3", "audio/ep2.wav"}
+	if !slices.Equal(d.Assets, wantAssets) {
+		t.Fatalf("Assets = %v, want %v", d.Assets, wantAssets)
+	}
+	wantRefs := []AssetRef{
+		{Path: "imgs/chart.png", Kind: AssetKindImage},
+		{Path: "audio/ep1.mp3", Kind: AssetKindAudio},
+		{Path: "audio/ep2.wav", Kind: AssetKindAudio},
+	}
+	if !slices.Equal(d.AssetRefs, wantRefs) {
+		t.Fatalf("AssetRefs = %+v, want %+v", d.AssetRefs, wantRefs)
+	}
+
+	// PlainText includes audio title, chapter title, and transcript; excludes src filename, start, target.
+	pt := d.PlainText()
+	for _, want := range []string{"EpisodeTitleTok", "ChapIntroTok", "Spoken transcript needle"} {
+		if !strings.Contains(pt, want) {
+			t.Errorf("PlainText missing %q in %q", want, pt)
+		}
+	}
+	for _, banned := range []string{"ep1.mp3", "ep2.wav", "00:01:30", "#s-intro"} {
+		if strings.Contains(pt, banned) {
+			t.Errorf("PlainText should exclude %q in %q", banned, pt)
+		}
+	}
+
+	// OutgoingLinks deduplicates same (target, kind).
+	wantLinks := []OutgoingLink{
+		{TargetItemID: "Item00000001", Kind: "news_detail"},
+		{TargetItemID: "Item00000002", Kind: "paper_related"},
+	}
+	if gotLinks := d.OutgoingLinks(); !slices.Equal(gotLinks, wantLinks) {
+		t.Fatalf("OutgoingLinks() = %+v, want %+v", gotLinks, wantLinks)
+	}
+
+	// PrimaryAudio returns first audio only.
+	pa := d.PrimaryAudio()
+	if pa == nil || pa.Src != "audio/ep1.mp3" || pa.Hash != "" || pa.Title != "EpisodeTitleTok" || len(pa.Chapters) != 4 {
+		t.Fatalf("PrimaryAudio() before rewrite = %+v", pa)
+	}
+	if pa.Chapters[0].Target != "#s-intro" || pa.Chapters[3].Start != "100:05:59" {
+		t.Fatalf("PrimaryAudio chapters = %+v", pa.Chapters)
+	}
+
+	h1 := strings.Repeat("a", 64)
+	h2 := strings.Repeat("b", 64)
+	h3 := strings.Repeat("c", 64)
+	rewritten, err := d.RewriteAssets(map[string]string{
+		"imgs/chart.png": "/api/v1/assets/" + h1,
+		"audio/ep1.mp3":  "/api/v1/assets/" + h2,
+		"audio/ep2.wav":  "/api/v1/assets/" + h3,
+	})
+	if err != nil {
+		t.Fatalf("RewriteAssets: %v", err)
+	}
+	reParsed, reIssues := Parse(rewritten, Options{StoredAssets: true})
+	if len(reIssues) != 0 {
+		t.Fatalf("reParsed StoredAssets issues: %+v", reIssues)
+	}
+	pa2 := reParsed.PrimaryAudio()
+	if pa2 == nil || pa2.Hash != h2 || pa2.Src != "/api/v1/assets/"+h2 {
+		t.Fatalf("PrimaryAudio() after rewrite = %+v", pa2)
+	}
 }

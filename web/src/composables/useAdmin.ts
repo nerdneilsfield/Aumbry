@@ -1,6 +1,7 @@
 import { computed } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { api } from '@/api/client'
+import { clearAuthSensitiveQueries } from '@/lib/queryCache'
 
 /** Admin session + the shared directory tree; the state itself lives in the query cache, so every caller sees the same data. */
 export function useAdmin() {
@@ -20,15 +21,17 @@ export function useAdmin() {
   const login = useMutation({
     mutationKey: ['admin', 'login'],
     mutationFn: (v: { username: string; password: string }) => api.admin.login(v.username, v.password),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'me'] }),
+    onSuccess: () => {
+      clearAuthSensitiveQueries(qc)
+      return qc.invalidateQueries({ queryKey: ['admin', 'me'] })
+    },
   })
 
   const logout = useMutation({
     mutationKey: ['admin', 'logout'],
     mutationFn: api.admin.logout,
     onSettled: () => {
-      qc.removeQueries({ queryKey: ['admin', 'tree'] })
-      qc.removeQueries({ queryKey: ['admin', 'search'] })
+      clearAuthSensitiveQueries(qc)
       qc.setQueryData(['admin', 'me'], { admin: false })
     },
   })

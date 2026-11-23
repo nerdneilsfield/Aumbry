@@ -28,3 +28,14 @@ export function findParentId(nodes: DirNode[], id: string, parent: string | null
     if (hit !== undefined) return hit
   }
 }
+
+/** Whether node `id` itself or any ancestor has a password set. */
+export function isDirProtected(nodes: DirNode[], id: string | null, ancestorProtected = false): boolean {
+  if (!id) return false
+  for (const n of nodes) {
+    const curProtected = ancestorProtected || n.has_password
+    if (n.id === id) return curProtected
+    if (findNode(n.children, id)) return isDirProtected(n.children, id, curProtected)
+  }
+  return false
+}

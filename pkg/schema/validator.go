@@ -21,12 +21,12 @@ import (
 
 // Options controls the checks that depend on where the document is validated.
 type Options struct {
-	// HasAsset reports whether the normalized local image path exists.
-	// When nil, figure existence is not checked.
+	// HasAsset reports whether the normalized local asset path exists.
+	// When nil, local asset existence is not checked.
 	HasAsset func(normalized string) bool
-	// StoredAssets marks input whose figure src values were already rewritten to stored asset
-	// URLs (as in the XML kept in storage). Figure src values are then neither normalized nor
-	// checked, and Document.Assets stays empty.
+	// StoredAssets marks input whose figure/audio src values were already rewritten to stored asset
+	// URLs (as in the XML kept in storage). Local asset paths are then neither normalized nor
+	// checked, and Document.Assets/AssetRefs stay empty.
 	StoredAssets bool
 }
 
@@ -49,11 +49,14 @@ var protocol = sync.OnceValue(func() *schematron.Schema {
 })
 
 const (
-	figureXPath = "//figure[@src]"
-	urlXPath    = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document/body//*[self::ref or self::quote or self::news-item][@url]"
+	assetXPath = "//figure[@src] | //audio[@src]"
+	urlXPath   = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document/body//*[self::ref or self::quote or self::news-item][@url]"
 )
 
-var imageExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".svg"}
+var (
+	imageExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".svg"}
+	audioExtensions = []string{".mp3", ".wav", ".m4a"}
+)
 
 // NormalizeAssetPath cleans a figure src and reports whether it is a plain relative path
 // that stays inside the document directory.
@@ -102,7 +105,7 @@ func Parse(input []byte, opts Options) (*Document, []ValidationError) {
 	issues := protocolIssues(tree)
 	issues = append(issues, d.checkBlocks()...)
 	issues = append(issues, d.checkURLs()...)
-	issues = append(issues, d.checkFigures(opts)...)
+	issues = append(issues, d.checkAssets(opts)...)
 	slices.SortStableFunc(issues, func(a, b ValidationError) int { return cmp.Compare(a.Line, b.Line) })
 	if issues == nil {
 		issues = []ValidationError{}
@@ -179,34 +182,52 @@ func validateHTTPURL(line int, field, raw string) *ValidationError {
 	return nil
 }
 
-// checkFigures validates figure src values against the local filesystem rules and collects Assets.
-func (d *Document) checkFigures(opts Options) []ValidationError {
+// checkAssets validates figure and audio src values against the local filesystem rules and collects Assets/AssetRefs.
+func (d *Document) checkAssets(opts Options) []ValidationError {
 	if opts.StoredAssets {
 		return nil
 	}
 	var issues []ValidationError
 	seen := map[string]bool{}
-	for _, n := range find(d.tree, figureXPath) {
-		src, _ := n.(*helium.Element).GetAttribute("src")
+	for _, n := range find(d.tree, assetXPath) {
+		el := n.(*helium.Element)
+		elemName := el.Name()
+		if elemName == "audio" && d.Version == "1.1" {
+			continue // reported by protocol.sch v12-features
+		}
+		src, _ := el.GetAttribute("src")
 		if strings.TrimSpace(src) == "" {
-			continue // reported by protocol.sch
+			continue // reported by protocol.sch / checkAudio
+		}
+		kind := AssetKindImage
+		field := "figure.src"
+		exts := imageExtensions
+		typeErrMsg := "image must be png, jpg, jpeg, webp or svg: %s"
+		missingMsg := "local image file not found: %s"
+		if elemName == "audio" {
+			kind = AssetKindAudio
+			field = "audio.src"
+			exts = audioExtensions
+			typeErrMsg = "audio must be mp3, wav or m4a: %s"
+			missingMsg = "local audio file not found: %s"
 		}
 		add := func(code, format string) {
 			issues = append(issues, ValidationError{
-				Line: n.Line(), Code: code, Field: "figure.src", Message: fmt.Sprintf(format, src),
+				Line: n.Line(), Code: code, Field: field, Message: fmt.Sprintf(format, src),
 			})
 		}
 		normalized, ok := NormalizeAssetPath(src)
 		switch {
 		case !ok:
 			add("INVALID_ASSET_PATH", "src must be a relative path inside the document directory: %s")
-		case !slices.Contains(imageExtensions, strings.ToLower(path.Ext(normalized))):
-			add("INVALID_ASSET_TYPE", "image must be png, jpg, jpeg, webp or svg: %s")
+		case !slices.Contains(exts, strings.ToLower(path.Ext(normalized))):
+			add("INVALID_ASSET_TYPE", typeErrMsg)
 		case opts.HasAsset != nil && !opts.HasAsset(normalized):
-			add("MISSING_ASSET", "local image file not found: %s")
+			add("MISSING_ASSET", missingMsg)
 		case !seen[normalized]:
 			seen[normalized] = true
 			d.Assets = append(d.Assets, normalized)
+			d.AssetRefs = append(d.AssetRefs, AssetRef{Path: normalized, Kind: kind})
 		}
 	}
 	return issues

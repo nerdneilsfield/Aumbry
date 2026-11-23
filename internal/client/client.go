@@ -24,13 +24,13 @@ const (
 	ingestPath     = "/api/v1/ingest"
 	agentDirsPath  = "/api/v1/agent/dirs"
 	agentItemsPath = "/api/v1/agent/items"
-	defaultTimeout = 2 * time.Minute
+	defaultTimeout = 5 * time.Minute
 	maxResponse    = 1 << 20
 )
 
-// Asset is one local figure file and the normalized src it is referenced by in the XML.
+// Asset is one local media file and the normalized src it is referenced by in the XML.
 type Asset struct {
-	Src  string // normalized, slash-separated path as written in <figure src>
+	Src  string // normalized, slash-separated path as written in <figure src> or <audio src>
 	Path string // location on the local filesystem
 }
 
@@ -46,7 +46,7 @@ type PushRequest struct {
 	ExternalKey string
 	Draft       bool
 	CreateOnly  bool
-	// HTTPClient is optional; the default has a two-minute overall timeout.
+	// HTTPClient is optional; the default has a five-minute overall timeout.
 	HTTPClient *http.Client
 }
 
@@ -340,21 +340,21 @@ func writeAsset(form *multipart.Writer, root *os.Root, asset Asset) error {
 	if root != nil {
 		file, err = root.Open(filepath.FromSlash(asset.Src))
 		if err != nil {
-			return fmt.Errorf("open figure %s: %w", asset.Src, err)
+			return fmt.Errorf("open asset %s: %w", asset.Src, err)
 		}
 		info, statErr := file.Stat()
 		if statErr != nil {
 			_ = file.Close()
-			return fmt.Errorf("stat figure %s: %w", asset.Src, statErr)
+			return fmt.Errorf("stat asset %s: %w", asset.Src, statErr)
 		}
 		if !info.Mode().IsRegular() {
 			_ = file.Close()
-			return fmt.Errorf("open figure %s: not a regular file", asset.Src)
+			return fmt.Errorf("open asset %s: not a regular file", asset.Src)
 		}
 	} else {
 		file, err = os.Open(asset.Path)
 		if err != nil {
-			return fmt.Errorf("open figure %s: %w", asset.Src, err)
+			return fmt.Errorf("open asset %s: %w", asset.Src, err)
 		}
 	}
 	defer func() { _ = file.Close() }()

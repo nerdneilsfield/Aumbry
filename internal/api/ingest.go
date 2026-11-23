@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"path"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -19,28 +20,40 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/nerdneilsfield/aumbry/internal/db"
+	"github.com/nerdneilsfield/aumbry/internal/media"
 	"github.com/nerdneilsfield/aumbry/pkg/schema"
 )
 
 const (
-	maxIngestBody = 100 << 20
-	maxXMLSize    = 10 << 20
-	maxAssetSize  = 20 << 20
+	maxXMLSize   = 10 << 20
+	maxImageSize = 20 << 20
+	maxAudioSize = 100 << 20
 	// formMemory is how much of the multipart form is held in memory before it spills to disk.
 	formMemory = 32 << 20
 )
 
-// assetTypes maps the sniffed MIME type of an accepted figure to its storage extension.
-var assetTypes = map[string]string{
+// imageAssetTypes maps the sniffed MIME type of an accepted figure to its storage extension.
+var imageAssetTypes = map[string]string{
 	"image/png":     ".png",
 	"image/jpeg":    ".jpg",
 	"image/webp":    ".webp",
 	"image/svg+xml": ".svg",
 }
 
+var audioAssetExts = map[string]string{
+	"audio/mpeg": ".mp3",
+	"audio/wav":  ".wav",
+	"audio/mp4":  ".m4a",
+}
+
 type storedAsset struct {
-	hash, mime, path string
-	size             int
+	src             string
+	fh              *multipart.FileHeader
+	hash            string
+	mime            string
+	path            string
+	size            int64
+	durationSeconds *int
 }
 
 func dedupe(values []string) []string {
@@ -73,7 +86,7 @@ func (s *Server) missingDirs(ctx context.Context, ids []string) ([]string, error
 		return nil, err
 	}
 	var found []string
-	if err := s.db.SelectContext(ctx, &found, query, args...); err != nil {
+	if err = s.db.SelectContext(ctx, &found, query, args...); err != nil {
 		return nil, err
 	}
 	have := map[string]bool{}
@@ -158,11 +171,15 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxIngestBody)
+	maxBody := s.maxIngestBody
+	if maxBody <= 0 {
+		maxBody = defaultRouterIngestBody
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	if err := r.ParseMultipartForm(formMemory); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "request body exceeds the 100MB limit")
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("request body exceeds the %dMB limit", maxBody/(1<<20)))
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid_request", "expected a multipart/form-data body: "+err.Error())
@@ -211,13 +228,13 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	srcs := form.Value["asset_srcs"]
 	if len(srcs) != len(assetFiles) {
 		writeError(w, http.StatusBadRequest, "invalid_request",
-			fmt.Sprintf("asset_srcs must list one figure src per uploaded asset (%d files, %d srcs)", len(assetFiles), len(srcs)))
+			fmt.Sprintf("asset_srcs must list one asset src per uploaded asset (%d files, %d srcs)", len(assetFiles), len(srcs)))
 		return
 	}
 	uploads := map[string]*multipart.FileHeader{}
 	for i, fh := range assetFiles {
-		src, ok := schema.NormalizeAssetPath(srcs[i])
-		if !ok {
+		src, okNorm := schema.NormalizeAssetPath(srcs[i])
+		if !okNorm {
 			writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid asset_srcs value %q", srcs[i]))
 			return
 		}
@@ -225,8 +242,8 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("asset %q was uploaded twice", src))
 			return
 		}
-		if fh.Size > maxAssetSize {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("asset %q exceeds the 20MB limit", src))
+		if fh.Size > maxAudioSize {
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("asset %q exceeds the 100MB limit", src))
 			return
 		}
 		uploads[src] = fh
@@ -298,7 +315,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Schema validation; a figure exists when its file was uploaded.
+	// Schema validation; a local figure or audio exists when its file was uploaded.
 	input, err := readFile(xmlHeader, maxXMLSize)
 	if err != nil {
 		internalError(w, r, err)
@@ -310,41 +327,47 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Figures.
-	stored := make([]storedAsset, 0, len(doc.Assets))
-	rewrite := make(map[string]string, len(doc.Assets))
+	// Pass 1: stream-validate & hash every asset without buffering entire binary files in memory.
+	stored := make([]storedAsset, 0, len(doc.AssetRefs))
+	rewrite := make(map[string]string, len(doc.AssetRefs))
+	hashBySrc := make(map[string]string, len(doc.AssetRefs))
 	var assetIssues []schema.ValidationError
-	for _, src := range doc.Assets {
-		data, readErr := readFile(uploads[src], maxAssetSize)
-		if readErr != nil {
-			internalError(w, r, readErr)
+
+	for _, ref := range doc.AssetRefs {
+		fh := uploads[ref.Path]
+		asset, issue, tooBigMsg, inspectErr := inspectUploadedAsset(ref, fh)
+		if inspectErr != nil {
+			internalError(w, r, inspectErr)
 			return
 		}
-		kind := mimetype.Detect(data).String()
-		if _, ok := assetTypes[kind]; !ok {
-			assetIssues = append(assetIssues, schema.ValidationError{
-				Code: "INVALID_ASSET", Field: "figure.src",
-				Message: fmt.Sprintf("%s is a %s file; only png, jpeg, webp and svg images are accepted", src, kind),
-			})
+		if tooBigMsg != "" {
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", tooBigMsg)
+			return
+		}
+		if issue != nil {
+			assetIssues = append(assetIssues, *issue)
 			continue
 		}
-		sum := sha256.Sum256(data)
-		hash := hex.EncodeToString(sum[:])
-		asset := storedAsset{hash: hash, mime: kind, path: "/assets/" + hash + assetTypes[kind], size: len(data)}
-		exists, assetErr := s.store.Exists(ctx, asset.path)
-		if assetErr == nil && !exists {
-			assetErr = s.store.Put(ctx, asset.path, bytes.NewReader(data))
-		}
-		if assetErr != nil {
-			s.storageError(w, r, assetErr)
-			return
-		}
 		stored = append(stored, asset)
-		rewrite[src] = "/api/v1/assets/" + hash
+		rewrite[ref.Path] = "/api/v1/assets/" + asset.hash
+		hashBySrc[ref.Path] = asset.hash
 	}
 	if len(assetIssues) > 0 {
 		writeJSON(w, http.StatusUnprocessableEntity, invalidResult(xmlHeader.Filename, assetIssues...))
 		return
+	}
+
+	// Pass 2: upload deduplicated assets via streaming multipart.File.
+	uploadedPath := make(map[string]bool, len(stored))
+	for _, asset := range stored {
+		if uploadedPath[asset.path] {
+			continue
+		}
+		uploadedPath[asset.path] = true
+		if uploadErr := s.uploadStoredAsset(ctx, asset); uploadErr != nil {
+			s.storageError(w, r, uploadErr)
+			return
+		}
 	}
 
 	rewritten, err := doc.RewriteAssets(rewrite)
@@ -355,7 +378,8 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	// The content is stored under a path derived from its hash, so a version is never overwritten:
 	// the live item keeps serving its old object until the transaction commits the new path.
 	sum := sha256.Sum256(rewritten)
-	xmlPath := "/xml/" + itemID + "-" + hex.EncodeToString(sum[:]) + ".xml"
+	xmlSHA256 := hex.EncodeToString(sum[:])
+	xmlPath := "/xml/" + itemID + "-" + xmlSHA256 + ".xml"
 	present, err := s.store.Exists(ctx, xmlPath)
 	if err == nil && !present {
 		err = s.store.Put(ctx, xmlPath, bytes.NewReader(rewritten))
@@ -373,13 +397,14 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		createdBy:   tokenDigest,
 		doc:         doc,
 		xmlPath:     xmlPath,
+		xmlSHA256:   xmlSHA256,
 		assets:      stored,
+		hashBySrc:   hashBySrc,
 		dirs:        dirs,
 	})
 	if err != nil {
 		// Leave xmlPath in storage on failure so concurrent ingests sharing the same content-hashed path
-		// (e.g. a simultaneous publish succeeding while a concurrent --draft fails with 409) never lose
-		// their live object. Any unreferenced remnants are cleaned up by offline `aumbry-server gc`.
+		// never lose their live object. Any unreferenced remnants are cleaned up by offline `aumbry-server gc`.
 		switch {
 		case errors.Is(err, errAlreadyPublished):
 			writeError(w, http.StatusConflict, "already_published",
@@ -397,8 +422,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// The superseded xml object is left in storage: deleting it here could race a concurrent ingest that
-	// re-uses the same content-hashed path. Offline `aumbry-server gc` removes it.
+	// The superseded xml object is left in storage: offline `aumbry-server gc` removes it.
 
 	prefix, status := "/r/", http.StatusOK
 	if doc.Meta.Type == "post" {
@@ -412,6 +436,99 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		"assets": len(distinctHashes(stored)), "created": created,
 		"draft": draft, "published": len(mounted) > 0,
 	})
+}
+
+func inspectUploadedAsset(ref schema.AssetRef, fh *multipart.FileHeader) (asset storedAsset, issue *schema.ValidationError, tooBigMsg string, err error) {
+	limit := int64(maxImageSize)
+	limitMB := 20
+	if ref.Kind == schema.AssetKindAudio {
+		limit = maxAudioSize
+		limitMB = 100
+	}
+	if fh.Size > limit {
+		return storedAsset{}, nil, fmt.Sprintf("asset %q exceeds the %dMB limit", ref.Path, limitMB), nil
+	}
+
+	f, openErr := fh.Open()
+	if openErr != nil {
+		return storedAsset{}, nil, "", openErr
+	}
+	defer func() { _ = f.Close() }()
+
+	hasher := sha256.New()
+	written, copyErr := io.Copy(hasher, io.LimitReader(f, limit+1))
+	if copyErr != nil {
+		return storedAsset{}, nil, "", copyErr
+	}
+	if written > limit {
+		return storedAsset{}, nil, fmt.Sprintf("asset %q exceeds the %dMB limit", ref.Path, limitMB), nil
+	}
+	if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+		return storedAsset{}, nil, "", seekErr
+	}
+
+	detected, mimeErr := mimetype.DetectReader(f)
+	if mimeErr != nil {
+		return storedAsset{}, nil, "", mimeErr
+	}
+	if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+		return storedAsset{}, nil, "", seekErr
+	}
+
+	hashHex := hex.EncodeToString(hasher.Sum(nil))
+	detectedStr := detected.String()
+
+	if ref.Kind == schema.AssetKindImage {
+		ext, okImg := imageAssetTypes[detectedStr]
+		if !okImg {
+			return storedAsset{}, &schema.ValidationError{
+				Code: "INVALID_ASSET", Field: "figure.src",
+				Message: fmt.Sprintf("%s is a %s file; only png, jpeg, webp and svg images are accepted", ref.Path, detectedStr),
+			}, "", nil
+		}
+		return storedAsset{
+			src:  ref.Path,
+			fh:   fh,
+			hash: hashHex,
+			mime: detectedStr,
+			path: "/assets/" + hashHex + ext,
+			size: written,
+		}, nil, "", nil
+	}
+
+	audioMeta, audioErr := media.InspectAudio(f, path.Ext(ref.Path), detectedStr)
+	if audioErr != nil {
+		return storedAsset{}, &schema.ValidationError{
+			Code: "INVALID_ASSET", Field: "audio.src",
+			Message: fmt.Sprintf("%s is invalid or unsupported audio (%s): %v", ref.Path, detectedStr, audioErr),
+		}, "", nil
+	}
+	ext := audioAssetExts[audioMeta.MIMEType]
+	return storedAsset{
+		src:             ref.Path,
+		fh:              fh,
+		hash:            hashHex,
+		mime:            audioMeta.MIMEType,
+		path:            "/assets/" + hashHex + ext,
+		size:            written,
+		durationSeconds: audioMeta.DurationSeconds,
+	}, nil, "", nil
+}
+
+func (s *Server) uploadStoredAsset(ctx context.Context, asset storedAsset) error {
+	exists, err := s.store.Exists(ctx, asset.path)
+	if err != nil || exists {
+		return err
+	}
+	f, err := asset.fh.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+		return seekErr
+	}
+	return s.store.Put(ctx, asset.path, f)
 }
 
 func distinctHashes(assets []storedAsset) map[string]bool {
@@ -435,12 +552,14 @@ type saveItem struct {
 	createdBy   string
 	doc         *schema.Document
 	xmlPath     string
+	xmlSHA256   string
 	assets      []storedAsset
+	hashBySrc   map[string]string
 	dirs        []string
 }
 
-// saveItem writes the item, its assets, its search index row and its new mounts in one transaction
-// and returns the resulting mount set. Existing mounts are kept.
+// saveItem writes the item, its assets, search index rows, outgoing links, mounts,
+// and revision snapshots in one transaction and returns the resulting mount set.
 func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, err error) {
 	meta := in.doc.Meta
 	tags, err := marshalJSON(orEmpty(meta.Tags))
@@ -457,6 +576,21 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 		key = in.externalKey
 	}
 
+	var primaryAudioHash sql.NullString
+	primaryAudioChaptersJSON := "[]"
+	if pa := in.doc.PrimaryAudio(); pa != nil {
+		if h := in.hashBySrc[pa.Src]; h != "" {
+			primaryAudioHash = sql.NullString{String: h, Valid: true}
+		} else if pa.Hash != "" {
+			primaryAudioHash = sql.NullString{String: pa.Hash, Valid: true}
+		}
+		chJSON, chErr := marshalJSON(pa.Chapters)
+		if chErr != nil {
+			return nil, chErr
+		}
+		primaryAudioChaptersJSON = chJSON
+	}
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -465,30 +599,44 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 
 	if in.created {
 		_, err = tx.ExecContext(ctx, `INSERT INTO items (id, external_key, type, title, report_date, summary, tags_json,
-			source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
+			source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by,
+			primary_audio_hash, primary_audio_chapters_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?)`,
 			in.id, key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
-			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy)
+			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy,
+			primaryAudioHash, primaryAudioChaptersJSON)
 	} else {
-		// Reading the current row first proves the item still exists (sql.ErrNoRows otherwise).
-		var current string
-		if err = tx.GetContext(ctx, &current, `SELECT xml_storage_path FROM items WHERE id = ?`, in.id); err != nil {
+		var pre struct {
+			Title     string `db:"title"`
+			Date      string `db:"report_date"`
+			Summary   string `db:"summary"`
+			XMLPath   string `db:"xml_storage_path"`
+			CreatedBy string `db:"created_by"`
+		}
+		if err = tx.GetContext(ctx, &pre, `SELECT title, report_date, summary, xml_storage_path,
+			COALESCE(created_by, '') AS created_by FROM items WHERE id = ?`, in.id); err != nil {
 			return nil, err
 		}
-		if in.draft {
-			var mountCount int
-			if err = tx.GetContext(ctx, &mountCount, `SELECT count(*) FROM directory_items WHERE item_id = ?`, in.id); err != nil {
-				return nil, err
-			}
-			if mountCount > 0 {
-				return nil, errAlreadyPublished
+		oldMounts, mountErr := itemMounts(ctx, tx, in.id)
+		if mountErr != nil {
+			return nil, mountErr
+		}
+		if in.draft && len(oldMounts) > 0 {
+			return nil, errAlreadyPublished
+		}
+		// Pre-migration 0-revision published items updated before reindex must preserve their prior version as rev=1.
+		if !in.draft && len(oldMounts) > 0 {
+			if baseErr := s.ensureBaselineRevisionTx(ctx, tx, in.id, ""); baseErr != nil {
+				return nil, baseErr
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE items SET external_key = COALESCE(?, external_key), type = ?, title = ?,
 			report_date = ?, summary = ?, tags_json = ?, source_agent = ?, canonical_url = ?, related_ids_json = ?,
-			xml_storage_path = ?, plain_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			xml_storage_path = ?, plain_text = ?, primary_audio_hash = ?, primary_audio_chapters_json = ?,
+			updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
-			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.id)
+			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain,
+			primaryAudioHash, primaryAudioChaptersJSON, in.id)
 	}
 	if err != nil {
 		return nil, err
@@ -498,11 +646,27 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 		return nil, err
 	}
 	for _, a := range in.assets {
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?)`,
-			a.hash, a.mime, a.size, a.path); err != nil {
+		var dur any
+		if a.durationSeconds != nil {
+			dur = *a.durationSeconds
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path, duration_seconds)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(hash) DO UPDATE SET duration_seconds = COALESCE(assets.duration_seconds, excluded.duration_seconds)`,
+			a.hash, a.mime, a.size, a.path, dur); err != nil {
 			return nil, err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_assets (item_id, asset_hash) VALUES (?, ?)`, in.id, a.hash); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM item_links WHERE source_item_id = ?`, in.id); err != nil {
+		return nil, err
+	}
+	for _, link := range in.doc.OutgoingLinks() {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_links (source_item_id, target_item_id, kind) VALUES (?, ?, ?)`,
+			in.id, link.TargetItemID, link.Kind); err != nil {
 			return nil, err
 		}
 	}
@@ -520,7 +684,21 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
+	if !in.draft && len(mounted) > 0 {
+		if snapErr := s.maybeSnapshotRevisionTx(ctx, tx, revisionSnapshot{
+			itemID:    in.id,
+			title:     meta.Title,
+			summary:   meta.Summary,
+			date:      meta.Date,
+			xmlPath:   in.xmlPath,
+			xmlSHA256: in.xmlSHA256,
+			createdBy: in.createdBy,
+			mounts:    mounted,
+		}); snapErr != nil {
+			return nil, snapErr
+		}
+	}
+	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	if mounted == nil {

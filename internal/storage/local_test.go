@@ -114,6 +114,56 @@ func runStoreConformanceTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("Probe() = %v, want nil", err)
 		}
 	})
+
+	t.Run("open range", func(t *testing.T) {
+		store := newStore(t)
+		payload := []byte("0123456789abcdef")
+		if err := store.Put(ctx, "/assets/range.bin", bytes.NewReader(payload)); err != nil {
+			t.Fatalf("Put = %v", err)
+		}
+
+		readSlice := func(start, end int64) string {
+			t.Helper()
+			r, err := store.OpenRange(ctx, "/assets/range.bin", start, end)
+			if err != nil {
+				t.Fatalf("OpenRange(%d, %d) = %v", start, end, err)
+			}
+			defer r.Close()
+			got, readErr := io.ReadAll(r)
+			if readErr != nil {
+				t.Fatalf("ReadAll(%d, %d) = %v", start, end, readErr)
+			}
+			return string(got)
+		}
+
+		if got := readSlice(0, 3); got != "0123" {
+			t.Fatalf("prefix slice = %q, want 0123", got)
+		}
+		if got := readSlice(4, 9); got != "456789" {
+			t.Fatalf("middle slice = %q, want 456789", got)
+		}
+		if got := readSlice(5, 5); got != "5" {
+			t.Fatalf("single byte = %q, want 5", got)
+		}
+		if got := readSlice(12, 15); got != "cdef" {
+			t.Fatalf("suffix slice = %q, want cdef", got)
+		}
+
+		if _, err := store.OpenRange(ctx, "/assets/range.bin", -1, 3); err == nil {
+			t.Fatal("expected negative start error")
+		}
+		if _, err := store.OpenRange(ctx, "/assets/range.bin", 5, 4); err == nil {
+			t.Fatal("expected inverted range error")
+		}
+		if _, err := store.OpenRange(ctx, "/assets/missing.bin", 0, 3); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("OpenRange missing = %v, want ErrNotFound", err)
+		}
+		canceledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, err := store.OpenRange(canceledCtx, "/assets/range.bin", 0, 3); !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenRange canceled = %v, want context.Canceled", err)
+		}
+	})
 }
 
 func TestLocalConformance(t *testing.T) {

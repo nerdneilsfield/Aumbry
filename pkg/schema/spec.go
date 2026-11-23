@@ -79,10 +79,10 @@ type ErrorCodeSpec struct {
 
 var (
 	leafBlocks = []string{
-		"md", "figure", "callout", "claim", "equation", "mermaid", "chart", "code-block", "quote",
+		"md", "figure", "audio", "callout", "claim", "equation", "mermaid", "chart", "code-block", "quote",
 	}
 	allBlocks = []string{
-		"section", "sources", "md", "figure", "paper-card", "repo-card", "compare-table", "callout", "collapse",
+		"section", "sources", "md", "figure", "audio", "paper-card", "repo-card", "compare-table", "callout", "collapse",
 		"claim", "equation", "mermaid", "chart", "metrics", "steps", "tabs", "timeline", "glossary",
 		"references", "figure-group", "code-block", "quote", "checklist", "search-log", "stages",
 		"quiz", "next-steps", "tldr", "news-item",
@@ -95,7 +95,7 @@ func Spec() ProtocolSpec {
 	stageChildren := slices.DeleteFunc(slices.Clone(allBlocks), func(s string) bool { return s == "stages" })
 
 	return ProtocolSpec{
-		Version: "1.1",
+		Version: "1.2",
 		Structure: StructureRules{
 			BodyChildren:     slices.Clone(allBlocks),
 			SectionMaxDepth:  maxSectionDepth,
@@ -103,6 +103,7 @@ func Spec() ProtocolSpec {
 			Containers: map[string]ContainerRule{
 				"body":          {AllowedParents: []string{"document"}, AllowedChildren: slices.Clone(allBlocks)},
 				"section":       {AllowedParents: []string{"body", "section", "stage"}, AllowedChildren: slices.Clone(allBlocks), Notes: "section depth <= 3"},
+				"audio":         {AllowedParents: []string{"body", "section", "stage", "collapse", "tab", "step"}, AllowedChildren: []string{"chapter", "transcript"}, Notes: `requires <document version="1.2">; 0..100 <chapter> (non-decreasing HH:MM:SS), 0..1 <transcript> (<= 512 KB)`},
 				"stages":        {AllowedParents: []string{"body", "section"}, AllowedChildren: []string{"stage"}, MinChildren: 1, MaxChildren: maxStagesPerGroup, Notes: "cannot be nested inside any stage descendent"},
 				"stage":         {AllowedParents: []string{"stages"}, AllowedChildren: stageChildren, Notes: "allows all body/section blocks and <section>, except nested <stages>"},
 				"collapse":      {AllowedParents: []string{"body", "section", "stage"}, AllowedChildren: collapseChildren, Notes: "allows search-log in addition to leaf blocks"},
@@ -128,19 +129,21 @@ func Spec() ProtocolSpec {
 				"sources":       {AllowedParents: []string{"body", "section", "stage"}, AllowedChildren: []string{"source"}, MinChildren: 1},
 			},
 			DocumentCaps: map[string]int{
+				"audio":   maxAudioBlocks,
 				"mermaid": maxMermaidBlocks,
 				"chart":   maxChartBlocks,
 				"stages":  maxStagesGroups,
 				"stage":   maxTotalStages,
 			},
 			PositionExceptions: []string{
+				`<audio> requires <document version="1.2"> and at most 4 blocks per document (INVALID_AUDIO)`,
 				"<stages> may appear multiple times in <body> or <section>, but NEVER inside any <stage> descendent (INVALID_STAGES)",
 				"<tldr> must be a direct child of <body>, <section>, or <stage>, at most 1 per container (INVALID_TLDR)",
 				"<search-log> is allowed inside <collapse> as well as <body>/<section>/<stage>, but not <tab> or <step>",
 				"<section> nesting depth <= 3 counts only <section> ancestors (<stage> does not increment section depth)",
 				`<steps interactive="true"> requires >= 2 <step> elements`,
-				"all IDs across section, stages, stage, quiz, figure, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)",
-				"positional #sec-<N> anchors cannot be used as <next-steps> targets (INVALID_TARGET)",
+				"all IDs across section, stages, stage, quiz, figure, audio, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)",
+				"positional #sec-<N> anchors cannot be used as <next-steps> or <chapter target> targets (INVALID_TARGET)",
 			},
 		},
 		Elements: buildElementSpecs(),
@@ -148,7 +151,7 @@ func Spec() ProtocolSpec {
 		ErrorCodes: []ErrorCodeSpec{
 			{Code: "INVALID_XML", Trigger: "malformed XML or disallowed DOCTYPE; includes CDATA hint when unescaped < or & triggers inside text blocks"},
 			{Code: "INVALID_ROOT", Trigger: "root element is not <document>"},
-			{Code: "UNSUPPORTED_VERSION", Trigger: `document @version is missing or is not "1.1" (the only supported version)`},
+			{Code: "UNSUPPORTED_VERSION", Trigger: `document @version is missing or is not "1.1" or "1.2"`},
 			{Code: "UNEXPECTED_TEXT", Trigger: "non-whitespace text placed directly inside structural containers"},
 			{Code: "MISSING_META", Trigger: "missing <meta> element"},
 			{Code: "MISSING_BODY", Trigger: "missing <body> element"},
@@ -163,9 +166,10 @@ func Spec() ProtocolSpec {
 			{Code: "MISSING_ATTR", Trigger: "required attribute missing or blank"},
 			{Code: "INVALID_ATTR", Trigger: "invalid enum attribute value, empty <next-steps>/<option> text, or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count)"},
 			{Code: "INVALID_URL", Trigger: "URL is not an absolute http(s) URL (canonical-url, paper-card@url|code-url, repo-card@url, source@url, ref@url, quote@url, news-item@url)"},
-			{Code: "INVALID_ASSET_PATH", Trigger: "<figure src> is not a clean relative path inside document directory"},
-			{Code: "INVALID_ASSET_TYPE", Trigger: "<figure src> extension is not .png, .jpg, .jpeg, .webp, or .svg"},
-			{Code: "MISSING_ASSET", Trigger: "referenced local <figure src> file does not exist"},
+			{Code: "INVALID_ASSET_PATH", Trigger: "<figure src> or <audio src> is not a clean relative path inside document directory"},
+			{Code: "INVALID_ASSET_TYPE", Trigger: "<figure src> is not .png/.jpg/.jpeg/.webp/.svg, or <audio src> is not .mp3/.wav/.m4a"},
+			{Code: "MISSING_ASSET", Trigger: "referenced local <figure src> or <audio src> file does not exist"},
+			{Code: "INVALID_AUDIO", Trigger: `<audio> used in version="1.1", missing src/title, title >200 runes, >4 audio blocks, >100 chapters, invalid/decreasing <chapter start>, blank/empty <transcript>, or <transcript> >512 KB`},
 			{Code: "TABLE_NO_COLUMNS", Trigger: "<compare-table> missing <columns>/<col>"},
 			{Code: "TABLE_NO_ROWS", Trigger: "<compare-table> has no <row>"},
 			{Code: "TABLE_COL_MISMATCH", Trigger: "<row> <cell> count differs from <columns>/<col> count"},
@@ -174,7 +178,7 @@ func Spec() ProtocolSpec {
 			{Code: "TOO_MANY_BLOCKS", Trigger: "document exceeds caps (>10 mermaid, >10 chart, >8 stages groups, >40 total stage elements)"},
 			{Code: "DUPLICATE_ID", Trigger: "duplicate anchor id across the document-wide shared id namespace"},
 			{Code: "DUPLICATE_TAB", Trigger: "duplicate <tab title> within the same <tabs>"},
-			{Code: "INVALID_TARGET", Trigger: `<next-steps>/<option target="#..."> fails to resolve or uses #sec-N; <code-block eq="..."> missing matching <equation id>`},
+			{Code: "INVALID_TARGET", Trigger: `<next-steps>/<option target="#..."> or <audio>/<chapter target="#..."> fails to resolve or uses #sec-N; <code-block eq="..."> missing matching <equation id>`},
 			{Code: "INVALID_CHART", Trigger: "bad chart@type, JSON syntax error, JSON Schema failure, length mismatch, non-finite NaN/Inf, >2000 total points, or invalid series[].err (reported with JSON path)"},
 			{Code: "INVALID_EQUATION", Trigger: "<equation> empty or exceeds 4 KB"},
 			{Code: "INVALID_MERMAID", Trigger: "<mermaid> empty or exceeds 20 KB"},
@@ -189,7 +193,7 @@ func Spec() ProtocolSpec {
 			{Code: "INVALID_SEARCH_LOG", Trigger: "<search-log> missing <query>, >1 <criteria>/<stop>, or non-integer negative hits/kept"},
 		},
 		MinimalExample: `<?xml version="1.0" encoding="UTF-8"?>
-<document version="1.1">
+<document version="1.2">
   <meta>
     <title>Minimal Document</title>
     <type>report</type>
@@ -205,7 +209,7 @@ func Spec() ProtocolSpec {
 }
 
 func buildAnchorSpecs() []AnchorSpec {
-	order := []string{"section", "stages", "stage", "quiz", "figure", "equation", "ref"}
+	order := []string{"section", "stages", "stage", "quiz", "figure", "audio", "equation", "ref"}
 	out := make([]AnchorSpec, 0, len(order)+1)
 	for _, elem := range order {
 		prefix := anchorPrefixes[elem]
@@ -230,7 +234,7 @@ func buildElementSpecs() []ElementSpec {
 		{
 			Name: "document", Parents: []string{"(root)"}, Children: []string{"meta", "body"},
 			TextMode: "none", Description: "Root element of every Aumbry XML document.",
-			Attributes: []AttrSpec{{Name: "version", Required: true, Values: []string{"1.1"}, Description: "Protocol version; only 1.1 is accepted"}},
+			Attributes: []AttrSpec{{Name: "version", Required: true, Values: []string{"1.1", "1.2"}, Description: "Protocol version: 1.2 (current) or 1.1 (legacy, without <audio>)"}},
 		},
 		{
 			Name: "meta", Parents: []string{"document"}, Children: []string{"title", "type", "date", "summary", "source-agent", "canonical-url", "tags", "related-ids"},
@@ -268,6 +272,32 @@ func buildElementSpecs() []ElementSpec {
 				{Name: "id", Pattern: anchorIDRe.String(), Description: "Unique anchor id mapped to #fig-<id>"},
 				{Name: "alt", Description: "Accessibility alt text (falls back to caption)"},
 			},
+		},
+		{
+			Name: "audio", Parents: []string{"body", "section", "stage", "collapse", "tab", "step"},
+			Children: []string{"chapter", "transcript"}, DocMax: maxAudioBlocks,
+			TextMode:    "none",
+			Description: `Local audio asset reference (.mp3/.wav/.m4a); requires <document version="1.2">. Title and transcript/chapters are indexed.`,
+			Attributes: []AttrSpec{
+				{Name: "src", Required: true, Description: "Relative local audio path (.mp3, .wav, .m4a)"},
+				{Name: "title", Required: true, Description: "Audio player & episode title (1-200 Unicode runes; indexed)"},
+				{Name: "id", Pattern: anchorIDRe.String(), Description: "Unique anchor id mapped to #audio-<id>"},
+			},
+		},
+		{
+			Name: "chapter", Parents: []string{"audio"},
+			TextMode:    "none",
+			Description: "Timestamped chapter marker inside <audio> (0-100 per block; timestamps must be non-decreasing).",
+			Attributes: []AttrSpec{
+				{Name: "start", Required: true, Pattern: chapterStartRe.String(), Description: "Timestamp in HH:MM:SS format (00-59 minutes/seconds)"},
+				{Name: "title", Required: true, Description: "Non-empty chapter title (indexed)"},
+				{Name: "target", Pattern: targetRe.String(), Description: "Optional prefixed in-page anchor target"},
+			},
+		},
+		{
+			Name: "transcript", Parents: []string{"audio"}, MaxBytes: maxTranscriptBytes,
+			TextMode:    "cdata",
+			Description: "Optional full audio transcript (0-1 per <audio>; non-empty plain text or CDATA <= 512 KB; indexed).",
 		},
 		{
 			Name: "paper-card", Parents: []string{"body", "section", "stage"}, TextMode: "markdown-cdata",
@@ -558,7 +588,7 @@ func RenderSchemaMarkdown() string {
 	var b strings.Builder
 	b.WriteString("# Aumbry XML Protocol Specification\n\n")
 
-	fmt.Fprintf(&b, "Protocol version: `%s` (the only accepted value of `<document version>`).\n\n", s.Version)
+	fmt.Fprintf(&b, "Protocol version: `%s` (also accepts legacy `1.1` documents without v1.2 elements).\n\n", s.Version)
 	b.WriteString("## Structure Rules\n\n")
 	vr := s.Structure
 	fmt.Fprintf(&b, "- Section depth: %d (%s)\n", vr.SectionMaxDepth, vr.SectionDepthNote)
@@ -705,7 +735,7 @@ func RenderSchemaMarkdown() string {
 		fmt.Fprintf(&b, "| `%s` | %s |\n", ec.Code, ec.Trigger)
 	}
 
-	b.WriteString("\n## Minimal Example (`version=\"1.1\"`)\n\n```xml\n")
+	b.WriteString("\n## Minimal Example (`version=\"1.2\"`)\n\n```xml\n")
 	b.WriteString(s.MinimalExample)
 	b.WriteString("\n```\n")
 	return b.String()

@@ -16,11 +16,11 @@ type itemNeighbors struct {
 	Next *itemSummary `json:"next"`
 }
 
-// neighborsFor returns the neighbors of item id among the items mounted directly in one of visible,
+// neighborsForFrom returns the neighbors of item id among the items mounted directly in one of visible,
 // the directories v may open. hint (the directory the reader came from) wins when it is one of them;
 // otherwise the first visible mount is used, so a hint naming a hidden directory changes nothing.
 // It returns nil when the item has no visible mount.
-func (s *Server) neighborsFor(ctx context.Context, t *dirTree, visible []string, hint, id string) (*itemNeighbors, error) {
+func neighborsForFrom(ctx context.Context, q sqlx.QueryerContext, t *dirTree, visible []string, hint, id string) (*itemNeighbors, error) {
 	if len(visible) == 0 {
 		return nil, nil
 	}
@@ -39,7 +39,7 @@ func (s *Server) neighborsFor(ctx context.Context, t *dirTree, visible []string,
 		Prev sql.NullString `db:"prev_id"`
 		Next sql.NullString `db:"next_id"`
 	}
-	err := s.db.GetContext(ctx, &ids, `SELECT prev_id, next_id FROM (
+	err := sqlx.GetContext(ctx, q, &ids, `SELECT prev_id, next_id FROM (
 		SELECT i.id, LAG(i.id) OVER w AS prev_id, LEAD(i.id) OVER w AS next_id
 		FROM items i JOIN directory_items di ON di.item_id = i.id WHERE di.directory_id = ?
 		WINDOW w AS (ORDER BY i.report_date, i.created_at, i.id DESC)
@@ -48,22 +48,22 @@ func (s *Server) neighborsFor(ctx context.Context, t *dirTree, visible []string,
 		return nil, err
 	}
 	out := &itemNeighbors{Dir: dirRef{ID: dir, Name: rec.Name}}
-	if out.Prev, err = s.summaryOf(ctx, ids.Prev); err != nil {
+	if out.Prev, err = summaryOfFrom(ctx, q, ids.Prev); err != nil {
 		return nil, err
 	}
-	if out.Next, err = s.summaryOf(ctx, ids.Next); err != nil {
+	if out.Next, err = summaryOfFrom(ctx, q, ids.Next); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// summaryOf loads one item summary; nil for a NULL id.
-func (s *Server) summaryOf(ctx context.Context, id sql.NullString) (*itemSummary, error) {
+// summaryOfFrom loads one item summary; nil for a NULL id.
+func summaryOfFrom(ctx context.Context, q sqlx.QueryerContext, id sql.NullString) (*itemSummary, error) {
 	if !id.Valid {
 		return nil, nil
 	}
 	var row itemRow
-	if err := sqlx.GetContext(ctx, s.db, &row, `SELECT `+itemColumns+` FROM items i WHERE i.id = ?`, id.String); err != nil {
+	if err := sqlx.GetContext(ctx, q, &row, `SELECT `+itemColumns+` FROM items i WHERE i.id = ?`, id.String); err != nil {
 		return nil, err
 	}
 	sum := row.summary()

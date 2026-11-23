@@ -34,6 +34,22 @@ cookie_secret = "replace-with-at-least-32-random-bytes-for-cookies"
 # Empty by default (all forwarding headers ignored). (env: AUMBRY_TRUSTED_PROXIES, comma-separated)
 trusted_proxies = []
 
+# Canonical public origin used to build links and <enclosure> URLs in /feeds/ RSS/Podcast feeds.
+# Leave empty to derive scheme/host from the incoming request (honoring trusted_proxies).
+# Must be http(s)://host[:port] with no path, query, fragment, or userinfo. (env: AUMBRY_PUBLIC_URL)
+public_url = ""
+
+[revisions]
+# Maximum published revisions kept per item; oldest revisions are pruned FIFO.
+# 0 means unlimited; negative values fail startup. (env: AUMBRY_REVISIONS_MAX_PER_ITEM)
+max_per_item = 20
+
+[ingest]
+# Maximum multipart request body size in MiB for POST /api/v1/ingest (minimum 20).
+# Server temporary storage should reserve at least 4 x max_body_mb for concurrent uploads.
+# (env: AUMBRY_INGEST_MAX_BODY_MB)
+max_body_mb = 200
+
 [admin]
 # Administrator username (env: AUMBRY_ADMIN_USER, required)
 user = "admin"

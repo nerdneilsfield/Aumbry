@@ -37,6 +37,11 @@ type itemSummary struct {
 	SourceAgent string   `json:"source_agent"`
 }
 
+type referencingItem struct {
+	itemSummary
+	LinkKinds []string `json:"link_kinds"`
+}
+
 func parseTags(raw string) []string {
 	tags := []string{}
 	_ = json.Unmarshal([]byte(raw), &tags)
@@ -68,12 +73,15 @@ type dirRef struct {
 
 type itemDetail struct {
 	itemSummary
-	CanonicalURL string         `json:"canonical_url"`
-	CreatedAt    string         `json:"created_at"`
-	UpdatedAt    string         `json:"updated_at"`
-	Dirs         []dirRef       `json:"dirs"`
-	Related      []itemSummary  `json:"related"`
-	Neighbors    *itemNeighbors `json:"neighbors"`
+	CanonicalURL  string            `json:"canonical_url"`
+	CreatedAt     string            `json:"created_at"`
+	UpdatedAt     string            `json:"updated_at"`
+	Dirs          []dirRef          `json:"dirs"`
+	Related       []itemSummary     `json:"related"`
+	ReferencedBy  []referencingItem `json:"referenced_by"`
+	RevisionCount int               `json:"revision_count"`
+	CurrentRev    int               `json:"current_rev"`
+	Neighbors     *itemNeighbors    `json:"neighbors"`
 }
 
 // itemMounts returns the directories item id is mounted in.
@@ -83,57 +91,39 @@ func itemMounts(ctx context.Context, q sqlx.QueryerContext, id string) ([]string
 	return dirs, err
 }
 
-// canViewItem reports whether v may read item id; the item must exist.
-func (s *Server) canViewItem(ctx context.Context, t *dirTree, v viewer, id string) (bool, error) {
+func canViewItemFrom(ctx context.Context, q sqlx.QueryerContext, t *dirTree, v viewer, id string) (bool, error) {
 	if v.admin {
 		return true, nil
 	}
-	mounts, err := itemMounts(ctx, s.db, id)
+	mounts, err := itemMounts(ctx, q, id)
 	if err != nil {
 		return false, err
 	}
 	return len(t.visibleDirs(v, mounts)) > 0, nil
 }
 
-// itemExists reports whether an item with this id exists.
-func (s *Server) itemExists(ctx context.Context, id string) (bool, error) {
+func itemExistsFrom(ctx context.Context, q sqlx.QueryerContext, id string) (bool, error) {
 	var n int
-	err := s.db.GetContext(ctx, &n, `SELECT count(*) FROM items WHERE id = ?`, id)
+	err := sqlx.GetContext(ctx, q, &n, `SELECT count(*) FROM items WHERE id = ?`, id)
 	return n > 0, err
 }
 
-// authorizeItem answers 404 or 403 itself and returns false when the caller may not read the item.
-func (s *Server) authorizeItem(w http.ResponseWriter, r *http.Request, id string) bool {
-	ctx := r.Context()
-	exists, err := s.itemExists(ctx, id)
-	if err != nil {
-		internalError(w, r, err)
-		return false
-	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "not_found", "item not found")
-		return false
-	}
-	t, err := s.loadTree(ctx)
-	if err != nil {
-		internalError(w, r, err)
-		return false
-	}
-	ok, err := s.canViewItem(ctx, t, s.viewerFor(r, t), id)
-	if err != nil {
-		internalError(w, r, err)
-		return false
-	}
-	if !ok {
-		writeError(w, http.StatusForbidden, "forbidden", "this item is not accessible")
-		return false
-	}
-	return true
+// itemExists reports whether an item with this id exists.
+func (s *Server) itemExists(ctx context.Context, id string) (bool, error) {
+	return itemExistsFrom(ctx, s.db, id)
 }
 
 func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
+
+	tx, err := s.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var row struct {
 		itemRow
 		CanonicalURL string `db:"canonical_url"`
@@ -141,7 +131,7 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 		CreatedAt    string `db:"created_at"`
 		UpdatedAt    string `db:"updated_at"`
 	}
-	err := s.db.GetContext(ctx, &row, `SELECT `+itemColumns+`, i.canonical_url, i.related_ids_json,
+	err = sqlx.GetContext(ctx, tx, &row, `SELECT `+itemColumns+`, i.canonical_url, i.related_ids_json,
 		strftime('%Y-%m-%dT%H:%M:%SZ', i.created_at) AS created_at,
 		strftime('%Y-%m-%dT%H:%M:%SZ', i.updated_at) AS updated_at
 		FROM items i WHERE i.id = ?`, id)
@@ -153,13 +143,13 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	t, err := s.loadTree(ctx)
+	t, err := loadTreeFrom(ctx, tx)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
 	v := s.viewerFor(r, t)
-	mounts, err := itemMounts(ctx, s.db, id)
+	mounts, err := itemMounts(ctx, tx, id)
 	if err != nil {
 		internalError(w, r, err)
 		return
@@ -169,6 +159,7 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "this item is not accessible")
 		return
 	}
+
 	detail := itemDetail{
 		itemSummary:  row.summary(),
 		CanonicalURL: row.CanonicalURL,
@@ -176,6 +167,7 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:    row.UpdatedAt,
 		Dirs:         make([]dirRef, 0, len(visible)),
 		Related:      []itemSummary{},
+		ReferencedBy: []referencingItem{},
 	}
 	for _, d := range visible {
 		// A mount whose directory is missing from the loaded tree has no name to show.
@@ -183,22 +175,34 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 			detail.Dirs = append(detail.Dirs, dirRef{ID: d, Name: rec.Name})
 		}
 	}
-	detail.Related, err = s.relatedItems(ctx, t, v, row.RelatedJSON)
+	detail.Related, err = relatedItemsFrom(ctx, tx, t, v, row.RelatedJSON)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	detail.ReferencedBy, err = referencedByFrom(ctx, tx, t, v, id)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	detail.RevisionCount, detail.CurrentRev, err = revisionStatsFrom(ctx, tx, t, v, id)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
 	// ?dir= names the directory the reader came from; it only chooses among mounts the caller may open.
-	detail.Neighbors, err = s.neighborsFor(ctx, t, visible, r.URL.Query().Get("dir"), id)
+	detail.Neighbors, err = neighborsForFrom(ctx, tx, t, visible, r.URL.Query().Get("dir"), id)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
+	_ = tx.Rollback()
+
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// relatedItems resolves related_ids_json to the summaries v may see, keeping the document order.
-func (s *Server) relatedItems(ctx context.Context, t *dirTree, v viewer, relatedJSON string) ([]itemSummary, error) {
+// relatedItemsFrom resolves related_ids_json to the summaries v may see, keeping the document order.
+func relatedItemsFrom(ctx context.Context, q sqlx.QueryerContext, t *dirTree, v viewer, relatedJSON string) ([]itemSummary, error) {
 	ids := parseTags(relatedJSON)
 	out := []itemSummary{}
 	if len(ids) == 0 {
@@ -209,7 +213,7 @@ func (s *Server) relatedItems(ctx context.Context, t *dirTree, v viewer, related
 		return nil, err
 	}
 	var rows []itemRow
-	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
+	if err = sqlx.SelectContext(ctx, q, &rows, query, args...); err != nil {
 		return nil, err
 	}
 	byID := make(map[string]itemRow, len(rows))
@@ -221,26 +225,97 @@ func (s *Server) relatedItems(ctx context.Context, t *dirTree, v viewer, related
 		if !ok {
 			continue
 		}
-		if ok, err := s.canViewItem(ctx, t, v, id); err != nil {
+		if visible, err := canViewItemFrom(ctx, q, t, v, id); err != nil {
 			return nil, err
-		} else if ok {
+		} else if visible {
 			out = append(out, row.summary())
 		}
 	}
 	return out, nil
 }
 
-func (s *Server) getItemContent(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if !s.authorizeItem(w, r, id) {
-		return
+// referencedByFrom returns published items that cite targetID via item_links and are visible to v.
+func referencedByFrom(ctx context.Context, q sqlx.QueryerContext, t *dirTree, v viewer, targetID string) ([]referencingItem, error) {
+	var rows []struct {
+		itemRow
+		Kind string `db:"kind"`
 	}
-	var path string
-	if err := s.db.GetContext(r.Context(), &path, `SELECT xml_storage_path FROM items WHERE id = ?`, id); err != nil {
+	err := sqlx.SelectContext(ctx, q, &rows, `SELECT `+itemColumns+`, il.kind
+		FROM item_links il
+		JOIN items i ON i.id = il.source_item_id
+		WHERE il.target_item_id = ?
+		  AND EXISTS (SELECT 1 FROM directory_items di WHERE di.item_id = i.id)
+		ORDER BY i.report_date DESC, i.created_at DESC, i.id ASC, il.kind ASC`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	out := []referencingItem{}
+	indexByID := make(map[string]int)
+	visCache := make(map[string]bool)
+
+	for _, row := range rows {
+		visible, cached := visCache[row.ID]
+		if !cached {
+			visible, err = canViewItemFrom(ctx, q, t, v, row.ID)
+			if err != nil {
+				return nil, err
+			}
+			visCache[row.ID] = visible
+		}
+		if !visible {
+			continue
+		}
+		if idx, seen := indexByID[row.ID]; seen {
+			out[idx].LinkKinds = append(out[idx].LinkKinds, row.Kind)
+			continue
+		}
+		indexByID[row.ID] = len(out)
+		out = append(out, referencingItem{
+			itemSummary: row.summary(),
+			LinkKinds:   []string{row.Kind},
+		})
+	}
+	return out, nil
+}
+
+func (s *Server) getItemContent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+
+	tx, err := s.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
 		internalError(w, r, err)
 		return
 	}
-	body, err := s.store.Open(r.Context(), path)
+	defer func() { _ = tx.Rollback() }()
+
+	var xmlPath string
+	err = sqlx.GetContext(ctx, tx, &xmlPath, `SELECT xml_storage_path FROM items WHERE id = ?`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "item not found")
+		return
+	}
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	t, err := loadTreeFrom(ctx, tx)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	ok, err := canViewItemFrom(ctx, tx, t, s.viewerFor(r, t), id)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "forbidden", "this item is not accessible")
+		return
+	}
+	_ = tx.Rollback()
+
+	body, err := s.store.Open(ctx, xmlPath)
 	if errors.Is(err, storage.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "item content is missing from storage")
 		return

@@ -1,26 +1,28 @@
 # Aumbry XML Protocol Specification
 
-Protocol version: `1.1` (the only accepted value of `<document version>`).
+Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elements).
 
 ## Structure Rules
 
 - Section depth: 3 (at most 3 nested <section> levels counting only <section> ancestors (<stage> does not count))
-- `<body>` direct children: section, sources, md, figure, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item
-- Document-wide caps: `chart` <= 10, `mermaid` <= 10, `stage` <= 40, `stages` <= 8
+- `<body>` direct children: section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item
+- Document-wide caps: `audio` <= 4, `chart` <= 10, `mermaid` <= 10, `stage` <= 40, `stages` <= 8
 - Position rules:
+  - <audio> requires <document version="1.2"> and at most 4 blocks per document (INVALID_AUDIO)
   - <stages> may appear multiple times in <body> or <section>, but NEVER inside any <stage> descendent (INVALID_STAGES)
   - <tldr> must be a direct child of <body>, <section>, or <stage>, at most 1 per container (INVALID_TLDR)
   - <search-log> is allowed inside <collapse> as well as <body>/<section>/<stage>, but not <tab> or <step>
   - <section> nesting depth <= 3 counts only <section> ancestors (<stage> does not increment section depth)
   - <steps interactive="true"> requires >= 2 <step> elements
-  - all IDs across section, stages, stage, quiz, figure, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)
-  - positional #sec-<N> anchors cannot be used as <next-steps> targets (INVALID_TARGET)
+  - all IDs across section, stages, stage, quiz, figure, audio, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)
+  - positional #sec-<N> anchors cannot be used as <next-steps> or <chapter target> targets (INVALID_TARGET)
 
 | Container | Allowed Parents | Allowed Children | Bounds | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| `<body>` | document | section, sources, md, figure, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - |  |
+| `<audio>` | body, section, stage, collapse, tab, step | chapter, transcript | - | requires <document version="1.2">; 0..100 <chapter> (non-decreasing HH:MM:SS), 0..1 <transcript> (<= 512 KB) |
+| `<body>` | document | section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - |  |
 | `<checklist>` | body, section, stage | check | 1..n |  |
-| `<collapse>` | body, section, stage | md, figure, callout, claim, equation, mermaid, chart, code-block, quote, search-log | - | allows search-log in addition to leaf blocks |
+| `<collapse>` | body, section, stage | md, figure, audio, callout, claim, equation, mermaid, chart, code-block, quote, search-log | - | allows search-log in addition to leaf blocks |
 | `<columns>` | compare-table | col | 1..n |  |
 | `<compare-table>` | body, section, stage | columns, row | - |  |
 | `<criteria>` | search-log | include, exclude | - |  |
@@ -33,13 +35,13 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `<references>` | body, section, stage | ref | 1..n |  |
 | `<row>` | compare-table | cell | - | cell count must match columns/col count |
 | `<search-log>` | body, section, stage, collapse | criteria, query, excluded, gap, stop | - | requires >= 1 <query>; <= 1 <criteria>; <= 1 <stop> |
-| `<section>` | body, section, stage | section, sources, md, figure, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - | section depth <= 3 |
+| `<section>` | body, section, stage | section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - | section depth <= 3 |
 | `<sources>` | body, section, stage | source | 1..n |  |
-| `<stage>` | stages | section, sources, md, figure, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, quiz, next-steps, tldr, news-item | - | allows all body/section blocks and <section>, except nested <stages> |
+| `<stage>` | stages | section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, quiz, next-steps, tldr, news-item | - | allows all body/section blocks and <section>, except nested <stages> |
 | `<stages>` | body, section | stage | 1..8 | cannot be nested inside any stage descendent |
-| `<step>` | steps | md, figure, callout, claim, equation, mermaid, chart, code-block, quote | - |  |
+| `<step>` | steps | md, figure, audio, callout, claim, equation, mermaid, chart, code-block, quote | - |  |
 | `<steps>` | body, section, stage | step | 1..n | interactive="true" requires >= 2 <step> |
-| `<tab>` | tabs | md, figure, callout, claim, equation, mermaid, chart, code-block, quote | - |  |
+| `<tab>` | tabs | md, figure, audio, callout, claim, equation, mermaid, chart, code-block, quote | - |  |
 | `<tabs>` | body, section, stage | tab | 2..n |  |
 | `<timeline>` | body, section, stage | event | 1..n |  |
 | `<tldr>` | body, section, stage | point, verdict | 1..n | direct child of body/section/stage only; at most 1 per container; 1..7 <point>; 0..1 <verdict> |
@@ -48,7 +50,7 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 
 | Element | Parents | Attributes | Limits & Notes |
 | :--- | :--- | :--- | :--- |
-| `<document>` | (root) | `version*=[1.1]` | Root element of every Aumbry XML document. |
+| `<document>` | (root) | `version*=[1.1|1.2]` | Root element of every Aumbry XML document. |
 | `<meta>` | document | - | children: 5..n — Required document metadata. |
 | `<title>` | meta | - | Document title (required). |
 | `<type>` | meta | - | Document type: "report" or "post" (required). |
@@ -64,6 +66,9 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `<section>` | body, section, stage | `title*`, `id` | Titled section (nestable up to 3 section levels). |
 | `<md>` | body, section, stage, collapse, tab, step | - | Rich Markdown content block (wrap in CDATA). |
 | `<figure>` | body, section, stage, collapse, tab, step, figure-group | `src*`, `caption`, `id`, `alt` | Local image asset reference (.png/.jpg/.jpeg/.webp/.svg). |
+| `<audio>` | body, section, stage, collapse, tab, step | `src*`, `title*`, `id` | doc max: 4 — Local audio asset reference (.mp3/.wav/.m4a); requires <document version="1.2">. Title and transcript/chapters are indexed. |
+| `<chapter>` | audio | `start*`, `title*`, `target` | Timestamped chapter marker inside <audio> (0-100 per block; timestamps must be non-decreasing). |
+| `<transcript>` | audio | - | <= 524288 B — Optional full audio transcript (0-1 per <audio>; non-empty plain text or CDATA <= 512 KB; indexed). |
 | `<paper-card>` | body, section, stage | `title*`, `url*`, `authors`, `date`, `related-id`, `venue`, `doi`, `code-url`, `read-depth=[full|abstract|snippet]` | Academic paper summary card. |
 | `<repo-card>` | body, section, stage | `name*`, `url*`, `stars`, `lang`, `license`, `commit` | Open-source repository summary card. |
 | `<compare-table>` | body, section, stage | `caption` | Structured comparison table. |
@@ -188,6 +193,7 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `stage` | `#stage-<id>` | true |
 | `quiz` | `#quiz-<id>` | true |
 | `figure` | `#fig-<id>` | true |
+| `audio` | `#audio-<id>` | true |
 | `equation` | `#eq-<id>` | true |
 | `ref` | `#ref-<id>` | true |
 | `section (without id)` | `#sec-<N>` | false |
@@ -198,7 +204,7 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | :--- | :--- |
 | `INVALID_XML` | malformed XML or disallowed DOCTYPE; includes CDATA hint when unescaped < or & triggers inside text blocks |
 | `INVALID_ROOT` | root element is not <document> |
-| `UNSUPPORTED_VERSION` | document @version is missing or is not "1.1" (the only supported version) |
+| `UNSUPPORTED_VERSION` | document @version is missing or is not "1.1" or "1.2" |
 | `UNEXPECTED_TEXT` | non-whitespace text placed directly inside structural containers |
 | `MISSING_META` | missing <meta> element |
 | `MISSING_BODY` | missing <body> element |
@@ -213,9 +219,10 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `MISSING_ATTR` | required attribute missing or blank |
 | `INVALID_ATTR` | invalid enum attribute value, empty <next-steps>/<option> text, or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count) |
 | `INVALID_URL` | URL is not an absolute http(s) URL (canonical-url, paper-card@url|code-url, repo-card@url, source@url, ref@url, quote@url, news-item@url) |
-| `INVALID_ASSET_PATH` | <figure src> is not a clean relative path inside document directory |
-| `INVALID_ASSET_TYPE` | <figure src> extension is not .png, .jpg, .jpeg, .webp, or .svg |
-| `MISSING_ASSET` | referenced local <figure src> file does not exist |
+| `INVALID_ASSET_PATH` | <figure src> or <audio src> is not a clean relative path inside document directory |
+| `INVALID_ASSET_TYPE` | <figure src> is not .png/.jpg/.jpeg/.webp/.svg, or <audio src> is not .mp3/.wav/.m4a |
+| `MISSING_ASSET` | referenced local <figure src> or <audio src> file does not exist |
+| `INVALID_AUDIO` | <audio> used in version="1.1", missing src/title, title >200 runes, >4 audio blocks, >100 chapters, invalid/decreasing <chapter start>, blank/empty <transcript>, or <transcript> >512 KB |
 | `TABLE_NO_COLUMNS` | <compare-table> missing <columns>/<col> |
 | `TABLE_NO_ROWS` | <compare-table> has no <row> |
 | `TABLE_COL_MISMATCH` | <row> <cell> count differs from <columns>/<col> count |
@@ -224,7 +231,7 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `TOO_MANY_BLOCKS` | document exceeds caps (>10 mermaid, >10 chart, >8 stages groups, >40 total stage elements) |
 | `DUPLICATE_ID` | duplicate anchor id across the document-wide shared id namespace |
 | `DUPLICATE_TAB` | duplicate <tab title> within the same <tabs> |
-| `INVALID_TARGET` | <next-steps>/<option target="#..."> fails to resolve or uses #sec-N; <code-block eq="..."> missing matching <equation id> |
+| `INVALID_TARGET` | <next-steps>/<option target="#..."> or <audio>/<chapter target="#..."> fails to resolve or uses #sec-N; <code-block eq="..."> missing matching <equation id> |
 | `INVALID_CHART` | bad chart@type, JSON syntax error, JSON Schema failure, length mismatch, non-finite NaN/Inf, >2000 total points, or invalid series[].err (reported with JSON path) |
 | `INVALID_EQUATION` | <equation> empty or exceeds 4 KB |
 | `INVALID_MERMAID` | <mermaid> empty or exceeds 20 KB |
@@ -238,11 +245,11 @@ Protocol version: `1.1` (the only accepted value of `<document version>`).
 | `INVALID_CHECK` | <checklist> empty or <check status> not in done|todo|blocked|risk |
 | `INVALID_SEARCH_LOG` | <search-log> missing <query>, >1 <criteria>/<stop>, or non-integer negative hits/kept |
 
-## Minimal Example (`version="1.1"`)
+## Minimal Example (`version="1.2"`)
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<document version="1.1">
+<document version="1.2">
   <meta>
     <title>Minimal Document</title>
     <type>report</type>

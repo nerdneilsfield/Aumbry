@@ -58,18 +58,27 @@ func TestEveryConnectionEnforcesForeignKeys(t *testing.T) {
 	}
 }
 
-// A database created by the pre-goose inline migration has the tables but no version table;
-// opening it must succeed and keep its data.
+// A database created by the pre-goose inline migration has the v1.0 tables but no version table;
+// opening it must succeed and keep its data while applying newer migrations.
 func TestOpenAdoptsDatabaseCreatedBeforeGoose(t *testing.T) {
+	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	database, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.Exec(`INSERT INTO directories (id, name) VALUES ('d1', 'kept')`); err != nil {
+	fsys, err := fs.Sub(migrations, "migrations")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.Exec(`ALTER TABLE items DROP COLUMN created_by`); err != nil {
+	provider, err := goose.NewProvider(goose.DialectSQLite3, database.DB, fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.DownTo(ctx, 1); err != nil {
+		t.Fatalf("DownTo(1): %v", err)
+	}
+	if _, err = database.Exec(`INSERT INTO directories (id, name) VALUES ('d1', 'kept')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.Exec(`DROP TABLE goose_db_version`); err != nil {
@@ -87,6 +96,12 @@ func TestOpenAdoptsDatabaseCreatedBeforeGoose(t *testing.T) {
 	var name string
 	if err := database.QueryRow(`SELECT name FROM directories WHERE id = 'd1'`).Scan(&name); err != nil || name != "kept" {
 		t.Fatalf("directory = %q, %v; want the pre-existing row", name, err)
+	}
+	for _, tbl := range []string{"item_links", "item_revisions", "item_revision_assets", "item_revision_mounts", "directory_tokens"} {
+		var cnt int
+		if err := database.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&cnt); err != nil || cnt != 1 {
+			t.Fatalf("table %s count = (%d, %v), want 1", tbl, cnt, err)
+		}
 	}
 }
 
@@ -267,4 +282,73 @@ func TestTryLockDataDir(t *testing.T) {
 		t.Fatalf("TryLockDataDir() after unlock = %v", err)
 	}
 	_ = lock2.Close()
+}
+
+func TestV2MigrationsAndForeignKeys(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	// Seed directory, item, and asset.
+	if _, err = database.ExecContext(ctx, `INSERT INTO directories (id, name, password_hash) VALUES ('privdir12345', 'Private', 'hash')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO directory_tokens (id, directory_id, label, token_hash) VALUES ('tok1', 'privdir12345', 'sub', 'thash1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path, duration_seconds, page_count)
+		VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'audio/mpeg', 1234, '/assets/aa.mp3', 42, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO items
+		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, primary_audio_hash, primary_audio_chapters_json)
+		VALUES ('item00000001', 'k1', 'report', 'T', '2026-11-23', 'S', '[]', 'a', '', '[]', '/xml/i1.xml', 'pt', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '[{"start":"00:00:00","title":"Intro"}]')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO item_links (source_item_id, target_item_id, kind) VALUES ('item00000001', 'missingTarget1', 'news_detail')`); err != nil {
+		t.Fatal(err)
+	}
+	res, err := database.ExecContext(ctx, `INSERT INTO item_revisions (item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256)
+		VALUES ('item00000001', 1, 'T', 'S', '2026-11-23', '/xml/rev1.xml', 'sha1')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revID, _ := res.LastInsertId()
+	if _, err = database.ExecContext(ctx, `INSERT INTO item_revision_assets (revision_id, asset_hash) VALUES (?, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')`, revID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO item_revision_mounts (revision_id, directory_id) VALUES (?, 'privdir12345')`, revID); err != nil {
+		t.Fatal(err)
+	}
+
+	// RESTRICT prevents deleting asset referenced by item_revision_assets.
+	if _, err = database.ExecContext(ctx, `DELETE FROM assets WHERE hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'`); err == nil {
+		t.Fatal("expected ON DELETE RESTRICT error when deleting asset referenced by revision")
+	}
+
+	// Deleting a directory cascades directory_tokens, but MUST NOT delete item_revision_mounts (B1 fail-closed invariant).
+	if _, err = database.ExecContext(ctx, `DELETE FROM directories WHERE id = 'privdir12345'`); err != nil {
+		t.Fatal(err)
+	}
+	var tokCnt, mountCnt int
+	if err = database.QueryRowContext(ctx, `SELECT count(*) FROM directory_tokens`).Scan(&tokCnt); err != nil || tokCnt != 0 {
+		t.Fatalf("directory_tokens count = (%d, %v), want 0 after directory delete", tokCnt, err)
+	}
+	if err = database.QueryRowContext(ctx, `SELECT count(*) FROM item_revision_mounts WHERE revision_id = ?`, revID).Scan(&mountCnt); err != nil || mountCnt != 1 {
+		t.Fatalf("item_revision_mounts count = (%d, %v), want 1 retained after directory delete", mountCnt, err)
+	}
+
+	// Deleting the item cascades item_links, item_revisions, item_revision_assets, item_revision_mounts.
+	if _, err = database.ExecContext(ctx, `DELETE FROM items WHERE id = 'item00000001'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tbl := range []string{"item_links", "item_revisions", "item_revision_assets", "item_revision_mounts"} {
+		var cnt int
+		if err = database.QueryRowContext(ctx, `SELECT count(*) FROM `+tbl).Scan(&cnt); err != nil || cnt != 0 {
+			t.Fatalf("%s count after item delete = (%d, %v), want 0", tbl, cnt, err)
+		}
+	}
 }

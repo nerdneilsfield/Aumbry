@@ -3,6 +3,7 @@ import { useEventListener, useStorage } from '@vueuse/core'
 import { attr, children, stageDomId } from '@/lib/xml'
 import { anchorMap } from '@/lib/anchor'
 import { quizCorrect, quizFingerprint, quizKey, quizValid, sameSet } from '@/lib/quiz'
+import { createReadingStorage, emptyPersistedReading, progressSerializer, type PersistedReading, type StoredQuiz } from '@/lib/readingState'
 import { stagesIssues } from '@/lib/validate'
 import { useExpanded } from '@/composables/usePrint'
 import { syncUrlParams, urlParams } from '@/composables/useUrlParams'
@@ -21,36 +22,8 @@ export interface QuizState {
   picked: string[]
   checked: boolean
 }
-interface StoredQuiz {
-  fp: string
-  picked: number[]
-}
-interface Persisted {
-  stages: Record<string, string>
-  quizzes: Record<string, StoredQuiz>
-}
-
-const emptyState = (): Persisted => ({ stages: {}, quizzes: {} })
-const record = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
-
-/** Reads whatever is in localStorage, keeping only well-formed entries; anything else (including invalid JSON) -> empty. */
-export const progressSerializer = {
-  read(raw: string): Persisted {
-    const out = emptyState()
-    try {
-      const v = record(JSON.parse(raw))
-      for (const [k, stage] of Object.entries(record(v.stages))) if (typeof stage === 'string') out.stages[k] = stage
-      for (const [k, q] of Object.entries(record(v.quizzes))) {
-        const { fp, picked } = record(q)
-        if (typeof fp === 'string' && Array.isArray(picked) && picked.every((n) => Number.isInteger(n) && n >= 0)) out.quizzes[k] = { fp, picked: picked as number[] }
-      }
-    } catch {
-      /* corrupt JSON: start over, the page still loads */
-    }
-    return out
-  },
-  write: (v: Persisted) => JSON.stringify(v),
-}
+export type { StoredQuiz, PersistedReading }
+export { progressSerializer }
 
 export interface Score {
   correct: number
@@ -112,9 +85,15 @@ const KEY: InjectionKey<Reading> = Symbol('aumbry-reading')
 const rafs = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
 const stageKey = (stage: Element) => stageDomId(stage).slice('stage-'.length)
 
-export function provideReading(getBody: () => Element | undefined, storageKey: string): Reading {
+export function provideReading(getBody: () => Element | undefined, storageKey: string, options?: { readOnly?: boolean }): Reading {
   syncUrlParams()
-  const state = useStorage<Persisted>(`aumbry:read:${storageKey}`, emptyState(), undefined, { serializer: progressSerializer, onError: () => {} })
+  const readOnly = !!options?.readOnly
+  const storage = createReadingStorage(readOnly, typeof localStorage !== 'undefined' ? localStorage : null)
+  const state = useStorage<PersistedReading>(`aumbry:read:${storageKey}`, emptyPersistedReading(), storage, {
+    serializer: progressSerializer,
+    listenToStorageChanges: !readOnly,
+    onError: () => {},
+  })
   const expanded = useExpanded()
 
   // Only well-formed rendered groups take part (unrendered groups, duplicates, or depth > 3 ancestors are excluded).
@@ -132,10 +111,10 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
     return group ? { group, index: group.stages.indexOf(stage) + 1 } : undefined
   }
 
-  // per-session: stage being read, "finished", "expand all"
+  // per-session: stage being read, "finished", "expand all" (historical snapshots open directly without gating)
   const selected = reactive<Record<string, number>>({})
   const finished = reactive(new Set<string>())
-  const expandAll = shallowRef(false)
+  const expandAll = shallowRef(readOnly)
 
   const total = (g: StageGroup) => g.stages.length
   const indexOf = (g: StageGroup, id: string | undefined) => Math.max(g.stages.findIndex((s) => stageKey(s) === id) + 1, 0)
@@ -212,14 +191,20 @@ export function provideReading(getBody: () => Element | undefined, storageKey: s
   }
 
   // ---- skim mode: `?skim=1|0` in the URL wins, else this item's remembered preference. Independent of stage gating (PRD 9.7). ----
-  const skimPref = useStorage(`aumbry:skim:${storageKey}`, false, undefined, { onError: () => {} })
+  const skimPref = useStorage(`aumbry:skim:${storageKey}`, urlParams.skim === '1', storage, {
+    listenToStorageChanges: !readOnly,
+    onError: () => {},
+  })
   const hasTldr = computed(() => !!getBody()?.querySelector('tldr'))
-  const skimWanted = computed(() => (urlParams.skim === '1' ? true : urlParams.skim === '0' ? false : skimPref.value))
+  const skimWanted = computed(() => {
+    if (readOnly) return skimPref.value
+    return urlParams.skim === '1' ? true : urlParams.skim === '0' ? false : skimPref.value
+  })
   const skim = computed({
     get: () => hasTldr.value && skimWanted.value,
     set: (v: boolean) => {
       skimPref.value = v
-      urlParams.skim = v ? '1' : '0'
+      if (!readOnly) urlParams.skim = v ? '1' : '0'
     },
   })
   const unfolded = reactive(new Set<Element>())

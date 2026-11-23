@@ -196,7 +196,7 @@ func TestAgentUnpublishDeleteAndOwnershipEnforcement(t *testing.T) {
 		t.Errorf("admin GET unpublished = %d, want 200", st)
 	}
 
-	// Token A delete -> 204, item & items_fts & storage object removed.
+	// Token A delete -> 204, item & items_fts & revisions removed; XML object left for offline gc.
 	if resp := e.agentDo(http.MethodDelete, "/api/v1/agent/items/"+idA, apiToken); resp.status != http.StatusNoContent {
 		t.Fatalf("Token A delete = %d %s, want 204", resp.status, resp.body)
 	}
@@ -204,8 +204,11 @@ func TestAgentUnpublishDeleteAndOwnershipEnforcement(t *testing.T) {
 	_ = e.db.Get(&itemCount, `SELECT count(*) FROM items WHERE id = ?`, idA)
 	_ = e.db.Get(&ftsCount, `SELECT count(*) FROM items_fts WHERE item_id = ?`, idA)
 	_ = e.db.Get(&cjkCount, `SELECT count(*) FROM items_fts_cjk WHERE item_id = ?`, idA)
-	if itemCount != 0 || ftsCount != 0 || cjkCount != 0 || e.store.count("/xml/"+idA) != 0 {
-		t.Fatalf("delete leftover: items=%d fts=%d storeXML=%d", itemCount, ftsCount, e.store.count("/xml/"+idA))
+	if itemCount != 0 || ftsCount != 0 || cjkCount != 0 {
+		t.Fatalf("delete leftover: items=%d fts=%d cjk=%d", itemCount, ftsCount, cjkCount)
+	}
+	if e.store.count("/xml/"+idA) == 0 {
+		t.Fatalf("expected deleted item xml left in storage for offline gc")
 	}
 
 	// Missing item -> 404.

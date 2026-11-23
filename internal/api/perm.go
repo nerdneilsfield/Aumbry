@@ -109,11 +109,19 @@ func (t *dirTree) accessible(v viewer, id string) bool {
 	return complete && !protected
 }
 
-// subtree returns id and all its descendants.
+// subtree returns id and all its descendants, stopping cleanly if a corrupt cycle exists.
 func (t *dirTree) subtree(id string) []string {
+	if t.dirs[id] == nil {
+		return nil
+	}
 	var out []string
+	visited := make(map[string]bool)
 	var walk func(string)
 	walk = func(cur string) {
+		if visited[cur] || t.dirs[cur] == nil {
+			return
+		}
+		visited[cur] = true
 		out = append(out, cur)
 		for _, kid := range t.kids[cur] {
 			walk(kid)
@@ -153,5 +161,116 @@ func (t *dirTree) visibleDirs(v viewer, dirIDs []string) []string {
 			out = append(out, id)
 		}
 	}
+	return out
+}
+
+// isPublic reports whether directory id has no password anywhere along its path to the root.
+func (t *dirTree) isPublic(id string) bool {
+	return t.accessible(viewer{}, id)
+}
+
+// publicSubtree returns id and all its descendants that are publicly accessible (fail-closed and cycle-safe).
+func (t *dirTree) publicSubtree(rootID string) []string {
+	if !t.isPublic(rootID) {
+		return nil
+	}
+	var out []string
+	visited := make(map[string]bool)
+	var walk func(string)
+	walk = func(cur string) {
+		if visited[cur] {
+			return
+		}
+		d := t.dirs[cur]
+		if d == nil {
+			return
+		}
+		visited[cur] = true
+		if cur != rootID && d.PasswordHash != "" {
+			return
+		}
+		out = append(out, cur)
+		for _, kid := range t.kids[cur] {
+			walk(kid)
+		}
+	}
+	walk(rootID)
+	return out
+}
+
+// accessibleByDirToken implements the A1 fail-closed directory read-token boundary.
+// A token issued for tokenDirID grants read access to targetDirID iff:
+//  1. targetDirID is tokenDirID or a strict descendant of tokenDirID;
+//  2. no node strictly below tokenDirID (targetDirID included when targetDirID != tokenDirID)
+//     defines its own independent password_hash (tokens never penetrate child locks);
+//  3. the full parent chain from targetDirID through tokenDirID all the way to the root is
+//     present and acyclic.
+func (t *dirTree) accessibleByDirToken(tokenDirID, targetDirID string) bool {
+	if tokenDirID == "" || targetDirID == "" {
+		return false
+	}
+	seen := make(map[string]bool)
+	cur := targetDirID
+	reachedTokenDir := false
+
+	for cur != "" {
+		d := t.dirs[cur]
+		if d == nil || seen[cur] {
+			return false
+		}
+		seen[cur] = true
+		if d.ID == tokenDirID {
+			reachedTokenDir = true
+			cur = d.ParentID
+			break
+		}
+		// Strictly below tokenDirID: any independent password blocks traversal.
+		if d.PasswordHash != "" {
+			return false
+		}
+		cur = d.ParentID
+	}
+	if !reachedTokenDir {
+		return false
+	}
+	// Continue to the root so a broken or cyclic ancestor above tokenDirID still fails closed.
+	for cur != "" {
+		d := t.dirs[cur]
+		if d == nil || seen[cur] {
+			return false
+		}
+		seen[cur] = true
+		cur = d.ParentID
+	}
+	return true
+}
+
+// subtreeVisibleByDirToken returns tokenDirID and all descendants accessible via a directory token for tokenDirID.
+// It fails closed on cyclic/broken ancestor chains before descending with cycle protection.
+func (t *dirTree) subtreeVisibleByDirToken(tokenDirID string) []string {
+	if !t.accessibleByDirToken(tokenDirID, tokenDirID) {
+		return nil
+	}
+	var out []string
+	visited := make(map[string]bool)
+	var walk func(string)
+	walk = func(cur string) {
+		if visited[cur] {
+			return
+		}
+		d := t.dirs[cur]
+		if d == nil {
+			return
+		}
+		visited[cur] = true
+		if cur != tokenDirID && d.PasswordHash != "" {
+			return
+		}
+		out = append(out, cur)
+		for _, kid := range t.kids[cur] {
+			walk(kid)
+		}
+	}
+	walk(tokenDirID)
 	return out
 }

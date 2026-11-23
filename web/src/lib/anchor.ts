@@ -1,10 +1,10 @@
 /**
  * Ids and anchors of an Aumbry document (PRD 6.4). No imports: everything else (xml, quiz, validate, the renderer) builds on this.
  *
- * One shared id namespace covers <section>, <stages>, <stage>, <quiz>, <figure>, <equation> and <ref>; the first element
+ * One shared id namespace covers <section>, <stages>, <stage>, <quiz>, <figure>, <equation>, <ref> and <audio>; the first element
  * to use an id owns it, any later one (even of another type) is a duplicate (DUPLICATE_ID, shown as an error block).
  * DOM ids / anchors:  section `#s-<id>`, stages `#stages-<id>`, stage `#stage-<id>`, quiz `#quiz-<id>`,
- * figure `#fig-<id>`, equation `#eq-<id>`, ref `#ref-<id>`. The positional `#sec-N` is kept for the TOC and scrolling
+ * figure `#fig-<id>`, equation `#eq-<id>`, ref `#ref-<id>`, audio `#audio-<id>`. The positional `#sec-N` is kept for the TOC and scrolling
  * only (it is not a valid next-steps target), as is `#stage=N` (the Nth stage of the first group).
  */
 
@@ -43,8 +43,8 @@ export function stagesStructuralIssues(node: Element): { code: string; message: 
 /** `id` values are limited to [a-z0-9-]{1,32} by the protocol; anything else never becomes a DOM id. */
 export const safeId = (raw: string | null | undefined) => (raw && /^[a-z0-9-]{1,32}$/.test(raw) ? raw : '')
 
-export type AnchorKind = 'section' | 'stages' | 'stage' | 'quiz' | 'figure' | 'equation' | 'ref'
-const PREFIX: Record<AnchorKind, string> = { section: 's', stages: 'stages', stage: 'stage', quiz: 'quiz', figure: 'fig', equation: 'eq', ref: 'ref' }
+export type AnchorKind = 'section' | 'stages' | 'stage' | 'quiz' | 'figure' | 'equation' | 'ref' | 'audio'
+const PREFIX: Record<AnchorKind, string> = { section: 's', stages: 'stages', stage: 'stage', quiz: 'quiz', figure: 'fig', equation: 'eq', ref: 'ref', audio: 'audio' }
 const KINDS = Object.keys(PREFIX) as AnchorKind[]
 const isKind = (tag: string): tag is AnchorKind => (KINDS as string[]).includes(tag)
 

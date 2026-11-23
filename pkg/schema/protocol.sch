@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Aumbry XML protocol v1.1 (docs/prd_spec_v1.1/prd.md section 6) as an ISO Schematron schema.
+  Aumbry XML protocol (v1.1 and v1.2) as an ISO Schematron schema.
   Every assert/report message is "CODE|field|human readable text[|optional hint]"; the validator splits it
   into ValidationError.Code, .Field, .Message and .Hint. The line comes from the offending node.
   Checks requiring JSON Schema, filesystem, net/url, rune counting or shared id namespaces live in Go.
@@ -14,7 +14,7 @@
 
   <pattern id="document">
     <rule context="/document">
-      <assert test="@version = '1.1'">UNSUPPORTED_VERSION|document.version|version must be "1.1"|set &lt;document version="1.1"&gt;; no other version is supported</assert>
+      <assert test="@version = ('1.1', '1.2')">UNSUPPORTED_VERSION|document.version|version must be "1.1" or "1.2"|set &lt;document version="1.2"&gt; (or "1.1" for legacy documents without v1.2 elements)</assert>
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|document|&lt;document&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
       <assert test="meta">MISSING_META|document.meta|&lt;meta&gt; is required</assert>
       <assert test="body">MISSING_BODY|document.body|&lt;body&gt; is required</assert>
@@ -52,17 +52,23 @@
     <rule context="/document/body | /document/body//stages/stage">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
-    <rule context="/document/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+    <rule context="/document/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
     </rule>
-    <rule context="/document/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+    <rule context="/document/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|stage|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;stage&gt;</report>
     </rule>
-    <rule context="/document/body//collapse/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'search-log', 'tldr'))]">
+    <rule context="/document/body//collapse/*[not(local-name() = ('md', 'figure', 'audio', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'search-log', 'tldr'))]">
       <report test="true()">UNKNOWN_TAG|collapse|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;collapse&gt;</report>
     </rule>
-    <rule context="/document/body//tab/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))] | /document/body//step/*[not(local-name() = ('md', 'figure', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))]">
+    <rule context="/document/body//tab/*[not(local-name() = ('md', 'figure', 'audio', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))] | /document/body//step/*[not(local-name() = ('md', 'figure', 'audio', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'tldr'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
+    </rule>
+  </pattern>
+
+  <pattern id="v12-features">
+    <rule context="/document[@version = '1.1']/body//audio">
+      <report test="true()">INVALID_AUDIO|audio|&lt;audio&gt; requires &lt;document version="1.2"&gt;|upgrade the root element to &lt;document version="1.2"&gt;</report>
     </rule>
   </pattern>
 

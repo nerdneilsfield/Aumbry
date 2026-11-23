@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,26 @@ func (m *cliMemStore) Open(_ context.Context, name string) (io.ReadCloser, error
 		return nil, storage.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (m *cliMemStore) OpenRange(ctx context.Context, name string, start, end int64) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if start < 0 || end < start {
+		return nil, fmt.Errorf("invalid range [%d, %d]", start, end)
+	}
+	m.mu.Lock()
+	data, ok := m.files[name]
+	m.mu.Unlock()
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if start >= int64(len(data)) {
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+	hi := min(end+1, int64(len(data)))
+	return io.NopCloser(bytes.NewReader(data[start:hi])), nil
 }
 
 func (m *cliMemStore) Exists(_ context.Context, name string) (bool, error) {
@@ -294,4 +315,45 @@ func TestCLIAgentEndToEndWorkflows(t *testing.T) {
 	if s1Res["id"] != s2Res["id"] || s1Res["created"] != true || s2Res["created"] != false {
 		t.Fatalf("incremental section push failed: s1=%v s2=%v", s1Res, s2Res)
 	}
+
+	// Push a v1.2 document containing an <audio> block end-to-end via CLI.
+	audioDir := filepath.Join(t.TempDir(), "podcast-report")
+	if err := os.MkdirAll(audioDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wav := makeMinimalWAVForCLI(1)
+	if err := os.WriteFile(filepath.Join(audioDir, "ep.wav"), wav, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	audioXMLPath := filepath.Join(audioDir, "report.xml")
+	audioXML := `<document version="1.2"><meta><title>CLI Audio</title><type>report</type><date>2026-11-23</date><summary>Audio CLI</summary><source-agent>cli</source-agent></meta><body><audio id="a1" src="./ep.wav" title="Episode One"><chapter start="00:00:00" title="Start"/><transcript>Spoken via CLI</transcript></audio></body></document>`
+	if err := os.WriteFile(audioXMLPath, []byte(audioXML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valOut := mustRun(t, "validate", audioXMLPath)
+	if !strings.Contains(valOut, `"valid": true`) {
+		t.Fatalf("validate v1.2 audio = %s", valOut)
+	}
+	pushAudioOut := mustRun(t, "push", audioXMLPath, "--dir", openDir)
+	var pushAudioRes map[string]any
+	_ = json.Unmarshal([]byte(pushAudioOut), &pushAudioRes)
+	if pushAudioRes["created"] != true || pushAudioRes["assets"].(float64) != 1 || pushAudioRes["published"] != true {
+		t.Fatalf("push v1.2 audio res = %s", pushAudioOut)
+	}
+}
+
+func makeMinimalWAVForCLI(secs int) []byte {
+	const sampleRate = 8000
+	const byteRate = sampleRate * 2
+	dataLen := secs * byteRate
+	var buf bytes.Buffer
+	buf.WriteString("RIFF")
+	buf.Write([]byte{byte(36 + dataLen), byte((36 + dataLen) >> 8), byte((36 + dataLen) >> 16), byte((36 + dataLen) >> 24)})
+	buf.WriteString("WAVEfmt ")
+	buf.Write([]byte{16, 0, 0, 0, 1, 0, 1, 0})
+	buf.Write([]byte{0x40, 0x1F, 0, 0, 0x80, 0x3E, 0, 0, 2, 0, 16, 0})
+	buf.WriteString("data")
+	buf.Write([]byte{byte(dataLen), byte(dataLen >> 8), byte(dataLen >> 16), byte(dataLen >> 24)})
+	buf.Write(make([]byte, dataLen))
+	return buf.Bytes()
 }

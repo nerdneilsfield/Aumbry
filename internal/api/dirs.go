@@ -25,6 +25,7 @@ type dirView struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
 	Description string        `json:"description"`
+	Protected   bool          `json:"protected"`
 	ParentID    *string       `json:"parent_id"`
 	Breadcrumb  []crumb       `json:"breadcrumb"`
 	Children    []childDir    `json:"children"`
@@ -60,7 +61,7 @@ func (s *Server) getDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := dirView{
-		ID: d.ID, Name: d.Name, Description: d.Description,
+		ID: d.ID, Name: d.Name, Description: d.Description, Protected: !t.isPublic(d.ID),
 		Breadcrumb: []crumb{}, Children: []childDir{}, Items: []itemSummary{},
 	}
 	// Walk up while the ancestors are still visible; a hidden ancestor ends the trail.

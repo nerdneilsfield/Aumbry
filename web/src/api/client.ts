@@ -4,8 +4,12 @@ import type {
   AdminTree,
   DirPatch,
   DirSearchParams,
+  DirTokenCreated,
+  DirTokenRotated,
+  DirTokensResponse,
   Directory,
   ItemDetail,
+  ItemRevisionsResponse,
   SearchPage,
 } from './types'
 
@@ -50,6 +54,8 @@ export const api = {
   /** `fromDir` is the directory the reader came from; the server uses it to pick which mount the neighbors come from. */
   item: (id: string, fromDir?: string) => http<ItemDetail>(`/items/${enc(id)}`, { query: { dir: fromDir || undefined } }),
   itemContent: (id: string) => http<string, 'text'>(`/items/${enc(id)}/content`),
+  itemRevisions: (id: string) => http<ItemRevisionsResponse>(`/items/${enc(id)}/revisions`),
+  itemRevisionContent: (id: string, rev: number) => http<string, 'text'>(`/items/${enc(id)}/revisions/${rev}/content`),
 
   admin: {
     login: (username: string, password: string) => http('/admin/login', { method: 'POST', body: { username, password } }),
@@ -68,6 +74,14 @@ export const api = {
     deleteDir: (id: string) => http(`/admin/dirs/${enc(id)}`, { method: 'DELETE' }),
     setMounts: (id: string, dirs: string[]) => http(`/admin/items/${enc(id)}/mounts`, { method: 'PUT', body: { dirs } }),
     deleteItem: (id: string) => http(`/admin/items/${enc(id)}`, { method: 'DELETE' }),
+    deleteRevision: (id: string, rev: number) => http(`/admin/items/${enc(id)}/revisions/${rev}`, { method: 'DELETE' }),
+    listDirTokens: (dirId: string) => http<DirTokensResponse>(`/admin/dirs/${enc(dirId)}/tokens`),
+    createDirToken: (dirId: string, label: string) =>
+      http<DirTokenCreated>(`/admin/dirs/${enc(dirId)}/tokens`, { method: 'POST', body: { label } }),
+    rotateDirToken: (dirId: string, tokenId: string) =>
+      http<DirTokenRotated>(`/admin/dirs/${enc(dirId)}/tokens/${enc(tokenId)}/rotate`, { method: 'POST' }),
+    deleteDirToken: (dirId: string, tokenId: string) =>
+      http(`/admin/dirs/${enc(dirId)}/tokens/${enc(tokenId)}`, { method: 'DELETE' }),
     search: (p: AdminSearchParams, limit: number, offset: number) =>
       http<SearchPage>('/admin/search', {
         query: { q: p.q, type: p.type || undefined, from: p.from || undefined, to: p.to || undefined, dir: p.dir || undefined, unmounted: p.unmounted ? 1 : undefined, limit, offset },

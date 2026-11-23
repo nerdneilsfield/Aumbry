@@ -21,9 +21,12 @@ import (
 )
 
 const (
-	defaultListenAddr = ":8080"
-	defaultStorage    = "local"
-	bcryptAlphabet    = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	defaultListenAddr          = ":8080"
+	defaultStorage             = "local"
+	defaultMaxRevisionsPerItem = 20
+	defaultMaxIngestBodyMB     = 200
+	minIngestBodyMB            = 20
+	bcryptAlphabet             = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 )
 
 var (
@@ -68,15 +71,28 @@ type R2Config struct {
 	SecretAccessKey string `toml:"secret_access_key" env:"AUMBRY_R2_SECRET_ACCESS_KEY"`
 }
 
+// RevisionsConfig holds item revision history retention settings.
+type RevisionsConfig struct {
+	MaxPerItem *int `toml:"max_per_item" env:"AUMBRY_REVISIONS_MAX_PER_ITEM"`
+}
+
+// IngestConfig holds ingest request limits.
+type IngestConfig struct {
+	MaxBodyMB int `toml:"max_body_mb" env:"AUMBRY_INGEST_MAX_BODY_MB"`
+}
+
 // Config contains the server's runtime settings.
 type Config struct {
 	ListenAddr           string             `toml:"listen_addr" env:"AUMBRY_LISTEN_ADDR"`
+	PublicURL            string             `toml:"public_url" env:"AUMBRY_PUBLIC_URL"`
 	DataDir              string             `toml:"data_dir" env:"AUMBRY_DATA_DIR"`
 	Storage              string             `toml:"storage" env:"AUMBRY_STORAGE"`
 	Admin                AdminConfig        `toml:"admin"`
 	APITokens            []string           `toml:"api_tokens" env:"AUMBRY_API_TOKENS" envSeparator:","`
 	CookieSecret         string             `toml:"cookie_secret" env:"AUMBRY_COOKIE_SECRET"`
 	TrustedProxies       []string           `toml:"trusted_proxies" env:"AUMBRY_TRUSTED_PROXIES" envSeparator:","`
+	Revisions            RevisionsConfig    `toml:"revisions"`
+	Ingest               IngestConfig       `toml:"ingest"`
 	Local                LocalStorageConfig `toml:"local"`
 	WebDAV               WebDAVConfig       `toml:"webdav"`
 	S3                   S3Config           `toml:"s3"`
@@ -202,6 +218,7 @@ func normalizeStrings(cfg *Config) {
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = defaultListenAddr
 	}
+	cfg.PublicURL = strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/")
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
 	cfg.Storage = strings.TrimSpace(cfg.Storage)
 	cfg.Admin.User = strings.TrimSpace(cfg.Admin.User)
@@ -336,7 +353,47 @@ func validateAndApplyDefaults(cfg *Config) error {
 		prefixes = append(prefixes, prefix)
 	}
 	cfg.TrustedProxyPrefixes = prefixes
+
+	if cfg.PublicURL != "" {
+		if err := ValidatePublicURL(cfg.PublicURL); err != nil {
+			errs = append(errs, fmt.Errorf("public_url (AUMBRY_PUBLIC_URL) %w", err))
+		}
+	}
+	if cfg.Revisions.MaxPerItem == nil {
+		v := defaultMaxRevisionsPerItem
+		cfg.Revisions.MaxPerItem = &v
+	} else if *cfg.Revisions.MaxPerItem < 0 {
+		errs = append(errs, fmt.Errorf("revisions.max_per_item (AUMBRY_REVISIONS_MAX_PER_ITEM) must be >= 0, got %d", *cfg.Revisions.MaxPerItem))
+	}
+	if cfg.Ingest.MaxBodyMB <= 0 {
+		cfg.Ingest.MaxBodyMB = defaultMaxIngestBodyMB
+	} else if cfg.Ingest.MaxBodyMB < minIngestBodyMB {
+		errs = append(errs, fmt.Errorf("ingest.max_body_mb (AUMBRY_INGEST_MAX_BODY_MB) must be at least %d MiB when set, got %d", minIngestBodyMB, cfg.Ingest.MaxBodyMB))
+	}
+
 	return errors.Join(errs...)
+}
+
+// ValidatePublicURL verifies that public_url uses http(s)://host[:port] with no path, query, fragment, or userinfo.
+func ValidatePublicURL(raw string) error {
+	return storage.ValidateS3Endpoint(raw)
+}
+
+// ResolvedMaxRevisionsPerItem returns the configured per-item revision retention cap (0 means unlimited).
+func (c Config) ResolvedMaxRevisionsPerItem() int {
+	if c.Revisions.MaxPerItem == nil {
+		return defaultMaxRevisionsPerItem
+	}
+	return *c.Revisions.MaxPerItem
+}
+
+// ResolvedMaxIngestBodyBytes returns the configured maximum ingest request size in bytes.
+func (c Config) ResolvedMaxIngestBodyBytes() int64 {
+	mb := c.Ingest.MaxBodyMB
+	if mb <= 0 {
+		mb = defaultMaxIngestBodyMB
+	}
+	return int64(mb) * 1024 * 1024
 }
 
 // ResolvedLocalPath returns the effective local object root directory.

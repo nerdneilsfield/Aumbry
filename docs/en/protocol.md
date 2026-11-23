@@ -6,16 +6,17 @@ Aumbry reports are authored as UTF-8 XML documents validated by Aumbry's shared 
 
 ## Protocol version
 
-Every document declares `<document version="1.1">` at the root. Aumbry accepts no other version. A different value, or a missing `version` attribute, fails with `UNSUPPORTED_VERSION`.
+Documents declare `<document version="1.2">` at the root (legacy `<document version="1.1">` documents continue to be accepted). Using `<audio>` inside a `version="1.1"` document fails with `INVALID_AUDIO` and an upgrade hint to `version="1.2"`; any other value or missing `version` fails with `UNSUPPORTED_VERSION`.
 
 | Area | Rule |
 | :--- | :--- |
-| `<body>` direct children | Any top-level block tag directly (`<md>`, `<claim>`, `<metrics>`, `<chart>`, `<stages>`, `<tldr>`, `<quiz>`, `<news-item>`, etc.) |
+| `<body>` direct children | Any top-level block tag directly (`<md>`, `<claim>`, `<metrics>`, `<chart>`, `<stages>`, `<tldr>`, `<quiz>`, `<news-item>`, `<audio>`, etc.) |
 | `<section>` nesting depth | Up to `3` `<section>` levels (`<stage>` ancestors do not count toward section depth) |
-| `<collapse>` children | Any leaf block plus `<search-log>`, inside `<body>`, `<section>`, or `<stage>` |
-| `<figure>` asset scope | Any descendant `<figure>` with a `src` attribute |
-| Document-wide block caps | `chart <= 10`, `mermaid <= 10`, `stages <= 8`, `stage <= 40`, `sections <= 3 levels` |
-| Shared anchor IDs & links | Single document-wide `^[a-z0-9-]{1,32}$` namespace across `section`, `stages`, `stage`, `quiz`, `figure`, `equation`, `ref`; `<next-steps>` targets use `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-` |
+| `<collapse>` children | Any leaf block (including `<audio>`) plus `<search-log>`, inside `<body>`, `<section>`, or `<stage>` |
+| Media asset scope | Any descendant `<figure src>` (`.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`) and `<audio src>` (`.mp3`/`.wav`/`.m4a`) |
+| `<audio>` rules (`v1.2`) | Up to `4` `<audio>` blocks per document inside `body`/`section`/`stage`/`collapse`/`tab`/`step`; `0..100` `<chapter start title target?>` (`HH:MM:SS` non-decreasing) and `0..1` `<transcript>` (`<= 512 KB`); title, chapter titles, and transcript are indexed |
+| Document-wide block caps | `audio <= 4`, `chart <= 10`, `mermaid <= 10`, `stages <= 8`, `stage <= 40`, `sections <= 3 levels` |
+| Shared anchor IDs & links | Single document-wide `^[a-z0-9-]{1,32}$` namespace across `section`, `stages`, `stage`, `quiz`, `figure`, `equation`, `ref`, `audio`; `<next-steps>` and `<chapter target>` links use `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-`/`#audio-` |
 | Markdown rendering | CommonMark (raw HTML disabled), KaTeX math (`$...$` / `\(...\)` inline, `$$...$$` / `\[...\]` block), syntax-highlighted code blocks, per-document isolated footnotes, read-only task lists, subscript (`~`), and superscript (`^`) |
 
 ## Inspect the specification and validate locally
@@ -32,12 +33,12 @@ Excerpt from `aumbry schema --format md`:
 ```markdown
 # Aumbry XML Protocol Specification
 
-Protocol version: `1.1` (the only accepted value of `<document version>`).
+Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elements).
 
 ## Structure Rules
 
 - Section depth: 3 (at most 3 nested <section> levels counting only <section> ancestors (<stage> does not count))
-- `<body>` direct children: section, sources, md, figure, paper-card, repo-card, compare-table, ...
+- `<body>` direct children: section, sources, md, figure, audio, paper-card, repo-card, compare-table, ...
 ```
 
 Validate any XML document locally before pushing:

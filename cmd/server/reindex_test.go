@@ -153,3 +153,58 @@ func TestReindexCommand(t *testing.T) {
 		t.Error("dry-run with bad items should exit non-zero")
 	}
 }
+
+func TestV2ReindexBackfillsLinksAudioAndRev1(t *testing.T) {
+	ctx := context.Background()
+	cfgPath, dataDir, davURL := setupMaintenanceFixture(t)
+	database, err := db.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	store, err := storage.NewWebDAV(davURL, "u", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = database.ExecContext(ctx, `INSERT INTO directories (id, name, password_hash) VALUES ('dirpub000001', 'Open', NULL), ('dirpriv00001', 'Secret', 'hash')`); err != nil {
+		t.Fatal(err)
+	}
+	audioHash := strings.Repeat("7", 64)
+	mountedXML := `<?xml version="1.0" encoding="UTF-8"?><document version="1.2"><meta><title>Mounted Audio</title><type>report</type><date>2026-11-22</date><summary>S</summary><source-agent>a</source-agent></meta><body><audio src="/api/v1/assets/` + audioHash + `" title="Pod"><chapter start="00:00:00" title="Intro"/></audio><news-item title="N" detail-id="TargetItem01">Brief</news-item></body></document>`
+	draftXML := `<?xml version="1.0" encoding="UTF-8"?><document version="1.1"><meta><title>Unmounted Draft</title><type>post</type><date>2026-11-22</date><summary>D</summary><source-agent>a</source-agent></meta><body><md>Draft</md></body></document>`
+
+	_ = store.Put(ctx, "/xml/mounted00001.xml", strings.NewReader(mountedXML))
+	_ = store.Put(ctx, "/xml/draftitem001.xml", strings.NewReader(draftXML))
+	_, _ = database.ExecContext(ctx, `INSERT INTO items (id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text) VALUES
+		('mounted00001', NULL, 'report', 'Mounted Audio', '2026-11-22', 'S', '[]', 'a', '', '[]', '/xml/mounted00001.xml', 'old'),
+		('draftitem001', NULL, 'post', 'Unmounted Draft', '2026-11-22', 'D', '[]', 'a', '', '[]', '/xml/draftitem001.xml', 'old')`)
+	_, _ = database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path) VALUES (?, 'audio/mpeg', 100, ?)`, audioHash, "/assets/"+audioHash+".mp3")
+	_, _ = database.ExecContext(ctx, `INSERT INTO item_assets (item_id, asset_hash) VALUES ('mounted00001', ?)`, audioHash)
+	_, _ = database.ExecContext(ctx, `INSERT INTO directory_items (directory_id, item_id) VALUES ('dirpub000001', 'mounted00001'), ('dirpriv00001', 'mounted00001')`)
+
+	var out bytes.Buffer
+	cmd := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--config", cfgPath, "reindex"})
+	if err = cmd.Execute(); err != nil {
+		t.Fatalf("reindex = %v\n%s", err, out.String())
+	}
+
+	// Verify mounted item got item_links, primary_audio_*, rev=1, last_rev=1, and per-mount was_protected; draft got 0 revisions.
+	var linkCnt, mountedRevs, draftRevs, lastRev, pubWasProt, privWasProt int
+	var gotHash, gotCh string
+	_ = database.GetContext(ctx, &linkCnt, `SELECT count(*) FROM item_links WHERE source_item_id = 'mounted00001' AND target_item_id = 'TargetItem01' AND kind = 'news_detail'`)
+	_ = database.GetContext(ctx, &mountedRevs, `SELECT count(*) FROM item_revisions WHERE item_id = 'mounted00001' AND rev = 1`)
+	_ = database.GetContext(ctx, &draftRevs, `SELECT count(*) FROM item_revisions WHERE item_id = 'draftitem001'`)
+	_ = database.GetContext(ctx, &lastRev, `SELECT last_rev FROM items WHERE id = 'mounted00001'`)
+	_ = database.GetContext(ctx, &pubWasProt, `SELECT irm.was_protected FROM item_revision_mounts irm JOIN item_revisions ir ON ir.id = irm.revision_id WHERE ir.item_id = 'mounted00001' AND irm.directory_id = 'dirpub000001'`)
+	_ = database.GetContext(ctx, &privWasProt, `SELECT irm.was_protected FROM item_revision_mounts irm JOIN item_revisions ir ON ir.id = irm.revision_id WHERE ir.item_id = 'mounted00001' AND irm.directory_id = 'dirpriv00001'`)
+	_ = database.GetContext(ctx, &gotHash, `SELECT primary_audio_hash FROM items WHERE id = 'mounted00001'`)
+	_ = database.GetContext(ctx, &gotCh, `SELECT primary_audio_chapters_json FROM items WHERE id = 'mounted00001'`)
+	if linkCnt != 1 || mountedRevs != 1 || draftRevs != 0 || lastRev != 1 || pubWasProt != 0 || privWasProt != 1 || gotHash != audioHash || !strings.Contains(gotCh, "Intro") {
+		t.Fatalf("backfill mismatch: links=%d mountedRevs=%d draftRevs=%d lastRev=%d pubProt=%d privProt=%d hash=%q ch=%q",
+			linkCnt, mountedRevs, draftRevs, lastRev, pubWasProt, privWasProt, gotHash, gotCh)
+	}
+}

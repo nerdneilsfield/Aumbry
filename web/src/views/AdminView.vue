@@ -2,12 +2,13 @@
 import { computed, ref } from 'vue'
 import { keepPreviousData, useInfiniteQuery, useMutation } from '@tanstack/vue-query'
 import { refDebounced, useClipboard } from '@vueuse/core'
-import { FolderInput, FolderPlus, Inbox, KeyRound, Layers, Link2, LogOut, Pencil, Search, Trash2 } from 'lucide-vue-next'
+import { FolderInput, FolderPlus, Inbox, KeyRound, Layers, Link2, LogOut, Pencil, Rss, Search, Trash2 } from 'lucide-vue-next'
 import { api, errorMessage } from '@/api/client'
 import type { AdminSearchParams } from '@/api/types'
-import { findNode } from '@/lib/tree'
+import { findNode, isDirProtected } from '@/lib/tree'
 import { useAdmin } from '@/composables/useAdmin'
 import DirDialog from '@/components/admin/DirDialog.vue'
+import DirTokensDialog from '@/components/admin/DirTokensDialog.vue'
 import DirTree from '@/components/admin/DirTree.vue'
 import ItemDialog from '@/components/admin/ItemDialog.vue'
 import LoginForm from '@/components/admin/LoginForm.vue'
@@ -31,10 +32,12 @@ const searchInput = ref<HTMLInputElement>()
 useSearchShortcut(searchInput)
 
 const dialog = ref<{ mode: 'create' | 'edit' | 'password' | 'move'; dirId?: string; parentId?: string | null }>()
+const tokensDirId = ref<string>()
 const itemId = ref<string>()
 
 const selectedDir = computed(() => findNode(tree.value, selectedId.value))
 const dialogDir = computed(() => findNode(tree.value, dialog.value?.dirId ?? null))
+const tokensDir = computed(() => findNode(tree.value, tokensDirId.value ?? null))
 const typeOptions = [
   { value: 'all', label: '全部类型' },
   { value: 'report', label: '报告' },
@@ -125,6 +128,7 @@ const doRemoveDir = () => dirToRemove.value && removeDir.mutate(dirToRemove.valu
             </div>
             <div class="flex flex-wrap gap-2">
               <button class="btn" @click="copyShare(selectedDir.id)"><Link2 class="size-4" />{{ copied ? '已复制' : '复制分享链接' }}</button>
+              <button class="btn" @click="tokensDirId = selectedDir.id"><Rss class="size-4" />订阅 Token</button>
               <button class="btn" @click="dialog = { mode: 'create', parentId: selectedDir.id }"><FolderPlus class="size-4" />子目录</button>
               <button class="btn" @click="dialog = { mode: 'edit', dirId: selectedDir.id }"><Pencil class="size-4" />编辑</button>
               <button class="btn" @click="dialog = { mode: 'password', dirId: selectedDir.id }"><KeyRound class="size-4" />密码</button>
@@ -144,6 +148,13 @@ const doRemoveDir = () => dirToRemove.value && removeDir.mutate(dirToRemove.valu
     </div>
 
     <DirDialog v-if="dialog" :mode="dialog.mode" :dir="dialogDir" :parent-id="dialog.parentId" @close="dialog = undefined" />
+    <DirTokensDialog
+      v-if="tokensDirId && tokensDir"
+      :dir-id="tokensDirId"
+      :dir-name="tokensDir.name"
+      :is-protected="isDirProtected(tree, tokensDirId)"
+      @close="tokensDirId = undefined"
+    />
     <ConfirmDialog
       :open="!!dirToRemove"
       title="删除目录"

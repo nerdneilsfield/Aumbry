@@ -24,7 +24,7 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 	}
 	requiredTags := []string{
 		"document", "meta", "title", "type", "date", "summary", "source-agent", "canonical-url", "tags", "tag", "related-ids", "id", "body",
-		"section", "md", "figure", "paper-card", "repo-card", "compare-table", "columns", "col", "row", "cell", "callout", "collapse", "sources", "source",
+		"section", "md", "figure", "audio", "chapter", "transcript", "paper-card", "repo-card", "compare-table", "columns", "col", "row", "cell", "callout", "collapse", "sources", "source",
 		"claim", "equation", "mermaid", "chart", "metrics", "metric", "steps", "step", "tabs", "tab", "timeline", "event",
 		"glossary", "term", "references", "ref", "figure-group", "code-block", "quote", "checklist", "check",
 		"search-log", "criteria", "include", "exclude", "query", "excluded", "gap", "stop",
@@ -40,6 +40,8 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 	wantAttrs := map[string][]string{
 		"section":      {"id"},
 		"figure":       {"id", "alt"},
+		"audio":        {"src", "title", "id"},
+		"chapter":      {"start", "title", "target"},
 		"cell":         {"tag"},
 		"paper-card":   {"venue", "doi", "code-url", "read-depth"},
 		"repo-card":    {"license", "commit"},
@@ -85,8 +87,8 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 	}
 
 	// #69: The structure rules cover every container, with explicit exceptions and document caps.
-	if parsed.Version != "1.1" {
-		t.Errorf("version = %q, want 1.1", parsed.Version)
+	if parsed.Version != "1.2" {
+		t.Errorf("version = %q, want 1.2", parsed.Version)
 	}
 	rules := parsed.Structure
 	if rules.SectionMaxDepth != maxSectionDepth {
@@ -127,8 +129,8 @@ func TestSpecConsistencyAndCompleteness(t *testing.T) {
 	// Verify Markdown output shares the same rule table cleanly.
 	md := RenderSchemaMarkdown()
 	for _, needle := range []string{
-		"UNSUPPORTED_VERSION", "SECTION_TOO_DEEP",
-		"INVALID_CHART", "<search-log>", "<stages>", "<tldr>", "<news-item>", `version="1.1"`,
+		"UNSUPPORTED_VERSION", "SECTION_TOO_DEEP", "INVALID_AUDIO",
+		"INVALID_CHART", "<audio>", "<search-log>", "<stages>", "<tldr>", "<news-item>", `version="1.2"`,
 	} {
 		if !strings.Contains(md, needle) {
 			t.Errorf("RenderSchemaMarkdown() missing %q", needle)
@@ -147,6 +149,7 @@ func TestSpecContainerRulesMatchValidator(t *testing.T) {
 		"sources":       `<sources><source title="t" url="https://example.com"/></sources>`,
 		"md":            `<md>x</md>`,
 		"figure":        `<figure src="a.png"/>`,
+		"audio":         `<audio src="a.mp3" title="Episode 1"/>`,
 		"paper-card":    `<paper-card title="t" url="https://example.com"/>`,
 		"repo-card":     `<repo-card name="n" url="https://example.com"/>`,
 		"compare-table": `<compare-table><columns><col>A</col></columns><row><cell>1</cell></row></compare-table>`,
@@ -196,7 +199,7 @@ func TestSpecContainerRulesMatchValidator(t *testing.T) {
 		}
 		for _, block := range allBlocks {
 			want := slices.Contains(rule.AllowedChildren, block)
-			input := doc(`<section id="anchor" title="anchor"/>` + wrap(snippets[block]))
+			input := `<document version="1.2">` + metaBlock + `<body><section id="anchor" title="anchor"/>` + wrap(snippets[block]) + `</body></document>`
 			_, issues := Parse([]byte(input), always)
 			if want && len(issues) != 0 {
 				t.Errorf("Spec() allows <%s> inside <%s> but validator rejects it: %+v", block, container, issues)

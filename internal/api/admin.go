@@ -316,15 +316,17 @@ func (s *Server) adminSetMounts(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
-	exists, err := s.itemExists(ctx, id)
+	var preXMLPath string
+	err := s.db.GetContext(ctx, &preXMLPath, `SELECT xml_storage_path FROM items WHERE id = ?`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "item not found")
+		return
+	}
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "not_found", "item not found")
-		return
-	}
+	resolvedPreSHA := s.resolveXMLSHA256(ctx, preXMLPath)
 	dirs := dedupe(*body.Dirs)
 	missing, err := s.missingDirs(ctx, dirs)
 	if err != nil {
@@ -341,17 +343,56 @@ func (s *Server) adminSetMounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM directory_items WHERE item_id = ?`, id); err != nil {
+	var row struct {
+		Title     string `db:"title"`
+		Summary   string `db:"summary"`
+		Date      string `db:"report_date"`
+		XMLPath   string `db:"xml_storage_path"`
+		CreatedBy string `db:"created_by"`
+	}
+	if selErr := tx.GetContext(ctx, &row, `SELECT title, summary, report_date, xml_storage_path,
+		COALESCE(created_by, '') AS created_by FROM items WHERE id = ?`, id); selErr != nil {
+		if errors.Is(selErr, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not_found", "item not found")
+			return
+		}
+		internalError(w, r, selErr)
+		return
+	}
+	liveSHA := resolvedPreSHA
+	if row.XMLPath != preXMLPath {
+		liveSHA = xmlSHA256FromPath(row.XMLPath)
+	}
+	if baseErr := s.ensureBaselineRevisionTx(ctx, tx, id, liveSHA); baseErr != nil {
+		internalError(w, r, baseErr)
+		return
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM directory_items WHERE item_id = ?`, id); err != nil {
 		internalError(w, r, err)
 		return
 	}
 	for _, dir := range dirs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO directory_items (directory_id, item_id) VALUES (?, ?)`, dir, id); err != nil {
-			internalError(w, r, err)
+		if _, execErr := tx.ExecContext(ctx, `INSERT INTO directory_items (directory_id, item_id) VALUES (?, ?)`, dir, id); execErr != nil {
+			internalError(w, r, execErr)
 			return
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if len(dirs) > 0 {
+		if snapErr := s.maybeSnapshotRevisionTx(ctx, tx, revisionSnapshot{
+			itemID:    id,
+			title:     row.Title,
+			summary:   row.Summary,
+			date:      row.Date,
+			xmlPath:   row.XMLPath,
+			xmlSHA256: liveSHA,
+			createdBy: row.CreatedBy,
+			mounts:    dirs,
+		}); snapErr != nil {
+			internalError(w, r, snapErr)
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
 		internalError(w, r, err)
 		return
 	}
@@ -361,14 +402,13 @@ func (s *Server) adminSetMounts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminDeleteItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
-	var path string
-	err := s.db.GetContext(ctx, &path, `SELECT xml_storage_path FROM items WHERE id = ?`, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "not_found", "item not found")
-		return
-	}
+	exists, err := s.itemExists(ctx, id)
 	if err != nil {
 		internalError(w, r, err)
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "not_found", "item not found")
 		return
 	}
 	tx, err := s.db.BeginTxx(ctx, nil)
@@ -377,20 +417,17 @@ func (s *Server) adminDeleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := db.DeleteItemFTS(ctx, tx, id); err != nil {
-		internalError(w, r, err)
+	if ftsErr := db.DeleteItemFTS(ctx, tx, id); ftsErr != nil {
+		internalError(w, r, ftsErr)
 		return
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id); err != nil {
-		internalError(w, r, err)
+	if _, execErr := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id); execErr != nil {
+		internalError(w, r, execErr)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	if err = tx.Commit(); err != nil {
 		internalError(w, r, err)
 		return
-	}
-	if err := s.store.Delete(ctx, path); err != nil {
-		s.logger.WarnContext(ctx, "delete item content from storage", "item", id, "path", path, "error", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

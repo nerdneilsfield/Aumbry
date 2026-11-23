@@ -690,7 +690,7 @@ secret_access_key = "test-sk"
 		t.Fatalf("s3 reindex = %q, %v", reOut, reErr)
 	}
 
-	// 3. gc --dry-run lists the orphan and offline gc removes it together with the superseded v1 xml.
+	// 3. gc --dry-run lists the orphan and offline gc removes it together with the superseded v1 xml and deleted temp item xml.
 	orphanXML := "/xml/" + strings.Repeat("Z", 12) + "-" + strings.Repeat("f", 64) + ".xml"
 	if err := store.Put(context.Background(), orphanXML, strings.NewReader("<orphan/>")); err != nil {
 		t.Fatal(err)
@@ -698,7 +698,7 @@ secret_access_key = "test-sk"
 	if dryOut, dryErr := runCLI("gc", "--dry-run"); dryErr != nil || !strings.Contains(dryOut, orphanXML) {
 		t.Fatalf("s3 gc --dry-run = %q, %v; want %s", dryOut, dryErr, orphanXML)
 	}
-	if gcOut, gcErr := runCLI("gc"); gcErr != nil || !strings.Contains(gcOut, "deleted 2 xml") {
+	if gcOut, gcErr := runCLI("gc"); gcErr != nil || !strings.Contains(gcOut, "deleted 3 xml") {
 		t.Fatalf("s3 gc = %q, %v", gcOut, gcErr)
 	}
 	if ok, _ := store.Exists(context.Background(), orphanXML); ok {
@@ -717,5 +717,108 @@ secret_access_key = "test-sk"
 	}
 	if _, verErr := runCLI("verify-storage"); verErr == nil || !strings.Contains(verErr.Error(), assetPathSuffix) {
 		t.Fatalf("s3 verify-storage after deletion = %v, want missing %s listed", verErr, assetPathSuffix)
+	}
+}
+
+func TestV2MaintenanceProtectsRevisionsAndAudioAssets(t *testing.T) {
+	ctx := context.Background()
+	cfgPath, dataDir, davURL := setupMaintenanceFixture(t)
+
+	database, err := db.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewWebDAV(davURL, "u", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	revXMLPath := "/xml/itemhist0001-" + strings.Repeat("1", 64) + ".xml"
+	liveXMLPath := "/xml/itemhist0001-" + strings.Repeat("2", 64) + ".xml"
+	oldAudioHash := strings.Repeat("e", 64)
+	oldAudioPath := "/assets/" + oldAudioHash + ".mp3"
+	orphanAudioPath := "/assets/" + strings.Repeat("f", 64) + ".m4a"
+
+	for p, body := range map[string]string{
+		revXMLPath:      "<document/>",
+		liveXMLPath:     "<document/>",
+		oldAudioPath:    "rev1-mp3-bytes",
+		orphanAudioPath: "orphan-m4a-bytes",
+	} {
+		if err = store.Put(ctx, p, strings.NewReader(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err = database.ExecContext(ctx, `INSERT INTO items
+		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text)
+		VALUES ('itemhist0001', NULL, 'report', 'Live', '2026-11-23', 's', '[]', 'a', '', '[]', ?, 'live')`, liveXMLPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path)
+		VALUES (?, 'audio/mpeg', 14, ?)`, oldAudioHash, oldAudioPath); err != nil {
+		t.Fatal(err)
+	}
+	res, err := database.ExecContext(ctx, `INSERT INTO item_revisions
+		(item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256)
+		VALUES ('itemhist0001', 1, 'V1', 's', '2026-11-22', ?, ?)`, revXMLPath, strings.Repeat("1", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	revID, _ := res.LastInsertId()
+	if _, err = database.ExecContext(ctx, `INSERT INTO item_revision_assets (revision_id, asset_hash) VALUES (?, ?)`, revID, oldAudioHash); err != nil {
+		t.Fatal(err)
+	}
+	_ = database.Close()
+
+	runCLI := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		cmd := newRootCmd(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs(append([]string{"--config", cfgPath}, args...))
+		execErr := cmd.Execute()
+		return out.String(), execErr
+	}
+
+	if _, err = runCLI("verify-storage"); err != nil {
+		t.Fatalf("verify-storage before delete = %v", err)
+	}
+
+	// gc preserves rev1 XML & rev1-only audio asset while removing only orphanAudioPath.
+	if dryOut, dryErr := runCLI("gc", "--dry-run"); dryErr != nil ||
+		strings.Contains(dryOut, revXMLPath) || strings.Contains(dryOut, oldAudioPath) || !strings.Contains(dryOut, orphanAudioPath) {
+		t.Fatalf("gc --dry-run = %q, %v", dryOut, dryErr)
+	}
+	if gcOut, gcErr := runCLI("gc"); gcErr != nil || !strings.Contains(gcOut, "deleted 0 xml, 1 remote assets, 0 db asset rows") {
+		t.Fatalf("first gc = %q, %v", gcOut, gcErr)
+	}
+	for _, kept := range []string{revXMLPath, liveXMLPath, oldAudioPath} {
+		if ok, _ := store.Exists(ctx, kept); !ok {
+			t.Fatalf("revision-referenced object %s was deleted by gc", kept)
+		}
+	}
+
+	// Deleting missing revision XML fails verify-storage naming the revision path.
+	if err = store.Delete(ctx, revXMLPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runCLI("verify-storage"); err == nil || !strings.Contains(err.Error(), revXMLPath) {
+		t.Fatalf("verify-storage with missing rev XML = %v, want %s", err, revXMLPath)
+	}
+
+	// Once rev1 is removed from SQLite, gc reclaims oldAudioPath + DB row.
+	database, err = db.OpenExisting(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = database.ExecContext(ctx, `DELETE FROM item_revisions WHERE id = ?`, revID)
+	_ = database.Close()
+
+	if gcOut, gcErr := runCLI("gc"); gcErr != nil || !strings.Contains(gcOut, "deleted 0 xml, 1 remote assets, 1 db asset rows") {
+		t.Fatalf("second gc after rev delete = %q, %v", gcOut, gcErr)
+	}
+	if ok, _ := store.Exists(ctx, oldAudioPath); ok {
+		t.Fatalf("oldAudioPath still exists after revision delete + gc")
 	}
 }

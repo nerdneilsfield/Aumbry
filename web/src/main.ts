@@ -3,11 +3,14 @@ import { MutationCache, QueryCache, QueryClient, VueQueryPlugin } from '@tanstac
 import App from './App.vue'
 import router from './router'
 import { ApiError } from './api/client'
+import { clearAuthSensitiveQueries } from './lib/queryCache'
 import './style.css'
 
-// An expired admin session (401 on any admin call except login/me) drops the UI back to the login form.
+// An expired admin session (401 on any admin call except login/me) drops the UI back to the login form
+// and evicts any privileged item/revision caches from the SPA session.
 const sessionExpired = (e: unknown, key?: readonly unknown[]) => {
   if (e instanceof ApiError && e.status === 401 && key?.[0] === 'admin' && key[1] !== 'login' && key[1] !== 'me') {
+    clearAuthSensitiveQueries(queryClient)
     queryClient.setQueryData(['admin', 'me'], { admin: false })
   }
 }

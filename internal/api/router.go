@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -22,24 +23,35 @@ import (
 )
 
 const (
-	ingestConcurrencyLimit = 4
-	writeRateLimitPerMin   = 120
+	ingestConcurrencyLimit  = 4
+	writeRateLimitPerMin    = 120
+	defaultRouterMaxRev     = 20
+	defaultRouterIngestBody = 200 << 20
 )
 
-// RouterOptions configures proxy trust and readiness probing behavior on the HTTP router.
+type queryTokenKey struct{}
+
+// RouterOptions configures proxy trust, readiness probing, feeds, revisions, and ingest limits on the HTTP router.
 type RouterOptions struct {
-	TrustedProxies []netip.Prefix
-	ReadyCacheTTL  time.Duration
-	ReadyTimeout   time.Duration
+	TrustedProxies      []netip.Prefix
+	ReadyCacheTTL       time.Duration
+	ReadyTimeout        time.Duration
+	PublicURL           string
+	MaxRevisionsPerItem *int
+	MaxIngestBodyBytes  int64
 }
 
 // Server holds the dependencies shared by all handlers.
 type Server struct {
-	db     *sqlx.DB
-	store  storage.Store
-	auth   *auth.Sessions
-	logger *slog.Logger
-	ready  *ReadinessChecker
+	db             *sqlx.DB
+	store          storage.Store
+	auth           *auth.Sessions
+	logger         *slog.Logger
+	ready          *ReadinessChecker
+	publicURL      string
+	maxRevisions   int
+	maxIngestBody  int64
+	trustedProxies []netip.Prefix
 }
 
 // NewRouter creates the API routes and embedded frontend handler.
@@ -52,12 +64,24 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	maxRevs := defaultRouterMaxRev
+	if opt.MaxRevisionsPerItem != nil {
+		maxRevs = *opt.MaxRevisionsPerItem
+	}
+	maxIngest := opt.MaxIngestBodyBytes
+	if maxIngest <= 0 {
+		maxIngest = defaultRouterIngestBody
+	}
 	s := &Server{
-		db:     database,
-		store:  store,
-		auth:   sessions,
-		logger: logger,
-		ready:  NewReadinessChecker(database, store, logger, opt.ReadyCacheTTL, opt.ReadyTimeout),
+		db:             database,
+		store:          store,
+		auth:           sessions,
+		logger:         logger,
+		ready:          NewReadinessChecker(database, store, logger, opt.ReadyCacheTTL, opt.ReadyTimeout),
+		publicURL:      strings.TrimRight(strings.TrimSpace(opt.PublicURL), "/"),
+		maxRevisions:   maxRevs,
+		maxIngestBody:  maxIngest,
+		trustedProxies: opt.TrustedProxies,
 	}
 
 	logSchema := httplog.SchemaECS.Concise(true)
@@ -66,6 +90,7 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 	router := chi.NewRouter()
 	router.Use(clientIPMiddleware(opt.TrustedProxies))
 	router.Use(securityHeaders())
+	router.Use(redactQueryTokenMiddleware)
 	router.Use(httplog.RequestLogger(logger, &httplog.Options{
 		Level:         slog.LevelInfo,
 		Schema:        logSchema,
@@ -75,6 +100,11 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 
 	router.Get("/healthz", health)
 	router.Get("/readyz", s.readyz)
+	router.Get("/feeds/{dir_id}/rss.xml", s.getDirRSS)
+	router.Get("/feeds/{dir_id}/podcast.xml", s.getDirPodcast)
+	router.Get("/feeds/{dir_id}/assets/{hash}", s.getFeedAsset)
+	router.Head("/feeds/{dir_id}/assets/{hash}", s.getFeedAsset)
+
 	router.Route("/api/v1", func(r chi.Router) {
 		writeLimit := writeLimiter()
 		r.Group(func(r chi.Router) {
@@ -94,7 +124,10 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		r.Get("/dirs/{id}/search", s.searchDir)
 		r.Get("/items/{id}", s.getItem)
 		r.Get("/items/{id}/content", s.getItemContent)
+		r.Get("/items/{id}/revisions", s.listItemRevisions)
+		r.Get("/items/{id}/revisions/{rev}/content", s.getItemRevisionContent)
 		r.Get("/assets/{hash}", s.getAsset)
+		r.Head("/assets/{hash}", s.getAsset)
 
 		r.With(attemptLimiter()).Post("/admin/login", s.adminLogin)
 		r.Post("/admin/logout", s.adminLogout)
@@ -105,15 +138,20 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 			r.Post("/admin/dirs", s.adminCreateDir)
 			r.Patch("/admin/dirs/{id}", s.adminUpdateDir)
 			r.Delete("/admin/dirs/{id}", s.adminDeleteDir)
+			r.Get("/admin/dirs/{id}/tokens", s.adminListDirTokens)
+			r.Post("/admin/dirs/{id}/tokens", s.adminCreateDirToken)
+			r.Post("/admin/dirs/{id}/tokens/{token_id}/rotate", s.adminRotateDirToken)
+			r.Delete("/admin/dirs/{id}/tokens/{token_id}", s.adminDeleteDirToken)
 			r.Put("/admin/items/{id}/mounts", s.adminSetMounts)
 			r.Delete("/admin/items/{id}", s.adminDeleteItem)
+			r.Delete("/admin/items/{id}/revisions/{rev}", s.adminDeleteRevision)
 			r.Get("/admin/search", s.adminSearch)
 		})
 	})
 
 	spa := frontendHandler(frontend)
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/feeds/") {
 			writeError(w, http.StatusNotFound, "not_found", "no such API endpoint")
 			return
 		}
@@ -123,6 +161,40 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	})
 	return router, nil
+}
+
+// redactQueryTokenMiddleware stashes the raw ?token= query parameter in request context
+// and replaces it with "REDACTED" on the cloned request URL before httplog runs, preventing
+// plaintext directory tokens from ever appearing in request or panic logs.
+func redactQueryTokenMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL != nil && r.URL.RawQuery != "" {
+			q := r.URL.Query()
+			if q.Has("token") {
+				rawTok := strings.TrimSpace(q.Get("token"))
+				ctx := context.WithValue(r.Context(), queryTokenKey{}, rawTok)
+				cloned := r.Clone(ctx)
+				q.Set("token", "REDACTED")
+				cloned.URL.RawQuery = q.Encode()
+				if cloned.RequestURI != "" {
+					cloned.RequestURI = cloned.URL.RequestURI()
+				}
+				next.ServeHTTP(w, cloned)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func queryTokenFromContext(r *http.Request) string {
+	if tok, ok := r.Context().Value(queryTokenKey{}).(string); ok {
+		return tok
+	}
+	if r.URL == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
 }
 
 func securityHeaders() func(http.Handler) http.Handler {

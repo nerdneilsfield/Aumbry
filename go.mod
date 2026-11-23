@@ -3,6 +3,7 @@ module github.com/nerdneilsfield/aumbry
 go 1.27.1
 
 require (
+	github.com/abema/go-mp4 v1.7.4
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.116.0
@@ -23,6 +24,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	github.com/studio-b12/gowebdav v0.10.0
+	github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300
 	github.com/unrolled/secure v1.17.0
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5

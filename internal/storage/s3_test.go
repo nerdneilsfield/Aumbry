@@ -335,3 +335,34 @@ func TestS3ErrorsDoNotEchoBackendText(t *testing.T) {
 		t.Errorf("List on a 404 = %v, want ErrUnreachable", lerr)
 	}
 }
+
+func TestS3OpenRange200Fallback(t *testing.T) {
+	payload := []byte("abcdefghijklmnopqrstuvwxyz0123456789")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Intentionally ignore Range and respond 200 OK with no Content-Range header.
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	store, err := NewS3(S3Options{
+		Endpoint:        srv.URL,
+		Region:          "us-east-1",
+		Bucket:          "aumbry",
+		AccessKeyID:     "test-ak",
+		SecretAccessKey: "test-sk",
+		PathStyle:       true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := store.OpenRange(context.Background(), "/assets/audio.mp3", 10, 15)
+	if err != nil {
+		t.Fatalf("OpenRange 200 fallback = %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || string(got) != "klmnop" {
+		t.Fatalf("OpenRange body = (%q, %v), want klmnop", got, err)
+	}
+}

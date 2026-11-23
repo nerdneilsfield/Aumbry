@@ -28,7 +28,7 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       # Traefik v3 aborts a request that takes longer than 60 s to read (including the body).
-      # Aumbry accepts uploads up to 100 MiB, so allow slow uploads more time.
+      # Aumbry defaults to uploads up to 200 MiB, so allow slow uploads more time.
       - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
       # Let's Encrypt via the HTTP-01 challenge on the "web" entrypoint.
       - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}

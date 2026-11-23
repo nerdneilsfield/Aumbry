@@ -1,4 +1,5 @@
 import { MAX_STAGES_PER_GROUP, anchorMap, stagesStructuralIssues } from '@/lib/anchor'
+import { parseAudioTimestamp } from '@/lib/audio'
 import { quizCorrect, quizOptions, quizQuestion } from '@/lib/quiz'
 import { httpUrl } from '@/lib/url'
 import { MAX_SECTION_DEPTH, attr, children, safeId, sectionDepth } from '@/lib/xml'
@@ -122,8 +123,58 @@ export function stagesIssues(node: Element): Issue[] {
 export { MAX_STAGES_PER_GROUP }
 export const MAX_STAGES_GROUPS = 8
 export const MAX_STAGES = 40
+export const MAX_AUDIO_BLOCKS = 4
+export const MAX_AUDIO_CHAPTERS = 100
+export const MAX_TRANSCRIPT_BYTES = 512 * 1024
 
-/** A next-steps target: `^#[a-z0-9-]+$` resolving through the prefix table (s- stages- stage- quiz- fig- eq- ref-) to an existing element. */
+/** Validates an `<audio>` block per v1.2 rules: container, src/title/id, chapters monotonic start & optional target, and transcript limit. */
+export function audioIssues(node: Element): Issue[] {
+  const out: Issue[] = []
+  const add = (code: string, message: string) => out.push({ code, message })
+  const ptag = node.parentElement?.tagName ?? ''
+  if (!['body', 'section', 'stage', 'collapse', 'tab', 'step'].includes(ptag)) {
+    add('INVALID_AUDIO', 'audio 只能放在 body、section、stage、collapse、tab 或 step 里')
+  }
+  if (!attr(node, 'src').trim()) add('INVALID_AUDIO', '缺少 src')
+  const title = attr(node, 'title').trim()
+  if (!title) add('INVALID_AUDIO', '缺少 title')
+  else if ([...title].length > 200) add('INVALID_AUDIO', 'title 超过 200 字符上限')
+  const rawId = node.getAttribute('id')
+  if (rawId !== null && !safeId(rawId)) add('INVALID_ID', `audio 的 id "${clip(rawId)}" 不符合 [a-z0-9-]{1,32}`)
+
+  const chapters = kids(node, 'chapter')
+  if (chapters.length > MAX_AUDIO_CHAPTERS) add('INVALID_AUDIO', `chapter 数量有 ${chapters.length} 个，上限 ${MAX_AUDIO_CHAPTERS}`)
+  let prevStart = -1
+  chapters.forEach((ch, idx) => {
+    const startRaw = attr(ch, 'start').trim()
+    const secs = parseAudioTimestamp(startRaw)
+    if (secs === null) {
+      add('INVALID_AUDIO', `第 ${idx + 1} 个 chapter 的 start "${clip(startRaw)}" 必须是 HH:MM:SS（分秒 00–59）`)
+    } else {
+      if (prevStart >= 0 && secs < prevStart) {
+        add('INVALID_AUDIO', `第 ${idx + 1} 个 chapter 的 start "${startRaw}" 小于上一章时间`)
+      }
+      prevStart = secs
+    }
+    if (!attr(ch, 'title').trim()) add('INVALID_AUDIO', `第 ${idx + 1} 个 chapter 缺少 title`)
+    const target = ch.getAttribute('target')
+    if (target !== null && !nextStepTarget(node, target)) {
+      add('INVALID_TARGET', `第 ${idx + 1} 个 chapter 的 target "${clip(target, 40)}" 不是本文档里存在的锚点`)
+    }
+  })
+
+  const transcripts = kids(node, 'transcript')
+  if (transcripts.length > 1) add('INVALID_AUDIO', 'transcript 至多 1 个')
+  if (transcripts[0]) {
+    if (transcripts[0].children.length > 0) add('INVALID_AUDIO', 'transcript 内不允许嵌套 XML 标签')
+    const txt = text(transcripts[0])
+    if (!txt) add('INVALID_AUDIO', 'transcript 存在时不能为空')
+    else if (bytes(txt) > MAX_TRANSCRIPT_BYTES) add('INVALID_AUDIO', 'transcript 超过 512 KB 上限')
+  }
+  return out
+}
+
+/** A next-steps target: `^#[a-z0-9-]+$` resolving through the prefix table (s- stages- stage- quiz- fig- eq- ref- audio-) to an existing element. */
 export const nextStepTarget = (from: Element, target: string) => !!anchorMap(bodyOf(from)).findStrict(target)
 
 export function nextStepsIssues(node: Element): Issue[] {
@@ -148,6 +199,14 @@ export function validateDoc(body: Element): Issue[] {
   for (const q of all('quiz')) add(`quiz「${clip(attr(q, 'id') || text(kids(q, 'question')[0] ?? q))}」`, quizIssues(q))
   for (const s of all('search-log')) add('search-log', searchLogIssues(s))
   for (const n of all('next-steps')) add('next-steps', nextStepsIssues(n))
+  const audios = all('audio')
+  if (audios.length > 0 && body.ownerDocument?.documentElement?.getAttribute('version') === '1.1') {
+    out.push({ code: 'INVALID_AUDIO', message: '<audio> 仅在 <document version="1.2"> 中受支持，请升级文档版本', where: 'audio' })
+  }
+  if (audios.length > MAX_AUDIO_BLOCKS) {
+    out.push({ code: 'INVALID_AUDIO', message: `一份文档最多 ${MAX_AUDIO_BLOCKS} 个 audio 块`, where: 'audio' })
+  }
+  for (const a of audios) add(`audio「${clip(attr(a, 'title'))}」`, audioIssues(a))
 
   for (const s of all('section')) {
     if (sectionDepth(s) > MAX_SECTION_DEPTH) out.push({ code: 'SECTION_TOO_DEEP', message: `section 最多嵌套 ${MAX_SECTION_DEPTH} 层`, where: `section「${clip(attr(s, 'title'))}」` })
