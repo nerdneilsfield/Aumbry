@@ -1155,4 +1155,247 @@ func TestV2M2ReviewRegressions(t *testing.T) {
 			t.Fatalf("push_item with ad_-prefixed API token = err=%v raw=%s", isErr, raw)
 		}
 	})
+
+	t.Run("R2-H1 admin mount draft attributes revision to updated_by and fails closed on NULL", func(t *testing.T) {
+		e := newEnv(t)
+		admin := e.admin()
+		ag := e.anon()
+		pubQ := admin.createDir("", "Public Q", "")
+		protC := admin.createDir("", "Protected C", "pw-c")
+
+		// Token A creates item and unpublishes it.
+		itemID := ag.ingestOK(ingestReq{
+			key:  "r2:h1:draftmount",
+			xml:  xmlDoc(docOpts{title: "DraftMount V1", md: "token A initial"}),
+			dirs: []string{pubQ},
+		})
+		unpubReq, _ := http.NewRequest(http.MethodDelete, e.srv.URL+"/api/v1/agent/items/"+itemID+"/mounts", nil)
+		unpubReq.Header.Set("Authorization", "Bearer "+apiToken)
+		if r := ag.send(unpubReq); r.status != http.StatusNoContent {
+			t.Fatalf("unpublish = %d %s", r.status, r.body)
+		}
+
+		// Token B ("other") overwrites with --draft, then admin mounts that draft into protC.
+		_ = ag.ingestOK(ingestReq{
+			token: "other",
+			key:   "r2:h1:draftmount",
+			xml:   xmlDoc(docOpts{title: "DraftMount V2 Secret", md: "token B confidential draft"}),
+			draft: true,
+		})
+		if st := admin.do("PUT", "/api/v1/admin/items/"+itemID+"/mounts", map[string]any{"dirs": []string{protC}}).status; st != http.StatusNoContent {
+			t.Fatalf("admin mount draft into protC = %d", st)
+		}
+		// Admin clears mounts and Token B publishes sanitized v3 to pubQ.
+		if st := admin.do("PUT", "/api/v1/admin/items/"+itemID+"/mounts", map[string]any{"dirs": []string{}}).status; st != http.StatusNoContent {
+			t.Fatalf("admin clear mounts = %d", st)
+		}
+		_ = ag.ingestOK(ingestReq{
+			token: "other",
+			key:   "r2:h1:draftmount",
+			xml:   xmlDoc(docOpts{title: "DraftMount V3 Public", md: "token B sanitized public"}),
+			dirs:  []string{pubQ},
+		})
+
+		connectToken := func(tok string) *mcp.ClientSession {
+			c := mcp.NewClient(&mcp.Implementation{Name: "r2-h1", Version: "1.0"}, nil)
+			tr := &mcp.StreamableClientTransport{
+				Endpoint: e.srv.URL + "/mcp",
+				HTTPClient: &http.Client{
+					Transport: &hostInjectRT{
+						base:    http.DefaultTransport,
+						headers: http.Header{"Authorization": []string{"Bearer " + tok}},
+					},
+				},
+				DisableStandaloneSSE: true,
+			}
+			sess, err := c.Connect(t.Context(), tr, nil)
+			if err != nil {
+				t.Fatalf("connect(%s): %v", tok, err)
+			}
+			t.Cleanup(func() { _ = sess.Close() })
+			return sess
+		}
+
+		sessA := connectToken(apiToken)
+		sessB := connectToken("other")
+
+		listA, rawA, isErr := callMCPJSON(t, sessA, "list_items", map[string]any{"key": "r2:h1:draftmount"})
+		if isErr {
+			t.Fatalf("sessA list_items = %s", rawA)
+		}
+		if gotCnt := int(listA["items"].([]any)[0].(map[string]any)["revision_count"].(float64)); gotCnt != 2 {
+			t.Fatalf("Token A revision_count = %d, want 2 (excluding B's draft-mounted rev=2)", gotCnt)
+		}
+		if _, rev2Msg, rev2Err := callMCPJSON(t, sessA, "get_item", map[string]any{"id": itemID, "rev": 2}); !rev2Err || !strings.Contains(rev2Msg, "forbidden") {
+			t.Fatalf("Token A read B's draft-mounted rev=2 = err=%v msg=%q, want forbidden", rev2Err, rev2Msg)
+		}
+		listB, rawB, isErr := callMCPJSON(t, sessB, "list_items", map[string]any{"key": "r2:h1:draftmount"})
+		if isErr {
+			t.Fatalf("sessB list_items = %s", rawB)
+		}
+		if gotCnt := int(listB["items"].([]any)[0].(map[string]any)["revision_count"].(float64)); gotCnt != 3 {
+			t.Fatalf("Token B revision_count = %d, want 3", gotCnt)
+		}
+		if rev2Out, _, rev2Err := callMCPJSON(t, sessB, "get_item", map[string]any{"id": itemID, "rev": 2, "format": "text"}); rev2Err || !strings.Contains(rev2Out["content"].(string), "token B confidential draft") {
+			t.Fatalf("Token B read rev=2 = err=%v %v", rev2Err, rev2Out)
+		}
+
+		// Legacy pre-v0.2.0 draft with NULL updated_by fails closed to historical mount B1 auth even for Token A.
+		legacyID := ag.ingestOK(ingestReq{
+			key:   "r2:h1:null-updated-by",
+			xml:   xmlDoc(docOpts{title: "Legacy Draft V1", md: "legacy secret draft"}),
+			draft: true,
+		})
+		if _, err := e.db.Exec(`UPDATE items SET updated_by = NULL WHERE id = ?`, legacyID); err != nil {
+			t.Fatal(err)
+		}
+		if st := admin.do("PUT", "/api/v1/admin/items/"+legacyID+"/mounts", map[string]any{"dirs": []string{protC}}).status; st != http.StatusNoContent {
+			t.Fatalf("admin mount legacy draft = %d", st)
+		}
+		if st := admin.do("PUT", "/api/v1/admin/items/"+legacyID+"/mounts", map[string]any{"dirs": []string{}}).status; st != http.StatusNoContent {
+			t.Fatalf("admin clear legacy mounts = %d", st)
+		}
+		_ = ag.ingestOK(ingestReq{
+			key:  "r2:h1:null-updated-by",
+			xml:  xmlDoc(docOpts{title: "Legacy Draft V2 Public", md: "legacy public v2"}),
+			dirs: []string{pubQ},
+		})
+		if _, rev1Msg, rev1Err := callMCPJSON(t, sessA, "get_item", map[string]any{"id": legacyID, "rev": 1}); !rev1Err || !strings.Contains(rev1Msg, "forbidden") {
+			t.Fatalf("Token A read NULL-updated_by rev=1 = err=%v msg=%q, want forbidden", rev1Err, rev1Msg)
+		}
+	})
+
+	t.Run("R2-M1 idle GET SSE does not extend tracker TTL and 404 removes session", func(t *testing.T) {
+		now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
+		tr := newMCPSessionTracker()
+		tr.now = func() time.Time { return now }
+
+		for i := range mcpMaxAnonSessionsPerIP {
+			if !tr.tryReserveAnonInit("1.2.3.4") {
+				t.Fatalf("reserve %d failed unexpectedly", i)
+			}
+			tr.bind(fmt.Sprintf("s%d", i), "anon:1.2.3.4", "1.2.3.4", true)
+		}
+		if tr.tryReserveAnonInit("1.2.3.4") {
+			t.Fatal("17th anon session reservation succeeded")
+		}
+
+		// Simulate GET SSE requests opening at +29m and staying idle past the 30m timeout.
+		now = now.Add(29 * time.Minute)
+		for i := range mcpMaxAnonSessionsPerIP {
+			found, allowed := tr.acquireExisting(fmt.Sprintf("s%d", i), "anon:1.2.3.4", false)
+			if !found || !allowed {
+				t.Fatalf("GET acquire s%d = (%v, %v)", i, found, allowed)
+			}
+			tr.releaseExisting(fmt.Sprintf("s%d", i), false)
+		}
+
+		// At +30m, SDK closes the idle sessions (GET activity did NOT bump lastSeen).
+		now = now.Add(time.Minute)
+		if !tr.tryReserveAnonInit("1.2.3.4") {
+			t.Fatal("expired sessions blocked new anon reservation after idle GET SSE")
+		}
+		tr.releaseAnonInitReservation("1.2.3.4")
+
+		// Active POST prevents pruning while in flight and extends lastSeen on completion.
+		tr.bind("active-post", "anon:1.2.3.4", "1.2.3.4", false)
+		if found, allowed := tr.acquireExisting("active-post", "anon:1.2.3.4", true); !found || !allowed {
+			t.Fatalf("POST acquire = (%v, %v)", found, allowed)
+		}
+		now = now.Add(40 * time.Minute)
+		tr.mu.Lock()
+		tr.pruneLocked(now)
+		_, stillInFlight := tr.sessions["active-post"]
+		tr.mu.Unlock()
+		if !stillInFlight {
+			t.Fatal("in-flight POST session was pruned early")
+		}
+		tr.releaseExisting("active-post", true)
+		now = now.Add(29 * time.Minute)
+		if found, _ := tr.acquireExisting("active-post", "anon:1.2.3.4", false); !found {
+			t.Fatal("POST completion did not refresh lastSeen")
+		}
+		now = now.Add(time.Minute)
+		if found, _ := tr.acquireExisting("active-post", "anon:1.2.3.4", false); found {
+			t.Fatal("idle session after POST timeout was not pruned")
+		}
+
+		// SDK 404 from serveTrackedMCP immediately evicts the session from tracker.
+		tr.bind("sid-404", "anon:1.2.3.4", "1.2.3.4", false)
+		req404 := httptest.NewRequest(http.MethodGet, "http://localhost/mcp", nil)
+		rec404 := httptest.NewRecorder()
+		(&Server{}).serveTrackedMCP(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "session not found", http.StatusNotFound)
+			}),
+			tr, "anon:1.2.3.4", "1.2.3.4", nil, "sid-404", rec404, req404,
+		)
+		if found, _ := tr.acquireExisting("sid-404", "anon:1.2.3.4", false); found {
+			t.Fatal("SDK 404 did not remove sid-404 from tracker")
+		}
+	})
+
+	t.Run("R2-M3 rewritten XML >11MiB fails 413 without uploading assets", func(t *testing.T) {
+		e := newEnv(t)
+		admin := e.admin()
+		ag := e.anon()
+		pubQ := admin.createDir("", "Public Q", "")
+		pngData := validTestPNG(t)
+
+		// 25k repeated short <figure src="a.png"/> tags (~575 KiB) expand by 25k*74 = ~1.85 MiB upon hash rewrite,
+		// pushing a ~10.07 MiB (< 10 MiB limit) input XML over the 11 MiB stored XML ceiling.
+		var sb strings.Builder
+		sb.Grow(10 << 20)
+		sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?><document version="1.2"><meta><title>Expand</title><type>report</type><date>2026-11-23</date><summary>S</summary><source-agent>a</source-agent></meta><body>`)
+		sb.WriteString(strings.Repeat(`<figure src="a.png"/>`, 25_000))
+		sb.WriteString(`<md>`)
+		sb.WriteString(strings.Repeat("x", 9_500_000))
+		sb.WriteString(`</md></body></document>`)
+
+		resp := ag.ingest(ingestReq{
+			xml:    sb.String(),
+			assets: []figure{{name: "a.png", src: "a.png", data: pngData}},
+			dirs:   []string{pubQ},
+		})
+		if resp.status != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized rewritten XML status = %d %s, want 413", resp.status, resp.body)
+		}
+		e.store.mu.Lock()
+		storedCount := len(e.store.files)
+		e.store.mu.Unlock()
+		if storedCount != 0 {
+			t.Fatalf("stored objects after 413 rewritten XML = %d, want 0 (no orphan asset upload)", storedCount)
+		}
+	})
+
+	t.Run("R2-L1 loopback Host works on /mcp even when public_url is configured", func(t *testing.T) {
+		ePort := newEnvWithOptions(t, RouterOptions{PublicURL: "https://hub.example.org:8443"}, nil)
+		check := func(host, origin string) int {
+			req := httptest.NewRequest(http.MethodPost, "http://"+host+"/mcp", strings.NewReader(initBody))
+			req.Host = host
+			if origin != "" {
+				req.Header.Set("Origin", origin)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			rec := httptest.NewRecorder()
+			ePort.router.ServeHTTP(rec, req)
+			return rec.Code
+		}
+		if st := check("127.0.0.1:8080", ""); st != http.StatusOK {
+			t.Fatalf("loopback without Origin = %d, want 200", st)
+		}
+		if st := check("127.0.0.1:8080", "http://127.0.0.1:8080"); st != http.StatusOK {
+			t.Fatalf("loopback with matching Origin = %d, want 200", st)
+		}
+		if st := check("[::1]:8080", "http://[::1]:8080"); st != http.StatusOK {
+			t.Fatalf("IPv6 loopback with matching Origin = %d, want 200", st)
+		}
+		if st := check("127.0.0.1:8080", "https://evil.example"); st != http.StatusForbidden {
+			t.Fatalf("loopback with evil Origin = %d, want 403", st)
+		}
+		if st := check("evil.example", ""); st != http.StatusForbidden {
+			t.Fatalf("non-loopback mismatched Host = %d, want 403", st)
+		}
+	})
 }

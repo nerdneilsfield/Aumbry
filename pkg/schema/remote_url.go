@@ -56,6 +56,37 @@ func IsPublicAddr(addr netip.Addr) bool {
 	return true
 }
 
+func isPureASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] > 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidRelaxedASCIIHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := range len(label) {
+			c := label[i]
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '_' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // IsRemoteURLCandidate reports whether raw starts with or parses as a remote URL scheme.
 func IsRemoteURLCandidate(raw string) bool {
 	lower := strings.ToLower(strings.TrimSpace(raw))
@@ -94,11 +125,12 @@ func ValidateRemoteImageURL(raw string) (code, msg, hint string, ok bool) {
 		}
 		return "", "", "", true
 	}
-	asciiHost, idnaErr := idna.Lookup.ToASCII(rawHost)
-	if idnaErr != nil {
+	host := rawHost
+	if asciiHost, idnaErr := idna.Lookup.ToASCII(rawHost); idnaErr == nil {
+		host = strings.TrimSuffix(strings.ToLower(asciiHost), ".")
+	} else if !isPureASCII(rawHost) || !isValidRelaxedASCIIHost(rawHost) {
 		return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure host %q is invalid: %v", u.Hostname(), idnaErr), "use a standard ASCII domain name or public IP", false
 	}
-	host := strings.TrimSuffix(strings.ToLower(asciiHost), ".")
 	if host == "" {
 		return "REMOTE_ASSET_BLOCKED", "remote figure url must include a host", "use a valid https:// or http:// URL with a public host", false
 	}
@@ -113,6 +145,9 @@ func ValidateRemoteImageURL(raw string) (code, msg, hint string, ok bool) {
 	}
 	if looksLikeNonCanonicalNumericIP(host) {
 		return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("non-canonical numeric host %q is blocked", u.Hostname()), "use a standard hostname or public IP address", false
+	}
+	if !isValidRelaxedASCIIHost(host) {
+		return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure host %q is invalid", u.Hostname()), "use a standard ASCII domain name or public IP", false
 	}
 	return "", "", "", true
 }

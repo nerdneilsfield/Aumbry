@@ -305,7 +305,7 @@ storage OK: verified 1 xml and 0 asset objects
 
 2 个字及以上的中文、日文、韩文检索词（如 `模型`）使用 SQLite 全文索引 `items_fts_cjk`。其他 3 个字符及以上的检索词使用 `items_fts`。单个 CJK 字符以及其他不足 3 个字符的检索词，对标题、摘要、标签和 `items.plain_text` 做子串匹配。每次 `POST /api/v1/ingest` 都在同一事务内写入 `items.plain_text`、`items_fts` 与 `items_fts_cjk`。`reindex` 从对象存储重新读取每个条目已存储的 XML，按当前版本的规则重新计算 `plain_text`（含 `<audio>` 标题/章节/逐字稿）、重写 `items_fts` / `items_fts_cjk`，并同步重建反向引用 `item_links`、首音频投影 `primary_audio_*`，以及为**已挂载但尚无历史记录（0 revision）的存量条目自动回填基线 `rev = 1`**（含当时挂载与资产关联）。
 
-> **从 `v0.1.3` 升级到 `v0.1.4` 必读顺序**：由于 `reindex` / `verify-storage` / `gc` 使用不执行迁移的只读schema打开逻辑，升级后请**先启动新版 `aumbry-server`**（由 `db.Open` 自动应用 `00004`–`00007` 迁移），**随后停服执行一次 `aumbry-server reindex`**，完成反向索引、首音频投影与存量 `rev = 1` 快照回填后再恢复对外服务。
+> **从 `v0.1.3` / `v0.1.4` 升级必读顺序**：由于 `reindex` / `verify-storage` / `gc` 使用不执行迁移的只读 schema 打开逻辑，升级后请**先启动新版 `aumbry-server`**（由 `db.Open` 自动应用 `00004`–`00008` 迁移），**随后停服执行一次 `aumbry-server reindex`**，完成反向索引、首音频投影与存量 `rev = 1` 快照回填后再恢复对外服务。
 
 出现下列情况之一时运行 `reindex`：
 

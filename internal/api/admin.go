@@ -348,10 +348,10 @@ func (s *Server) adminSetMounts(w http.ResponseWriter, r *http.Request) {
 		Summary   string `db:"summary"`
 		Date      string `db:"report_date"`
 		XMLPath   string `db:"xml_storage_path"`
-		CreatedBy string `db:"created_by"`
+		UpdatedBy string `db:"updated_by"`
 	}
 	if selErr := tx.GetContext(ctx, &row, `SELECT title, summary, report_date, xml_storage_path,
-		COALESCE(created_by, '') AS created_by FROM items WHERE id = ?`, id); selErr != nil {
+		COALESCE(updated_by, '') AS updated_by FROM items WHERE id = ?`, id); selErr != nil {
 		if errors.Is(selErr, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not_found", "item not found")
 			return
@@ -385,7 +385,7 @@ func (s *Server) adminSetMounts(w http.ResponseWriter, r *http.Request) {
 			date:      row.Date,
 			xmlPath:   row.XMLPath,
 			xmlSHA256: liveSHA,
-			createdBy: row.CreatedBy,
+			createdBy: row.UpdatedBy,
 			mounts:    dirs,
 		}); snapErr != nil {
 			internalError(w, r, snapErr)

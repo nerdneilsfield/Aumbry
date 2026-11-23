@@ -89,10 +89,10 @@ func (s *Server) ensureBaselineRevisionTx(ctx context.Context, tx *sqlx.Tx, item
 		Date      string `db:"report_date"`
 		Summary   string `db:"summary"`
 		XMLPath   string `db:"xml_storage_path"`
-		CreatedBy string `db:"created_by"`
+		UpdatedBy string `db:"updated_by"`
 	}
 	if err := tx.GetContext(ctx, &row, `SELECT last_rev, title, report_date, summary, xml_storage_path,
-		COALESCE(created_by, '') AS created_by FROM items WHERE id = ?`, itemID); err != nil {
+		COALESCE(updated_by, '') AS updated_by FROM items WHERE id = ?`, itemID); err != nil {
 		return err
 	}
 	var revCount int
@@ -128,7 +128,7 @@ func (s *Server) ensureBaselineRevisionTx(ctx context.Context, tx *sqlx.Tx, item
 		date:      row.Date,
 		xmlPath:   row.XMLPath,
 		xmlSHA256: sha,
-		createdBy: row.CreatedBy,
+		createdBy: row.UpdatedBy,
 		mounts:    oldMounts,
 	}, oldAssets)
 	if err != nil {

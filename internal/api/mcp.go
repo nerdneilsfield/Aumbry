@@ -77,14 +77,16 @@ func (p mcpPrincipal) visibleSlice() []string {
 }
 
 type mcpSessionRecord struct {
-	ownerKey string
-	anonIP   string
-	lastSeen time.Time
-	inFlight int
+	ownerKey      string
+	anonIP        string
+	lastSeen      time.Time
+	inFlightPosts int
 }
 
 type mcpSessionTracker struct {
 	mu              sync.Mutex
+	now             func() time.Time
+	timeout         time.Duration
 	sessions        map[string]mcpSessionRecord
 	pendingAnonInit map[string]int
 	anonPostsByIP   map[string]int
@@ -93,6 +95,8 @@ type mcpSessionTracker struct {
 
 func newMCPSessionTracker() *mcpSessionTracker {
 	return &mcpSessionTracker{
+		now:             time.Now,
+		timeout:         mcpSessionTimeout,
 		sessions:        make(map[string]mcpSessionRecord),
 		pendingAnonInit: make(map[string]int),
 		anonPostsByIP:   make(map[string]int),
@@ -100,16 +104,20 @@ func newMCPSessionTracker() *mcpSessionTracker {
 }
 
 func (tr *mcpSessionTracker) pruneLocked(now time.Time) {
-	cutoff := now.Add(-mcpSessionTimeout)
+	timeout := tr.timeout
+	if timeout <= 0 {
+		timeout = mcpSessionTimeout
+	}
+	cutoff := now.Add(-timeout)
 	for sid, rec := range tr.sessions {
-		if rec.inFlight == 0 && rec.lastSeen.Before(cutoff) {
+		if rec.inFlightPosts == 0 && !rec.lastSeen.After(cutoff) {
 			delete(tr.sessions, sid)
 		}
 	}
 }
 
-func (tr *mcpSessionTracker) acquireExisting(sid, ownerKey string) (found, allowed bool) {
-	now := time.Now()
+func (tr *mcpSessionTracker) acquireExisting(sid, ownerKey string, isPost bool) (found, allowed bool) {
+	now := tr.now()
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	tr.pruneLocked(now)
@@ -120,32 +128,34 @@ func (tr *mcpSessionTracker) acquireExisting(sid, ownerKey string) (found, allow
 	if rec.ownerKey != ownerKey {
 		return true, false
 	}
-	rec.inFlight++
-	rec.lastSeen = now
-	tr.sessions[sid] = rec
+	if isPost {
+		rec.inFlightPosts++
+		rec.lastSeen = now
+		tr.sessions[sid] = rec
+	}
 	return true, true
 }
 
-func (tr *mcpSessionTracker) releaseExisting(sid string) {
-	if sid == "" {
+func (tr *mcpSessionTracker) releaseExisting(sid string, isPost bool) {
+	if !isPost || sid == "" {
 		return
 	}
-	now := time.Now()
+	now := tr.now()
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	rec, ok := tr.sessions[sid]
 	if !ok {
 		return
 	}
-	if rec.inFlight > 0 {
-		rec.inFlight--
+	if rec.inFlightPosts > 0 {
+		rec.inFlightPosts--
 	}
 	rec.lastSeen = now
 	tr.sessions[sid] = rec
 }
 
 func (tr *mcpSessionTracker) tryReserveAnonInit(anonIP string) bool {
-	now := time.Now()
+	now := tr.now()
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	tr.pruneLocked(now)
@@ -199,7 +209,7 @@ func (tr *mcpSessionTracker) releaseAnonPost(anonIP string) {
 func (tr *mcpSessionTracker) bind(sid, ownerKey, anonIP string, consumeReservation bool) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
-	now := time.Now()
+	now := tr.now()
 	tr.pruneLocked(now)
 	if sid != "" {
 		tr.sessions[sid] = mcpSessionRecord{ownerKey: ownerKey, anonIP: anonIP, lastSeen: now}
@@ -326,8 +336,9 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 				if ti != nil {
 					ownerKey = ti.UserID
 				}
+				isPost := authedReq.Method == http.MethodPost
 				if sid != "" {
-					found, ok := tracker.acquireExisting(sid, ownerKey)
+					found, ok := tracker.acquireExisting(sid, ownerKey, isPost)
 					if !found {
 						http.Error(w, "unknown or expired MCP session", http.StatusNotFound)
 						return
@@ -336,9 +347,9 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 						http.Error(w, "session owner mismatch", http.StatusForbidden)
 						return
 					}
-					defer tracker.releaseExisting(sid)
+					defer tracker.releaseExisting(sid, isPost)
 				}
-				if authedReq.Method == http.MethodPost {
+				if isPost {
 					rc := http.NewResponseController(w)
 					_ = rc.SetReadDeadline(time.Now().Add(mcpAuthedPostReadDeadline))
 					defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
@@ -353,8 +364,9 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 			return
 		}
 		ownerKey := "anon:" + exactIP
+		isPost := r.Method == http.MethodPost
 		if sid != "" {
-			found, ok := tracker.acquireExisting(sid, ownerKey)
+			found, ok := tracker.acquireExisting(sid, ownerKey, isPost)
 			if !found {
 				http.Error(w, "unknown or expired MCP session", http.StatusNotFound)
 				return
@@ -363,10 +375,10 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 				http.Error(w, "session owner mismatch", http.StatusForbidden)
 				return
 			}
-			defer tracker.releaseExisting(sid)
+			defer tracker.releaseExisting(sid, isPost)
 		}
 		reservedInit := false
-		if r.Method == http.MethodPost {
+		if isPost {
 			if sid == "" {
 				if !tracker.tryReserveAnonInit(exactIP) {
 					http.Error(w, "too many active anonymous MCP sessions", http.StatusTooManyRequests)
@@ -397,6 +409,10 @@ func (s *Server) serveTrackedMCP(sdkHandler http.Handler, tracker *mcpSessionTra
 	cw := &mcpStatusCaptureWriter{
 		ResponseWriter: w,
 		onHeader: func(code int, hdr http.Header) {
+			if code == http.StatusNotFound && reqSID != "" {
+				tracker.remove(reqSID)
+				return
+			}
 			if code >= http.StatusBadRequest {
 				return
 			}
@@ -478,25 +494,20 @@ func (s *Server) allowMCPHostAndOrigin(r *http.Request) bool {
 		if err != nil || pubURL.Host == "" {
 			return false
 		}
-		if !sameHostPort(r.Host, pubURL.Host, pubURL.Scheme) {
-			return false
+		if sameHostPort(r.Host, pubURL.Host, pubURL.Scheme) {
+			if origURL != nil {
+				return strings.EqualFold(origScheme, pubURL.Scheme) && sameHostPort(origURL.Host, pubURL.Host, pubURL.Scheme)
+			}
+			return true
 		}
-		if origURL != nil {
-			return strings.EqualFold(origScheme, pubURL.Scheme) && sameHostPort(origURL.Host, pubURL.Host, pubURL.Scheme)
-		}
-		return true
 	}
 
 	if !isLoopbackHost(r.Host) {
 		return false
 	}
 	if origURL != nil {
-		expectedBase := s.resolvePublicURL(r)
-		expURL, err := url.Parse(expectedBase)
-		if err != nil || expURL.Host == "" {
-			return false
-		}
-		return strings.EqualFold(origScheme, expURL.Scheme) &&
+		scheme := s.requestScheme(r)
+		return strings.EqualFold(origScheme, scheme) &&
 			isLoopbackHost(origURL.Host) &&
 			sameHostPort(origURL.Host, r.Host, origScheme)
 	}

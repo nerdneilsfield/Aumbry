@@ -138,12 +138,15 @@ func TestMigrationLeavesLegacyCreatedByNull(t *testing.T) {
 	}
 	defer reopened.Close()
 
-	var createdBy sql.NullString
-	if err := reopened.QueryRowContext(ctx, `SELECT created_by FROM items WHERE id = 'legacy000001'`).Scan(&createdBy); err != nil {
+	var createdBy, updatedBy sql.NullString
+	if err := reopened.QueryRowContext(ctx, `SELECT created_by, updated_by FROM items WHERE id = 'legacy000001'`).Scan(&createdBy, &updatedBy); err != nil {
 		t.Fatal(err)
 	}
 	if createdBy.Valid {
 		t.Fatalf("expected legacy created_by NULL, got %q", createdBy.String)
+	}
+	if updatedBy.Valid {
+		t.Fatalf("expected legacy updated_by NULL, got %q", updatedBy.String)
 	}
 }
 

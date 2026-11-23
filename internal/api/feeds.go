@@ -167,15 +167,11 @@ func (s *Server) adminDeleteDirToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) resolvePublicURL(r *http.Request) string {
-	if s.publicURL != "" {
-		return s.publicURL
-	}
+func (s *Server) requestScheme(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	host := r.Host
 	if len(s.trustedProxies) > 0 {
 		if peer, ok := parseRemoteAddr(r.RemoteAddr); ok && inAnyPrefix(peer, s.trustedProxies) {
 			if fp := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); fp != "" {
@@ -184,6 +180,19 @@ func (s *Server) resolvePublicURL(r *http.Request) string {
 					scheme = cand
 				}
 			}
+		}
+	}
+	return scheme
+}
+
+func (s *Server) resolvePublicURL(r *http.Request) string {
+	if s.publicURL != "" {
+		return s.publicURL
+	}
+	scheme := s.requestScheme(r)
+	host := r.Host
+	if len(s.trustedProxies) > 0 {
+		if peer, ok := parseRemoteAddr(r.RemoteAddr); ok && inAnyPrefix(peer, s.trustedProxies) {
 			if fh := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); fh != "" {
 				first, _, _ := strings.Cut(fh, ",")
 				if cand := strings.TrimSpace(first); cand != "" {

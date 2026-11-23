@@ -436,11 +436,17 @@ func TestV12RemoteFiguresAttachmentRefsAndRewriteIsolation(t *testing.T) {
 		"http://0x7f000001/a.png",
 		"http://１２７。０。０。１/a.png",
 		"http://ｌｏｃａｌｈｏｓｔ/a.png",
+		"https://a%20b.example.com/a.png",
+		"https://foo..bar.example.com/a.png",
 	} {
 		_, issues := Parse([]byte(doc12(`<figure src="`+badURL+`"/>`)), always)
 		if got := codes(issues); !slices.Equal(got, []string{"REMOTE_ASSET_BLOCKED"}) {
 			t.Fatalf("bad remote URL %q => %+v, want [REMOTE_ASSET_BLOCKED]", badURL, issues)
 		}
+	}
+	// Pure-ASCII relaxed domain names with underscores (common on CDNs) remain accepted.
+	if _, okIssues := Parse([]byte(doc12(`<figure src="https://cdn_assets.example.com/a.png"/>`)), always); len(okIssues) != 0 {
+		t.Fatalf("underscore pure-ASCII hostname rejected: %+v", okIssues)
 	}
 
 	// Valid v1.2 remote figure + local attachment + same canonical-url must rewrite ONLY <figure src>.

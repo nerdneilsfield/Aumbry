@@ -25,6 +25,7 @@ const scale = ref(1.25)
 const loading = ref(false)
 const docError = ref('')
 const pageError = ref('')
+const pageFetchFailed = ref(false)
 
 let pdfDoc: PDFDocumentProxy | null = null
 let activeRenderTask: RenderTask | null = null
@@ -62,9 +63,12 @@ async function renderPage(num: number) {
   const serial = ++renderSerial
   cancelRender()
   pageError.value = ''
+  pageFetchFailed.value = false
   loading.value = true
+  let pageLoaded = false
   try {
     const page = await doc.getPage(num)
+    pageLoaded = true
     if (serial !== renderSerial || pdfDoc !== doc || currentPage.value !== num) return
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
@@ -85,6 +89,8 @@ async function renderPage(num: number) {
     if (serial !== renderSerial || pdfDoc !== doc) return
     const msg = err instanceof Error ? err.message : String(err)
     if (!msg.toLowerCase().includes('cancelled')) {
+      // pdf.js caches rejected page Promises on PDFDocumentProxy, so a failed getPage() needs a fresh doc reload.
+      pageFetchFailed.value = !pageLoaded
       pageError.value = `第 ${num} 页渲染失败：${msg}`
     }
   } finally {
@@ -94,13 +100,14 @@ async function renderPage(num: number) {
   }
 }
 
-async function loadDocument(url: string | undefined) {
+async function loadDocument(url: string | undefined, targetPage?: number) {
   const serial = ++loadSerial
   renderSerial++
   await destroyDoc()
   totalPages.value = 0
   docError.value = ''
   pageError.value = ''
+  pageFetchFailed.value = false
 
   if (!url || type.value !== 'pdf') {
     docError.value = '无效的 PDF 附件地址或类型。'
@@ -125,7 +132,7 @@ async function loadDocument(url: string | undefined) {
     pdfDoc = doc
     totalPages.value = doc.numPages
 
-    const requested = anchors.attachmentPages.get(props.node)?.page ?? currentPage.value
+    const requested = targetPage ?? anchors.attachmentPages.get(props.node)?.page ?? currentPage.value
     const clamped = Math.min(Math.max(1, requested), Math.max(1, doc.numPages))
     currentPage.value = clamped
     pageInput.value = String(clamped)
@@ -137,6 +144,14 @@ async function loadDocument(url: string | undefined) {
     docError.value = `无法加载 PDF：${msg}`
     loading.value = false
   }
+}
+
+function retryCurrentPage() {
+  if (pageFetchFailed.value) {
+    void loadDocument(src.value, currentPage.value)
+    return
+  }
+  void renderPage(currentPage.value)
 }
 
 function goToPage(raw: number) {
@@ -274,7 +289,7 @@ onBeforeUnmount(() => {
         class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-left text-xs text-amber-200"
       >
         <span>{{ pageError }}</span>
-        <button type="button" class="btn !px-2 !py-0.5 text-xs" @click="renderPage(currentPage)">
+        <button type="button" class="btn !px-2 !py-0.5 text-xs" :disabled="loading" @click="retryCurrentPage()">
           重试当前页
         </button>
       </div>

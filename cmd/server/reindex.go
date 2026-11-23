@@ -80,9 +80,9 @@ func runReindex(ctx context.Context, database *sqlx.DB, store storage.Store, dry
 	var items []struct {
 		ID        string `db:"id"`
 		XMLPath   string `db:"xml_storage_path"`
-		CreatedBy string `db:"created_by"`
+		UpdatedBy string `db:"updated_by"`
 	}
-	if err := database.SelectContext(ctx, &items, `SELECT id, xml_storage_path, COALESCE(created_by, '') AS created_by FROM items ORDER BY id`); err != nil {
+	if err := database.SelectContext(ctx, &items, `SELECT id, xml_storage_path, COALESCE(updated_by, '') AS updated_by FROM items ORDER BY id`); err != nil {
 		return fmt.Errorf("query items: %w", err)
 	}
 
@@ -95,7 +95,7 @@ func runReindex(ctx context.Context, database *sqlx.DB, store storage.Store, dry
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			entry, err := projectItem(ctx, database, store, item.ID, item.XMLPath, item.CreatedBy)
+			entry, err := projectItem(ctx, database, store, item.ID, item.XMLPath, item.UpdatedBy)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("item %s (%s): %v", item.ID, item.XMLPath, err))
 				continue

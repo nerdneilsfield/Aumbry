@@ -458,6 +458,16 @@ func (s *Server) executeIngest(ctx context.Context, in ingestParams) (outcome *i
 		hashBySrc[ra.src] = ra.hash
 	}
 
+	// Rewrite and enforce the 11 MiB storage limit BEFORE uploading assets so oversized documents
+	// fail fast without leaving unreferenced assets in object storage.
+	rewritten, err := doc.RewriteAssets(rewrite)
+	if err != nil {
+		return nil, 0, "", "", nil, nil, err
+	}
+	if len(rewritten) > maxStoredXMLSize {
+		return nil, http.StatusRequestEntityTooLarge, "too_large", "rewritten xml exceeds the 11MB storage limit", nil, nil, nil
+	}
+
 	// Pass 2: upload deduplicated assets via streaming open().
 	uploadedPath := make(map[string]bool, len(stored))
 	for _, asset := range stored {
@@ -470,13 +480,6 @@ func (s *Server) executeIngest(ctx context.Context, in ingestParams) (outcome *i
 		}
 	}
 
-	rewritten, err := doc.RewriteAssets(rewrite)
-	if err != nil {
-		return nil, 0, "", "", nil, nil, err
-	}
-	if len(rewritten) > maxStoredXMLSize {
-		return nil, http.StatusRequestEntityTooLarge, "too_large", "rewritten xml exceeds the 11MB storage limit", nil, nil, nil
-	}
 	// The content is stored under a path derived from its hash, so a version is never overwritten:
 	// the live item keeps serving its old object until the transaction commits the new path.
 	sum := sha256.Sum256(rewritten)
@@ -727,11 +730,11 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 
 	if in.created {
 		_, err = tx.ExecContext(ctx, `INSERT INTO items (id, external_key, type, title, report_date, summary, tags_json,
-			source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by,
+			source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by, updated_by,
 			primary_audio_hash, primary_audio_chapters_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
 			in.id, key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
-			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy,
+			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy, in.createdBy,
 			primaryAudioHash, primaryAudioChaptersJSON)
 	} else {
 		var pre struct {
@@ -760,10 +763,10 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE items SET external_key = COALESCE(?, external_key), type = ?, title = ?,
 			report_date = ?, summary = ?, tags_json = ?, source_agent = ?, canonical_url = ?, related_ids_json = ?,
-			xml_storage_path = ?, plain_text = ?, primary_audio_hash = ?, primary_audio_chapters_json = ?,
+			xml_storage_path = ?, plain_text = ?, updated_by = NULLIF(?, ''), primary_audio_hash = ?, primary_audio_chapters_json = ?,
 			updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			key, meta.Type, meta.Title, meta.Date, meta.Summary, tags,
-			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain,
+			meta.SourceAgent, meta.CanonicalURL, related, in.xmlPath, plain, in.createdBy,
 			primaryAudioHash, primaryAudioChaptersJSON, in.id)
 	}
 	if err != nil {
