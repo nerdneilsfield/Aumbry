@@ -191,4 +191,33 @@ func TestStatusCommand(t *testing.T) {
 			t.Errorf("status error leaked credential fragment %q: %v", secret, connErr)
 		}
 	}
+
+	// Schemeless URL with credentials must never echo userinfo or query tokens in errors.
+	mustRun(t, "config", "set", "--server", "//alice:secret@hub.example?token=leak", "--token", "amb_status_tok")
+	_, badURLErr := runCLI(t, "status")
+	if badURLErr == nil {
+		t.Fatal("expected error for schemeless server URL")
+	}
+	for _, secret := range []string{"alice", "secret", "leak"} {
+		if strings.Contains(badURLErr.Error(), secret) {
+			t.Errorf("invalid URL error leaked credential fragment %q: %v", secret, badURLErr)
+		}
+	}
+
+	// Malformed redirect Location errors must never leak userinfo or query tokens from redirect targets.
+	redirSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "https://bob:redirpw@redir.example:badport/cb?token=redirleak")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer redirSrv.Close()
+	mustRun(t, "config", "set", "--server", redirSrv.URL, "--token", "amb_status_tok")
+	_, redirErr := runCLI(t, "status")
+	if redirErr == nil {
+		t.Fatal("expected error on malformed redirect Location header")
+	}
+	for _, secret := range []string{"bob", "redirpw", "redirleak"} {
+		if strings.Contains(redirErr.Error(), secret) {
+			t.Errorf("redirect error leaked credential fragment %q: %v", secret, redirErr)
+		}
+	}
 }

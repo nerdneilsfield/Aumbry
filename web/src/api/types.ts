@@ -200,7 +200,7 @@ export interface ServerStatus {
   build: ServerVersion
   runtime: RuntimeStatus
   storage: StorageStatus
-  counts: ContentCounts
+  counts?: ContentCounts
   activity: ActivityStatus
   config: ConfigStatus
 }

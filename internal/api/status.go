@@ -287,7 +287,6 @@ func (s *Server) collectServerStatus(ctx context.Context, includeDBStats bool) S
 	}
 
 	if includeDBStats {
-		var counts ContentCounts
 		if rep.Checks["sqlite"] == "ok" {
 			dbCtx, cancel := context.WithTimeout(ctx, statusDBStatsTimeout)
 			sqliteBytes, statsCounts, dbErr := s.collectDBStats(dbCtx)
@@ -299,12 +298,11 @@ func (s *Server) collectServerStatus(ctx context.Context, includeDBStats bool) S
 				}
 			} else {
 				out.Storage.SQLiteBytes = sqliteBytes
-				counts = statsCounts
+				out.Counts = &statsCounts
 			}
 		} else {
 			out.Status = "degraded"
 		}
-		out.Counts = &counts
 	}
 
 	return out

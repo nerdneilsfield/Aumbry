@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -347,6 +348,11 @@ func ingestURL(server string) (string, error) {
 	return endpointURL(server, ingestPath)
 }
 
+var (
+	errURLUserInfoRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://|//)[^/@\s]+@`)
+	errURLQueryRe    = regexp.MustCompile(`\?[^\s"'<>]+`)
+)
+
 // SanitizeURL strips credentials, query parameters, and fragments from a URL before display or logging.
 func SanitizeURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
@@ -354,7 +360,7 @@ func SanitizeURL(raw string) string {
 		return ""
 	}
 	parsed, err := url.Parse(trimmed)
-	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+	if err == nil && parsed.Host != "" {
 		parsed.User = nil
 		parsed.RawQuery = ""
 		parsed.Fragment = ""
@@ -366,26 +372,31 @@ func SanitizeURL(raw string) string {
 	if before, _, ok := strings.Cut(trimmed, "?"); ok {
 		trimmed = before
 	}
-	if scheme, rest, ok := strings.Cut(trimmed, "://"); ok {
-		if at := strings.IndexByte(rest, '@'); at >= 0 {
-			trimmed = scheme + "://" + rest[at+1:]
-		}
-	}
+	trimmed = errURLUserInfoRe.ReplaceAllString(trimmed, "${1}")
 	return strings.TrimRight(trimmed, "/")
 }
 
+func sanitizeErrorMessage(msg string) string {
+	redacted := errURLUserInfoRe.ReplaceAllString(msg, "${1}REDACTED@")
+	return errURLQueryRe.ReplaceAllString(redacted, "?REDACTED")
+}
+
 func formatRequestError(prefix, endpoint string, err error) error {
+	inner := err
 	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		return fmt.Errorf("%s %s: %w", prefix, SanitizeURL(endpoint), urlErr.Err)
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		inner = urlErr.Err
 	}
-	return fmt.Errorf("%s %s: %w", prefix, SanitizeURL(endpoint), err)
+	if errors.Is(inner, context.DeadlineExceeded) || errors.Is(inner, context.Canceled) {
+		return fmt.Errorf("%s %s: %w", prefix, SanitizeURL(endpoint), inner)
+	}
+	return fmt.Errorf("%s %s: %s", prefix, SanitizeURL(endpoint), sanitizeErrorMessage(inner.Error()))
 }
 
 func endpointURL(server string, elem ...string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(server))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", fmt.Errorf("invalid server URL %q: expected http(s)://host", SanitizeURL(server))
+		return "", errors.New("invalid server URL: expected http(s)://host")
 	}
 	return parsed.JoinPath(elem...).String(), nil
 }

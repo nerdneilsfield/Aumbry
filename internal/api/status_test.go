@@ -347,11 +347,15 @@ func TestStatusBusySQLiteDegradesQuickly(t *testing.T) {
 	if elapsed >= 1500*time.Millisecond {
 		t.Fatalf("busy-sqlite admin status took %v, expected fast degraded return", elapsed)
 	}
+	rawBody := string(resp.body)
+	if strings.Contains(rawBody, `"counts"`) || strings.Contains(rawBody, `"sqlite_bytes"`) {
+		t.Fatalf("busy-sqlite admin status must omit unavailable counts and sqlite_bytes: %s", rawBody)
+	}
 	var st ServerStatus
 	if err = json.Unmarshal(resp.body, &st); err != nil {
 		t.Fatal(err)
 	}
-	if st.Status != "degraded" || st.Checks["sqlite"] != "timeout" || st.Counts == nil {
+	if st.Status != "degraded" || st.Checks["sqlite"] != "timeout" || st.Counts != nil || st.Storage.SQLiteBytes != 0 {
 		t.Fatalf("unexpected busy-sqlite status payload: %+v", st)
 	}
 }
