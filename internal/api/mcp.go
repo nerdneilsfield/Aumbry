@@ -130,13 +130,12 @@ func (tr *mcpSessionTracker) acquireExisting(sid, ownerKey string, isPost bool) 
 	}
 	if isPost {
 		rec.inFlightPosts++
-		rec.lastSeen = now
 		tr.sessions[sid] = rec
 	}
 	return true, true
 }
 
-func (tr *mcpSessionTracker) releaseExisting(sid string, isPost bool) {
+func (tr *mcpSessionTracker) releaseExisting(sid string, isPost, touchLastSeen bool) {
 	if !isPost || sid == "" {
 		return
 	}
@@ -150,7 +149,9 @@ func (tr *mcpSessionTracker) releaseExisting(sid string, isPost bool) {
 	if rec.inFlightPosts > 0 {
 		rec.inFlightPosts--
 	}
-	rec.lastSeen = now
+	if touchLastSeen {
+		rec.lastSeen = now
+	}
 	tr.sessions[sid] = rec
 }
 
@@ -337,6 +338,7 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 					ownerKey = ti.UserID
 				}
 				isPost := authedReq.Method == http.MethodPost
+				touchLastSeen := false
 				if sid != "" {
 					found, ok := tracker.acquireExisting(sid, ownerKey, isPost)
 					if !found {
@@ -347,14 +349,17 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 						http.Error(w, "session owner mismatch", http.StatusForbidden)
 						return
 					}
-					defer tracker.releaseExisting(sid, isPost)
+					defer func() {
+						tracker.releaseExisting(sid, isPost, touchLastSeen)
+					}()
 				}
 				if isPost {
 					rc := http.NewResponseController(w)
 					_ = rc.SetReadDeadline(time.Now().Add(mcpAuthedPostReadDeadline))
 					defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
 				}
-				s.serveTrackedMCP(sdkHandler, tracker, ownerKey, "", nil, sid, w, authedReq)
+				accepted := s.serveTrackedMCP(sdkHandler, tracker, ownerKey, "", nil, sid, w, authedReq)
+				touchLastSeen = isPost && accepted
 			}))
 			wrapped.ServeHTTP(w, cloned)
 			return
@@ -365,6 +370,14 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 		}
 		ownerKey := "anon:" + exactIP
 		isPost := r.Method == http.MethodPost
+		if isPost {
+			if !tracker.tryAcquireAnonPost(exactIP) {
+				http.Error(w, "too many concurrent anonymous MCP requests", http.StatusTooManyRequests)
+				return
+			}
+			defer tracker.releaseAnonPost(exactIP)
+		}
+		touchLastSeen := false
 		if sid != "" {
 			found, ok := tracker.acquireExisting(sid, ownerKey, isPost)
 			if !found {
@@ -375,7 +388,9 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 				http.Error(w, "session owner mismatch", http.StatusForbidden)
 				return
 			}
-			defer tracker.releaseExisting(sid, isPost)
+			defer func() {
+				tracker.releaseExisting(sid, isPost, touchLastSeen)
+			}()
 		}
 		reservedInit := false
 		if isPost {
@@ -391,21 +406,17 @@ func (s *Server) newMCPHTTPHandler() http.Handler {
 					}
 				}()
 			}
-			if !tracker.tryAcquireAnonPost(exactIP) {
-				http.Error(w, "too many concurrent anonymous MCP requests", http.StatusTooManyRequests)
-				return
-			}
-			defer tracker.releaseAnonPost(exactIP)
 
 			rc := http.NewResponseController(w)
 			_ = rc.SetReadDeadline(time.Now().Add(mcpAnonPostReadDeadline))
 			defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
 		}
-		s.serveTrackedMCP(sdkHandler, tracker, ownerKey, exactIP, &reservedInit, sid, w, cloned)
+		accepted := s.serveTrackedMCP(sdkHandler, tracker, ownerKey, exactIP, &reservedInit, sid, w, cloned)
+		touchLastSeen = isPost && accepted
 	})
 }
 
-func (s *Server) serveTrackedMCP(sdkHandler http.Handler, tracker *mcpSessionTracker, ownerKey, anonIP string, reservedInit *bool, reqSID string, w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveTrackedMCP(sdkHandler http.Handler, tracker *mcpSessionTracker, ownerKey, anonIP string, reservedInit *bool, reqSID string, w http.ResponseWriter, r *http.Request) bool {
 	cw := &mcpStatusCaptureWriter{
 		ResponseWriter: w,
 		onHeader: func(code int, hdr http.Header) {
@@ -433,6 +444,7 @@ func (s *Server) serveTrackedMCP(sdkHandler http.Handler, tracker *mcpSessionTra
 		},
 	}
 	sdkHandler.ServeHTTP(cw, r)
+	return cw.status == 0 || cw.status < http.StatusBadRequest
 }
 
 func (s *Server) authenticateMCPToken(ctx context.Context, q sqlx.QueryerContext, rawTok string) (kind mcpAuthKind, ownerKey, apiDigest, dirID string, err error) {
@@ -1094,7 +1106,7 @@ func (s *Server) mcpGetItem(ctx context.Context, req *mcp.CallToolRequest, in mc
 			CreatedBy string `db:"created_by"`
 		}
 		err = sqlx.GetContext(ctx, tx, &revRow,
-			`SELECT id, title, summary, report_date, xml_storage_path, COALESCE(created_by, '') AS created_by FROM item_revisions WHERE item_id = ? AND rev = ?`,
+			`SELECT id, title, summary, report_date, xml_storage_path, CASE WHEN author_verified = 1 THEN COALESCE(created_by, '') ELSE '' END AS created_by FROM item_revisions WHERE item_id = ? AND rev = ?`,
 			id, *in.Rev)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, zero, mcpToolError("not_found", "revision not found")
@@ -1289,7 +1301,7 @@ func mcpRevisionCountTx(ctx context.Context, q sqlx.QueryerContext, t *dirTree, 
 		Rev       int    `db:"rev"`
 		CreatedBy string `db:"created_by"`
 	}
-	if err := sqlx.SelectContext(ctx, q, &revs, `SELECT id, rev, COALESCE(created_by, '') AS created_by FROM item_revisions WHERE item_id = ? ORDER BY rev DESC`, itemID); err != nil {
+	if err := sqlx.SelectContext(ctx, q, &revs, `SELECT id, rev, CASE WHEN author_verified = 1 THEN COALESCE(created_by, '') ELSE '' END AS created_by FROM item_revisions WHERE item_id = ? ORDER BY rev DESC`, itemID); err != nil {
 		return 0, err
 	}
 	if len(revs) == 0 {

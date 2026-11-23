@@ -1263,9 +1263,39 @@ func TestV2M2ReviewRegressions(t *testing.T) {
 		if _, rev1Msg, rev1Err := callMCPJSON(t, sessA, "get_item", map[string]any{"id": legacyID, "rev": 1}); !rev1Err || !strings.Contains(rev1Msg, "forbidden") {
 			t.Fatalf("Token A read NULL-updated_by rev=1 = err=%v msg=%q, want forbidden", rev1Err, rev1Msg)
 		}
+
+		// Pre-v0.2.0 v0.1.4 revision migrated with created_by=digestA and author_verified=0 fails closed even when created_by matches Token A.
+		preV02ID := ag.ingestOK(ingestReq{
+			key:  "r2:h1:v014-unverified",
+			xml:  xmlDoc(docOpts{title: "V014 Secret", md: "migrated v014 protected rev"}),
+			dirs: []string{protC},
+		})
+		if _, err := e.db.Exec(`UPDATE item_revisions SET author_verified = 0 WHERE item_id = ? AND rev = 1`, preV02ID); err != nil {
+			t.Fatal(err)
+		}
+		unpubPreReq, _ := http.NewRequest(http.MethodDelete, e.srv.URL+"/api/v1/agent/items/"+preV02ID+"/mounts", nil)
+		unpubPreReq.Header.Set("Authorization", "Bearer "+apiToken)
+		if r := ag.send(unpubPreReq); r.status != http.StatusNoContent {
+			t.Fatalf("unpublish v014 item = %d %s", r.status, r.body)
+		}
+		_ = ag.ingestOK(ingestReq{
+			key:  "r2:h1:v014-unverified",
+			xml:  xmlDoc(docOpts{title: "V020 Public", md: "public sanitized v2"}),
+			dirs: []string{pubQ},
+		})
+		listPre, rawPre, isErr := callMCPJSON(t, sessA, "list_items", map[string]any{"key": "r2:h1:v014-unverified"})
+		if isErr {
+			t.Fatalf("list_items v014-unverified = %s", rawPre)
+		}
+		if gotCnt := int(listPre["items"].([]any)[0].(map[string]any)["revision_count"].(float64)); gotCnt != 1 {
+			t.Fatalf("Token A revision_count for v014 unverified item = %d, want 1", gotCnt)
+		}
+		if _, rev1Msg, rev1Err := callMCPJSON(t, sessA, "get_item", map[string]any{"id": preV02ID, "rev": 1}); !rev1Err || !strings.Contains(rev1Msg, "forbidden") {
+			t.Fatalf("Token A read unverified v0.1.4 rev=1 = err=%v msg=%q, want forbidden", rev1Err, rev1Msg)
+		}
 	})
 
-	t.Run("R2-M1 idle GET SSE does not extend tracker TTL and 404 removes session", func(t *testing.T) {
+	t.Run("R2-M1 idle GET SSE and rejected POSTs do not extend tracker TTL and 404 removes session", func(t *testing.T) {
 		now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
 		tr := newMCPSessionTracker()
 		tr.now = func() time.Time { return now }
@@ -1287,7 +1317,7 @@ func TestV2M2ReviewRegressions(t *testing.T) {
 			if !found || !allowed {
 				t.Fatalf("GET acquire s%d = (%v, %v)", i, found, allowed)
 			}
-			tr.releaseExisting(fmt.Sprintf("s%d", i), false)
+			tr.releaseExisting(fmt.Sprintf("s%d", i), false, false)
 		}
 
 		// At +30m, SDK closes the idle sessions (GET activity did NOT bump lastSeen).
@@ -1297,7 +1327,7 @@ func TestV2M2ReviewRegressions(t *testing.T) {
 		}
 		tr.releaseAnonInitReservation("1.2.3.4")
 
-		// Active POST prevents pruning while in flight and extends lastSeen on completion.
+		// Active POST prevents pruning while in flight and extends lastSeen ONLY when accepted (< 400).
 		tr.bind("active-post", "anon:1.2.3.4", "1.2.3.4", false)
 		if found, allowed := tr.acquireExisting("active-post", "anon:1.2.3.4", true); !found || !allowed {
 			t.Fatalf("POST acquire = (%v, %v)", found, allowed)
@@ -1310,14 +1340,88 @@ func TestV2M2ReviewRegressions(t *testing.T) {
 		if !stillInFlight {
 			t.Fatal("in-flight POST session was pruned early")
 		}
-		tr.releaseExisting("active-post", true)
+		tr.releaseExisting("active-post", true, true)
+
+		// Rejected POST (e.g. 400/415 from serveTrackedMCP) at +29m does NOT refresh lastSeen.
 		now = now.Add(29 * time.Minute)
-		if found, _ := tr.acquireExisting("active-post", "anon:1.2.3.4", false); !found {
-			t.Fatal("POST completion did not refresh lastSeen")
+		if found, allowed := tr.acquireExisting("active-post", "anon:1.2.3.4", true); !found || !allowed {
+			t.Fatalf("rejected POST acquire = (%v, %v)", found, allowed)
+		}
+		req415 := httptest.NewRequest(http.MethodPost, "http://localhost/mcp", strings.NewReader("{}"))
+		rec415 := httptest.NewRecorder()
+		accepted := (&Server{}).serveTrackedMCP(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+			}),
+			tr, "anon:1.2.3.4", "1.2.3.4", nil, "active-post", rec415, req415,
+		)
+		tr.releaseExisting("active-post", true, accepted)
+		if accepted {
+			t.Fatal("415 POST unexpectedly treated as accepted")
 		}
 		now = now.Add(time.Minute)
 		if found, _ := tr.acquireExisting("active-post", "anon:1.2.3.4", false); found {
-			t.Fatal("idle session after POST timeout was not pruned")
+			t.Fatal("rejected 415 POST extended idle session past 30m timeout")
+		}
+
+		// Also verify end-to-end HTTP 429 concurrency rejection returns before acquireExisting/TTL refresh.
+		eHTTP := newEnv(t)
+		initReq, _ := http.NewRequest(http.MethodPost, eHTTP.srv.URL+"/mcp", strings.NewReader(initBody))
+		initReq.Header.Set("Content-Type", "application/json")
+		initReq.Header.Set("Accept", "application/json, text/event-stream")
+		initResp, initErr := http.DefaultClient.Do(initReq)
+		if initErr != nil {
+			t.Fatal(initErr)
+		}
+		_ = initResp.Body.Close()
+		httpSID := initResp.Header.Get(mcpSessionHeader)
+		if initResp.StatusCode != http.StatusOK || httpSID == "" {
+			t.Fatalf("anon init = %d sid=%q", initResp.StatusCode, httpSID)
+		}
+
+		// Saturate mcpMaxAnonConcurrentPostsPerIP with 4 hanging requests against a dummy/valid body via HTTP server.
+		pipes := make([]*io.PipeWriter, mcpMaxAnonConcurrentPostsPerIP)
+		entered := make(chan struct{}, mcpMaxAnonConcurrentPostsPerIP)
+		var postWG sync.WaitGroup
+		for i := range mcpMaxAnonConcurrentPostsPerIP {
+			pr, pw := io.Pipe()
+			pipes[i] = pw
+			postWG.Add(1)
+			go func(r io.Reader) {
+				defer postWG.Done()
+				req, _ := http.NewRequest(http.MethodPost, eHTTP.srv.URL+"/mcp", r)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json, text/event-stream")
+				req.Header.Set(mcpSessionHeader, httpSID)
+				entered <- struct{}{}
+				resp, pErr := http.DefaultClient.Do(req)
+				if pErr == nil {
+					_ = resp.Body.Close()
+				}
+			}(pr)
+			_, _ = pw.Write([]byte(`{"jsonrpc":"2.0",`))
+		}
+		for range mcpMaxAnonConcurrentPostsPerIP {
+			<-entered
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		// Even with an unknown/expired session ID, 429 concurrency cap fires first (never touching session tracker).
+		overReq, _ := http.NewRequest(http.MethodPost, eHTTP.srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+		overReq.Header.Set("Content-Type", "application/json")
+		overReq.Header.Set("Accept", "application/json, text/event-stream")
+		overReq.Header.Set(mcpSessionHeader, "expired-sid-check")
+		overResp, overErr := http.DefaultClient.Do(overReq)
+		if overErr != nil {
+			t.Fatal(overErr)
+		}
+		_ = overResp.Body.Close()
+		for _, pw := range pipes {
+			_ = pw.Close()
+		}
+		postWG.Wait()
+		if overResp.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("saturated anon POST status = %d, want 429 before session tracking", overResp.StatusCode)
 		}
 
 		// SDK 404 from serveTrackedMCP immediately evicts the session from tracker.

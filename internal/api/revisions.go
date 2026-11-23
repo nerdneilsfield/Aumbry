@@ -205,10 +205,14 @@ func (s *Server) maybeSnapshotRevisionTx(ctx context.Context, tx *sqlx.Tx, snap 
 }
 
 func insertRevisionTx(ctx context.Context, tx *sqlx.Tx, t *dirTree, rev int, snap revisionSnapshot, copyAssetsFromItem []string) (int64, error) {
+	authorVerified := 0
+	if snap.createdBy != "" {
+		authorVerified = 1
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO item_revisions
-		(item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
-		snap.itemID, rev, snap.title, snap.summary, snap.date, snap.xmlPath, snap.xmlSHA256, snap.createdBy)
+		(item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256, created_by, author_verified)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+		snap.itemID, rev, snap.title, snap.summary, snap.date, snap.xmlPath, snap.xmlSHA256, snap.createdBy, authorVerified)
 	if err != nil {
 		return 0, err
 	}

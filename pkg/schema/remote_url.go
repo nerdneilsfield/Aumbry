@@ -65,26 +65,56 @@ func isPureASCII(s string) bool {
 	return true
 }
 
+func isValidRelaxedASCIILabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for i := range len(label) {
+		c := label[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 func isValidRelaxedASCIIHost(host string) bool {
 	if host == "" || len(host) > 253 {
 		return false
 	}
-	labels := strings.Split(host, ".")
-	for _, label := range labels {
-		if label == "" || len(label) > 63 {
+	for _, label := range strings.Split(host, ".") {
+		if !isValidRelaxedASCIILabel(label) {
 			return false
-		}
-		if label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for i := range len(label) {
-			c := label[i]
-			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '_' {
-				return false
-			}
 		}
 	}
 	return true
+}
+
+func normalizeUnderscoreHost(rawHost string) (string, bool) {
+	if rawHost == "" || len(rawHost) > 253 || !strings.Contains(rawHost, "_") {
+		return "", false
+	}
+	labels := strings.Split(rawHost, ".")
+	for i, label := range labels {
+		if label == "" || len(label) > 63 {
+			return "", false
+		}
+		if strings.Contains(label, "_") {
+			if !isPureASCII(label) || strings.HasPrefix(label, "xn--") || !isValidRelaxedASCIILabel(label) {
+				return "", false
+			}
+			continue
+		}
+		asciiLabel, err := idna.Lookup.ToASCII(label)
+		if err != nil {
+			return "", false
+		}
+		labels[i] = strings.ToLower(asciiLabel)
+	}
+	return strings.Join(labels, "."), true
 }
 
 // IsRemoteURLCandidate reports whether raw starts with or parses as a remote URL scheme.
@@ -125,10 +155,12 @@ func ValidateRemoteImageURL(raw string) (code, msg, hint string, ok bool) {
 		}
 		return "", "", "", true
 	}
-	host := rawHost
+	var host string
 	if asciiHost, idnaErr := idna.Lookup.ToASCII(rawHost); idnaErr == nil {
 		host = strings.TrimSuffix(strings.ToLower(asciiHost), ".")
-	} else if !isPureASCII(rawHost) || !isValidRelaxedASCIIHost(rawHost) {
+	} else if normHost, normOK := normalizeUnderscoreHost(rawHost); normOK {
+		host = strings.TrimSuffix(strings.ToLower(normHost), ".")
+	} else {
 		return "REMOTE_ASSET_BLOCKED", fmt.Sprintf("remote figure host %q is invalid: %v", u.Hostname(), idnaErr), "use a standard ASCII domain name or public IP", false
 	}
 	if host == "" {

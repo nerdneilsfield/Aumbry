@@ -150,6 +150,61 @@ func TestMigrationLeavesLegacyCreatedByNull(t *testing.T) {
 	}
 }
 
+func TestMigration00008LeavesLegacyRevisionsUnverified(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "data")
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, database.DB, fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.DownTo(ctx, 7); err != nil {
+		t.Fatalf("DownTo(7): %v", err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO items
+		(id, external_key, type, title, report_date, summary, tags_json, source_agent, canonical_url, related_ids_json, xml_storage_path, plain_text, created_by, last_rev)
+		VALUES ('v014item0001', 'v014:k', 'report', 'Legacy V014', '2026-11-23', 'S', '[]', 'a', '', '[]', '/xml/v014.xml', 'pt', 'digestA', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO item_revisions
+		(item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256, created_by)
+		VALUES ('v014item0001', 1, 'Legacy V014', 'S', '2026-11-23', '/xml/v014.xml', 'sha014', 'digestA')`); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("reopen v0.1.4 DB: %v", err)
+	}
+	defer reopened.Close()
+
+	var updatedBy sql.NullString
+	var revCreatedBy sql.NullString
+	var authorVerified int
+	if err = reopened.QueryRowContext(ctx, `SELECT updated_by FROM items WHERE id = 'v014item0001'`).Scan(&updatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if updatedBy.Valid {
+		t.Fatalf("expected v0.1.4 item updated_by NULL, got %q", updatedBy.String)
+	}
+	if err = reopened.QueryRowContext(ctx, `SELECT created_by, author_verified FROM item_revisions WHERE item_id = 'v014item0001' AND rev = 1`).Scan(&revCreatedBy, &authorVerified); err != nil {
+		t.Fatal(err)
+	}
+	if !revCreatedBy.Valid || revCreatedBy.String != "digestA" || authorVerified != 0 {
+		t.Fatalf("v0.1.4 revision = (created_by=%v, author_verified=%d), want ('digestA', 0)", revCreatedBy, authorVerified)
+	}
+}
+
 func TestOpenExistingRejectsMissingDB(t *testing.T) {
 	missingDir := filepath.Join(t.TempDir(), "not-initialized")
 	if _, err := OpenExisting(missingDir); err == nil {

@@ -438,6 +438,9 @@ func TestV12RemoteFiguresAttachmentRefsAndRewriteIsolation(t *testing.T) {
 		"http://ｌｏｃａｌｈｏｓｔ/a.png",
 		"https://a%20b.example.com/a.png",
 		"https://foo..bar.example.com/a.png",
+		"https://xn--0.example/a.png",
+		"https://a_b.xn--0.example/a.png",
+		"https://xn--_bad.example.com/a.png",
 	} {
 		_, issues := Parse([]byte(doc12(`<figure src="`+badURL+`"/>`)), always)
 		if got := codes(issues); !slices.Equal(got, []string{"REMOTE_ASSET_BLOCKED"}) {

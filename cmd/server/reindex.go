@@ -267,10 +267,14 @@ func writeReindexBatch(ctx context.Context, database *sqlx.DB, batch []reindexEn
 				return fmt.Errorf("list mounts for item %s: %w", e.id, err)
 			}
 			if len(mounts) > 0 {
+				authorVerified := 0
+				if e.createdBy != "" {
+					authorVerified = 1
+				}
 				res, insErr := tx.ExecContext(ctx, `INSERT INTO item_revisions
-					(item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256, created_by)
-					VALUES (?, 1, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
-					e.id, e.title, e.summary, e.reportDate, e.xmlPath, e.xmlSHA256, e.createdBy)
+					(item_id, rev, title, summary, report_date, xml_storage_path, xml_sha256, created_by, author_verified)
+					VALUES (?, 1, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+					e.id, e.title, e.summary, e.reportDate, e.xmlPath, e.xmlSHA256, e.createdBy, authorVerified)
 				if insErr != nil {
 					return fmt.Errorf("backfill rev 1 for item %s: %w", e.id, insErr)
 				}

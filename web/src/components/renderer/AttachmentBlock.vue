@@ -25,7 +25,6 @@ const scale = ref(1.25)
 const loading = ref(false)
 const docError = ref('')
 const pageError = ref('')
-const pageFetchFailed = ref(false)
 
 let pdfDoc: PDFDocumentProxy | null = null
 let activeRenderTask: RenderTask | null = null
@@ -63,12 +62,9 @@ async function renderPage(num: number) {
   const serial = ++renderSerial
   cancelRender()
   pageError.value = ''
-  pageFetchFailed.value = false
   loading.value = true
-  let pageLoaded = false
   try {
     const page = await doc.getPage(num)
-    pageLoaded = true
     if (serial !== renderSerial || pdfDoc !== doc || currentPage.value !== num) return
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
@@ -89,8 +85,6 @@ async function renderPage(num: number) {
     if (serial !== renderSerial || pdfDoc !== doc) return
     const msg = err instanceof Error ? err.message : String(err)
     if (!msg.toLowerCase().includes('cancelled')) {
-      // pdf.js caches rejected page Promises on PDFDocumentProxy, so a failed getPage() needs a fresh doc reload.
-      pageFetchFailed.value = !pageLoaded
       pageError.value = `第 ${num} 页渲染失败：${msg}`
     }
   } finally {
@@ -107,7 +101,6 @@ async function loadDocument(url: string | undefined, targetPage?: number) {
   totalPages.value = 0
   docError.value = ''
   pageError.value = ''
-  pageFetchFailed.value = false
 
   if (!url || type.value !== 'pdf') {
     docError.value = '无效的 PDF 附件地址或类型。'
@@ -147,11 +140,8 @@ async function loadDocument(url: string | undefined, targetPage?: number) {
 }
 
 function retryCurrentPage() {
-  if (pageFetchFailed.value) {
-    void loadDocument(src.value, currentPage.value)
-    return
-  }
-  void renderPage(currentPage.value)
+  // Always rebuild PDFDocumentProxy on retry so cached rejected Range/OCG requests do not poison recovery.
+  void loadDocument(src.value, currentPage.value)
 }
 
 function goToPage(raw: number) {
