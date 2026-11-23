@@ -1,5 +1,5 @@
 import { computed, inject, nextTick, provide, reactive, type InjectionKey } from 'vue'
-import { anchorMap, type AnchorInfo } from '@/lib/anchor'
+import { anchorMap, parseAnchorTarget, type AnchorInfo } from '@/lib/anchor'
 import type { Reading } from '@/composables/useReading'
 
 /**
@@ -18,6 +18,8 @@ export interface Anchors {
   activeTabs: Map<Element, string>
   /** interactive <steps> -> active step (0-based) */
   activeSteps: Map<Element, number>
+  /** target page jump commands for <attachment id="..."> blocks triggered by `#att-<id>:p=<N>` */
+  attachmentPages: Map<Element, { page: number; seq: number }>
   /** does the hash point at something in this document? (`#sec-N` and `#stage=N` included) */
   canReveal: (hash: string) => boolean
   /** <next-steps> targets: `^#[a-z0-9-]+$` resolving to an existing element via the prefix table */
@@ -48,6 +50,8 @@ export function provideAnchors(getBody: () => Element | undefined, reading: Read
   const openCollapses = reactive(new Set<Element>())
   const activeTabs = reactive(new Map<Element, string>())
   const activeSteps = reactive(new Map<Element, number>())
+  const attachmentPages = reactive(new Map<Element, { page: number; seq: number }>())
+  let pageJumpSeq = 0
 
   const map = computed(() => {
     const body = getBody()
@@ -74,6 +78,14 @@ export function provideAnchors(getBody: () => Element | undefined, reading: Read
     const target = map.value?.find(hash)
     if (!target) return false
     apply(target)
+    if (target.kind === 'attachment') {
+      const normalizedHash = hash.startsWith('#') ? hash : `#${hash}`
+      const parsed = parseAnchorTarget(normalizedHash)
+      if (parsed?.page) {
+        pageJumpSeq++
+        attachmentPages.set(target.el, { page: parsed.page, seq: pageJumpSeq })
+      }
+    }
     // 4. mounted, then scroll
     await nextTick()
     const el = await waitFor(target.domId)
@@ -102,6 +114,7 @@ export function provideAnchors(getBody: () => Element | undefined, reading: Read
     openCollapses,
     activeTabs,
     activeSteps,
+    attachmentPages,
     canReveal,
     canTarget: (hash) => !!map.value?.findStrict(hash),
     isDuplicate: (el) => !!map.value?.dups.has(el),

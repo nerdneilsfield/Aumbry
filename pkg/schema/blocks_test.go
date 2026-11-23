@@ -978,3 +978,97 @@ func TestV12AudioValidationErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestV12AttachmentAndPageTargets(t *testing.T) {
+	always := Options{HasAsset: func(string) bool { return true }}
+
+	t.Run("attachment inside version 1.1 reports INVALID_ATTACHMENT with upgrade hint", func(t *testing.T) {
+		_, issues := Parse([]byte(doc(`<attachment type="pdf" src="paper.pdf" title="Paper"/>`)), always)
+		if got := codes(issues); !slices.Equal(got, []string{"INVALID_ATTACHMENT"}) {
+			t.Fatalf("codes = %v, want [INVALID_ATTACHMENT] (%+v)", got, issues)
+		}
+		if !strings.Contains(issues[0].Hint, `version="1.2"`) {
+			t.Fatalf("expected upgrade hint mentioning version=\"1.2\", got %+v", issues[0])
+		}
+	})
+
+	cases := []struct {
+		name      string
+		body      string
+		wantCodes []string
+	}{
+		{
+			name: "valid attachment with #att-id and :p=N targets in stages, option, and chapter",
+			body: `<attachment id="paper" type="pdf" src="./papers/main.pdf" title="Main Paper"/>` +
+				`<stages id="g1"><stage id="s1" title="S1"><attachment id="supp" type="pdf" src="supp.pdf" title="Supp"/></stage></stages>` +
+				`<audio src="ep.mp3" title="Ep"><chapter start="00:00:00" title="Sec" target="#att-paper:p=12"/></audio>` +
+				`<next-steps><option target="#att-paper">PDF</option><option target="#att-supp:p=3">Page 3</option></next-steps>`,
+			wantCodes: nil,
+		},
+		{
+			name:      "more than 4 attachments fails INVALID_ATTACHMENT",
+			body:      strings.Repeat(`<attachment type="pdf" src="a.pdf" title="P"/>`, 5),
+			wantCodes: []string{"INVALID_ATTACHMENT"},
+		},
+		{
+			name:      "wrong type fails INVALID_ATTACHMENT",
+			body:      `<attachment type="epub" src="a.pdf" title="P"/>`,
+			wantCodes: []string{"INVALID_ATTACHMENT"},
+		},
+		{
+			name:      "manual pages attribute rejected",
+			body:      `<attachment type="pdf" src="a.pdf" title="P" pages="10"/>`,
+			wantCodes: []string{"INVALID_ATTACHMENT"},
+		},
+		{
+			name:      "missing title fails INVALID_ATTACHMENT",
+			body:      `<attachment type="pdf" src="a.pdf" title="  "/>`,
+			wantCodes: []string{"INVALID_ATTACHMENT"},
+		},
+		{
+			name:      "bad extension fails INVALID_ASSET_TYPE",
+			body:      `<attachment type="pdf" src="a.docx" title="P"/>`,
+			wantCodes: []string{"INVALID_ASSET_TYPE"},
+		},
+		{
+			name:      "attachment disallowed inside collapse",
+			body:      `<collapse title="C"><attachment type="pdf" src="a.pdf" title="P"/></collapse>`,
+			wantCodes: []string{"UNKNOWN_TAG"},
+		},
+		{
+			name:      "attachment duplicate id shares document namespace",
+			body:      `<figure id="dup" src="a.png"/><attachment id="dup" type="pdf" src="a.pdf" title="P"/>`,
+			wantCodes: []string{"DUPLICATE_ID"},
+		},
+		{
+			name:      "p=0 target rejected",
+			body:      `<attachment id="p1" type="pdf" src="a.pdf" title="P"/><next-steps><option target="#att-p1:p=0">Zero</option></next-steps>`,
+			wantCodes: []string{"INVALID_TARGET"},
+		},
+		{
+			name:      "non-numeric page target rejected",
+			body:      `<attachment id="p1" type="pdf" src="a.pdf" title="P"/><next-steps><option target="#att-p1:p=abc">Bad</option></next-steps>`,
+			wantCodes: []string{"INVALID_TARGET"},
+		},
+		{
+			name:      "page suffix on non-attachment anchor rejected",
+			body:      `<section id="intro" title="S"/><next-steps><option target="#s-intro:p=2">Bad</option></next-steps>`,
+			wantCodes: []string{"INVALID_TARGET"},
+		},
+		{
+			name:      "chapter target with p=0 rejected",
+			body:      `<attachment id="p1" type="pdf" src="a.pdf" title="P"/><audio src="a.mp3" title="E"><chapter start="00:00:00" title="C" target="#att-p1:p=0"/></audio>`,
+			wantCodes: []string{"INVALID_TARGET"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, issues := Parse([]byte(doc12(tc.body)), always)
+			got := codes(issues)
+			if strings.Join(got, ",") != strings.Join(tc.wantCodes, ",") {
+				t.Fatalf("codes = %v, want %v (%+v)", got, tc.wantCodes, issues)
+			}
+		})
+	}
+}

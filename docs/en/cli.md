@@ -79,7 +79,7 @@ CLI flags (--dir, --profile)  >  Environment variables (AUMBRY_SERVER, AUMBRY_TO
 
 ### `aumbry validate`
 
-Validate an Aumbry XML file (`version="1.2"` or legacy `version="1.1"`) offline. Relative `<figure src>` and `<audio src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected.
+Validate an Aumbry XML file (`version="1.2"` or legacy `version="1.1"`) offline. Relative `<figure src>`, `<audio src>`, and `<attachment type="pdf" src>` paths resolve against the XML file's parent directory (not your current working directory), and symlinks pointing outside that directory are rejected. For `v1.2` remote `http(s)://` `<figure src>` URLs, **`aumbry validate` stays 100% offline** (no HTTP or DNS calls) and syntactically blocks `userinfo`, `localhost`, loopback, link-local (`169.254.*`), private, or non-canonical numeric hosts with `REMOTE_ASSET_BLOCKED`.
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -111,7 +111,7 @@ valid: examples/minimal-report.xml
 
 ### `aumbry push`
 
-Validate an XML document locally and stream it together with referenced images/audio assets to `POST /api/v1/ingest` (CLI default upload timeout: `5m`).
+Validate an XML document locally and stream it together with referenced local images, audio files, and `.pdf` attachments to `POST /api/v1/ingest` (CLI default upload timeout: `5m`). Remote `http(s)://` `<figure src>` URLs in `version="1.2"` documents are skipped during local multipart file collection and retained in the uploaded XML so the server localizes them safely through its proxy-free SSRF guard (while keeping `<meta><canonical-url>` untouched).
 
 ```sh
 aumbry push <file.xml> [--dir <dir-id>]... [--key <external_key>] [--id <item-id>] [--draft] [--create-only] [--dry-run] [--profile <name>]
@@ -349,3 +349,15 @@ aumbry delete MDUnpJpiAjMo --yes
   built: unknown
   go: go1.27.4 linux/amd64
   ```
+
+## MCP server endpoint (`/mcp`)
+
+`aumbry-server` serves a Streamable HTTP MCP endpoint at **`/mcp`** (`POST`, `GET` SSE, `DELETE`), enabling MCP-capable agents to discover, search, read, validate, and publish text or remote-figure XML reports directly:
+
+- **Three caller identities (headers only — browser cookies are ignored):**
+  1. Unauthenticated (anonymous): public directories and their published items/revisions only.
+  2. `Authorization: Bearer ad_<...>` (directory read token): subtree authorized for that token without penetrating child passwords.
+  3. `Authorization: Bearer <api_token>` with optional `X-Aumbry-Dir-Tokens: ad_...,ad_...`: public directories, token-authorized subtrees, plus the caller token's own drafts, protected items, and revisions (`created_by == digest`); **`push_item` requires an API token**.
+- **Available tools (`6`):** `list_dirs`, `list_items`, `search_items`, `get_item`, `validate_xml`, `push_item`.
+  - `list_items` and `search_items` omit `xml` and `plain_text`, strip unreadable mounts from `dirs`, and intersect explicit `dir_id` filters with caller visibility (so drafts or out-of-subtree items never bypass `dir_id`).
+  - `push_item` shares `/api/v1/ingest` idempotency keys, rate limits, 10 MiB XML cap, and SSRF-safe remote image localization, while rejecting XML referencing local relative binary assets (`invalid_request`, directing the caller to `aumbry push`).

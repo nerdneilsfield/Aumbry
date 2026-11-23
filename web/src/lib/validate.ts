@@ -124,6 +124,7 @@ export { MAX_STAGES_PER_GROUP }
 export const MAX_STAGES_GROUPS = 8
 export const MAX_STAGES = 40
 export const MAX_AUDIO_BLOCKS = 4
+export const MAX_ATTACHMENT_BLOCKS = 4
 export const MAX_AUDIO_CHAPTERS = 100
 export const MAX_TRANSCRIPT_BYTES = 512 * 1024
 
@@ -174,7 +175,24 @@ export function audioIssues(node: Element): Issue[] {
   return out
 }
 
-/** A next-steps target: `^#[a-z0-9-]+$` resolving through the prefix table (s- stages- stage- quiz- fig- eq- ref- audio-) to an existing element. */
+/** Validates a `<attachment type="pdf">` block per v1.2 rules. */
+export function attachmentIssues(node: Element): Issue[] {
+  const out: Issue[] = []
+  const add = (code: string, message: string) => out.push({ code, message })
+  const ptag = node.parentElement?.tagName ?? ''
+  if (!['body', 'section', 'stage'].includes(ptag)) {
+    add('INVALID_ATTACHMENT', 'attachment 只能放在 body、section 或 stage 里')
+  }
+  if (node.hasAttribute('pages')) add('INVALID_ATTACHMENT', 'attachment 不允许手填 pages 属性（由服务端自动检测页数）')
+  if (node.getAttribute('type') !== 'pdf') add('INVALID_ATTACHMENT', 'type 必须是 pdf')
+  if (!attr(node, 'src').trim()) add('INVALID_ATTACHMENT', '缺少 src')
+  if (!attr(node, 'title').trim()) add('INVALID_ATTACHMENT', '缺少 title')
+  const rawId = node.getAttribute('id')
+  if (rawId !== null && !safeId(rawId)) add('INVALID_ID', `attachment 的 id "${clip(rawId)}" 不符合 [a-z0-9-]{1,32}`)
+  return out
+}
+
+/** A next-steps target: prefixed `#...` (with optional `#att-<id>:p=<N>`) resolving to an existing element. */
 export const nextStepTarget = (from: Element, target: string) => !!anchorMap(bodyOf(from)).findStrict(target)
 
 export function nextStepsIssues(node: Element): Issue[] {
@@ -207,6 +225,15 @@ export function validateDoc(body: Element): Issue[] {
     out.push({ code: 'INVALID_AUDIO', message: `一份文档最多 ${MAX_AUDIO_BLOCKS} 个 audio 块`, where: 'audio' })
   }
   for (const a of audios) add(`audio「${clip(attr(a, 'title'))}」`, audioIssues(a))
+
+  const attachments = all('attachment')
+  if (attachments.length > 0 && body.ownerDocument?.documentElement?.getAttribute('version') === '1.1') {
+    out.push({ code: 'INVALID_ATTACHMENT', message: '<attachment> 仅在 <document version="1.2"> 中受支持，请升级文档版本', where: 'attachment' })
+  }
+  if (attachments.length > MAX_ATTACHMENT_BLOCKS) {
+    out.push({ code: 'INVALID_ATTACHMENT', message: `一份文档最多 ${MAX_ATTACHMENT_BLOCKS} 个 attachment 块`, where: 'attachment' })
+  }
+  for (const att of attachments) add(`attachment「${clip(attr(att, 'title'))}」`, attachmentIssues(att))
 
   for (const s of all('section')) {
     if (sectionDepth(s) > MAX_SECTION_DEPTH) out.push({ code: 'SECTION_TOO_DEEP', message: `section 最多嵌套 ${MAX_SECTION_DEPTH} 层`, where: `section「${clip(attr(s, 'title'))}」` })

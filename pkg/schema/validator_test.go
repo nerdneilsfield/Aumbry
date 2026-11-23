@@ -408,3 +408,85 @@ func TestV12AudioAssetsOutgoingLinksAndPrimaryAudio(t *testing.T) {
 		t.Fatalf("PrimaryAudio() after rewrite = %+v", pa2)
 	}
 }
+
+func TestV12RemoteFiguresAttachmentRefsAndRewriteIsolation(t *testing.T) {
+	always := Options{HasAsset: func(string) bool { return true }}
+
+	// v1.1 remote figure suggests upgrading to version="1.2" while preserving INVALID_ASSET_PATH.
+	_, v11Issues := Parse([]byte(doc(`<figure src="https://example.org/img.png"/>`)), always)
+	if len(v11Issues) != 1 || v11Issues[0].Code != "INVALID_ASSET_PATH" || !strings.Contains(v11Issues[0].Message, `1.2`) {
+		t.Fatalf("v1.1 remote figure = %+v", v11Issues)
+	}
+
+	// Offline SSRF validation blocks non-public/localhost/userinfo/non-http(s) URLs.
+	for _, badURL := range []string{
+		"ftp://example.org/a.png",
+		"https://user:pass@example.org/a.png",
+		"http://localhost/a.png",
+		"http://sub.localhost/a.png",
+		"http://127.0.0.1/a.png",
+		"http://[::1]/a.png",
+		"http://[::ffff:127.0.0.1]/a.png",
+		"http://169.254.169.254/latest/meta-data",
+		"http://10.0.0.5/a.png",
+		"http://172.16.5.4/a.png",
+		"http://192.168.1.2/a.png",
+		"http://100.64.0.1/a.png",
+		"http://2130706433/a.png",
+		"http://0x7f000001/a.png",
+	} {
+		_, issues := Parse([]byte(doc12(`<figure src="`+badURL+`"/>`)), always)
+		if got := codes(issues); !slices.Equal(got, []string{"REMOTE_ASSET_BLOCKED"}) {
+			t.Fatalf("bad remote URL %q => %+v, want [REMOTE_ASSET_BLOCKED]", badURL, issues)
+		}
+	}
+
+	// Valid v1.2 remote figure + local attachment + same canonical-url must rewrite ONLY <figure src>.
+	sameURL := "https://cdn.example.org/hero-photo"
+	input := `<document version="1.2"><meta><title>T</title><type>report</type><date>2026-11-23</date><summary>S</summary><source-agent>a</source-agent>` +
+		`<canonical-url>` + sameURL + `</canonical-url></meta><body>` +
+		`<figure src="` + sameURL + `"/>` +
+		`<figure src="./local.png"/>` +
+		`<attachment id="paper" type="pdf" src="./papers/full.pdf" title="PaperTitleToken"/>` +
+		`<next-steps><option target="#att-paper:p=4">Jump p4</option></next-steps>` +
+		`</body></document>`
+
+	d, issues := Parse([]byte(input), always)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %+v", issues)
+	}
+	if !slices.Equal(d.Assets, []string{"local.png", "papers/full.pdf"}) {
+		t.Fatalf("local Assets = %v, remote figure must NOT enter Assets", d.Assets)
+	}
+	if len(d.RemoteFigures) != 1 || d.RemoteFigures[0].URL != sameURL {
+		t.Fatalf("RemoteFigures = %+v", d.RemoteFigures)
+	}
+	if len(d.AttachmentPageRefs) != 1 || d.AttachmentPageRefs[0].Page != 4 || d.AttachmentPageRefs[0].AttachmentSrc != "papers/full.pdf" {
+		t.Fatalf("AttachmentPageRefs = %+v", d.AttachmentPageRefs)
+	}
+	if pt := d.PlainText(); !strings.Contains(pt, "PaperTitleToken") || strings.Contains(pt, "full.pdf") {
+		t.Fatalf("PlainText = %q", pt)
+	}
+
+	rewritten, err := d.RewriteAssets(map[string]string{
+		sameURL:           "/api/v1/assets/" + strings.Repeat("d", 64),
+		"local.png":       "/api/v1/assets/" + strings.Repeat("e", 64),
+		"papers/full.pdf": "/api/v1/assets/" + strings.Repeat("f", 64),
+	})
+	if err != nil {
+		t.Fatalf("RewriteAssets: %v", err)
+	}
+	out := string(rewritten)
+	if !strings.Contains(out, `<canonical-url>`+sameURL+`</canonical-url>`) {
+		t.Fatalf("canonical-url was modified by RewriteAssets:\n%s", out)
+	}
+	if !strings.Contains(out, `<figure src="/api/v1/assets/`+strings.Repeat("d", 64)+`"/>`) {
+		t.Fatalf("remote figure was not rewritten:\n%s", out)
+	}
+	if !strings.Contains(out, `<attachment id="paper" type="pdf" src="/api/v1/assets/`+strings.Repeat("f", 64)+`" title="PaperTitleToken"/>`) {
+		t.Fatalf("attachment src was not rewritten:\n%s", out)
+	}
+	if _, storedIssues := Parse(rewritten, Options{StoredAssets: true}); len(storedIssues) != 0 {
+		t.Fatalf("StoredAssets re-parse = %+v", storedIssues)
+	}
+}

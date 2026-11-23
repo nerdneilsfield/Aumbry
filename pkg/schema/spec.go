@@ -82,7 +82,7 @@ var (
 		"md", "figure", "audio", "callout", "claim", "equation", "mermaid", "chart", "code-block", "quote",
 	}
 	allBlocks = []string{
-		"section", "sources", "md", "figure", "audio", "paper-card", "repo-card", "compare-table", "callout", "collapse",
+		"section", "sources", "md", "figure", "audio", "attachment", "paper-card", "repo-card", "compare-table", "callout", "collapse",
 		"claim", "equation", "mermaid", "chart", "metrics", "steps", "tabs", "timeline", "glossary",
 		"references", "figure-group", "code-block", "quote", "checklist", "search-log", "stages",
 		"quiz", "next-steps", "tldr", "news-item",
@@ -104,6 +104,7 @@ func Spec() ProtocolSpec {
 				"body":          {AllowedParents: []string{"document"}, AllowedChildren: slices.Clone(allBlocks)},
 				"section":       {AllowedParents: []string{"body", "section", "stage"}, AllowedChildren: slices.Clone(allBlocks), Notes: "section depth <= 3"},
 				"audio":         {AllowedParents: []string{"body", "section", "stage", "collapse", "tab", "step"}, AllowedChildren: []string{"chapter", "transcript"}, Notes: `requires <document version="1.2">; 0..100 <chapter> (non-decreasing HH:MM:SS), 0..1 <transcript> (<= 512 KB)`},
+				"attachment":    {AllowedParents: []string{"body", "section", "stage"}, Notes: `requires <document version="1.2">; type="pdf"; max 4 per document`},
 				"stages":        {AllowedParents: []string{"body", "section"}, AllowedChildren: []string{"stage"}, MinChildren: 1, MaxChildren: maxStagesPerGroup, Notes: "cannot be nested inside any stage descendent"},
 				"stage":         {AllowedParents: []string{"stages"}, AllowedChildren: stageChildren, Notes: "allows all body/section blocks and <section>, except nested <stages>"},
 				"collapse":      {AllowedParents: []string{"body", "section", "stage"}, AllowedChildren: collapseChildren, Notes: "allows search-log in addition to leaf blocks"},
@@ -129,20 +130,22 @@ func Spec() ProtocolSpec {
 				"sources":       {AllowedParents: []string{"body", "section", "stage"}, AllowedChildren: []string{"source"}, MinChildren: 1},
 			},
 			DocumentCaps: map[string]int{
-				"audio":   maxAudioBlocks,
-				"mermaid": maxMermaidBlocks,
-				"chart":   maxChartBlocks,
-				"stages":  maxStagesGroups,
-				"stage":   maxTotalStages,
+				"attachment": maxAttachmentBlocks,
+				"audio":      maxAudioBlocks,
+				"mermaid":    maxMermaidBlocks,
+				"chart":      maxChartBlocks,
+				"stages":     maxStagesGroups,
+				"stage":      maxTotalStages,
 			},
 			PositionExceptions: []string{
 				`<audio> requires <document version="1.2"> and at most 4 blocks per document (INVALID_AUDIO)`,
+				`<attachment type="pdf"> requires <document version="1.2">, is allowed in body/section/stage only, and at most 4 blocks per document (INVALID_ATTACHMENT)`,
 				"<stages> may appear multiple times in <body> or <section>, but NEVER inside any <stage> descendent (INVALID_STAGES)",
 				"<tldr> must be a direct child of <body>, <section>, or <stage>, at most 1 per container (INVALID_TLDR)",
 				"<search-log> is allowed inside <collapse> as well as <body>/<section>/<stage>, but not <tab> or <step>",
 				"<section> nesting depth <= 3 counts only <section> ancestors (<stage> does not increment section depth)",
 				`<steps interactive="true"> requires >= 2 <step> elements`,
-				"all IDs across section, stages, stage, quiz, figure, audio, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)",
+				"all IDs across section, stages, stage, quiz, figure, audio, attachment, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)",
 				"positional #sec-<N> anchors cannot be used as <next-steps> or <chapter target> targets (INVALID_TARGET)",
 			},
 		},
@@ -166,10 +169,13 @@ func Spec() ProtocolSpec {
 			{Code: "MISSING_ATTR", Trigger: "required attribute missing or blank"},
 			{Code: "INVALID_ATTR", Trigger: "invalid enum attribute value, empty <next-steps>/<option> text, or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count)"},
 			{Code: "INVALID_URL", Trigger: "URL is not an absolute http(s) URL (canonical-url, paper-card@url|code-url, repo-card@url, source@url, ref@url, quote@url, news-item@url)"},
-			{Code: "INVALID_ASSET_PATH", Trigger: "<figure src> or <audio src> is not a clean relative path inside document directory"},
-			{Code: "INVALID_ASSET_TYPE", Trigger: "<figure src> is not .png/.jpg/.jpeg/.webp/.svg, or <audio src> is not .mp3/.wav/.m4a"},
-			{Code: "MISSING_ASSET", Trigger: "referenced local <figure src> or <audio src> file does not exist"},
+			{Code: "INVALID_ASSET_PATH", Trigger: `<figure src>, <audio src>, or <attachment src> is not a clean relative path inside document directory (or remote <figure src> used in version="1.1")`},
+			{Code: "INVALID_ASSET_TYPE", Trigger: "<figure src> is not .png/.jpg/.jpeg/.webp/.svg, <audio src> is not .mp3/.wav/.m4a, or <attachment src> is not .pdf"},
+			{Code: "MISSING_ASSET", Trigger: "referenced local <figure src>, <audio src>, or <attachment src> file does not exist"},
 			{Code: "INVALID_AUDIO", Trigger: `<audio> used in version="1.1", missing src/title, title >200 runes, >4 audio blocks, >100 chapters, invalid/decreasing <chapter start>, blank/empty <transcript>, or <transcript> >512 KB`},
+			{Code: "INVALID_ATTACHMENT", Trigger: `<attachment> used in version="1.1", type != "pdf", missing src/title, >4 attachment blocks, contains child tags/pages attribute, or uploaded PDF is encrypted (user password) or invalid`},
+			{Code: "REMOTE_ASSET_BLOCKED", Trigger: `<figure src> external URL violates SSRF rules (non-http(s), userinfo, non-public/loopback/private IP or localhost, DNS resolving to non-public IP, proxy bypass) or ingest.allow_remote_images = false`},
+			{Code: "REMOTE_ASSET_FETCH_FAILED", Trigger: "external <figure src> fetch failed on timeout, non-2xx HTTP status, >20 MiB size limit, >5 redirects, >20 unique URLs, or invalid image/SVG payload"},
 			{Code: "TABLE_NO_COLUMNS", Trigger: "<compare-table> missing <columns>/<col>"},
 			{Code: "TABLE_NO_ROWS", Trigger: "<compare-table> has no <row>"},
 			{Code: "TABLE_COL_MISMATCH", Trigger: "<row> <cell> count differs from <columns>/<col> count"},
@@ -209,14 +215,18 @@ func Spec() ProtocolSpec {
 }
 
 func buildAnchorSpecs() []AnchorSpec {
-	order := []string{"section", "stages", "stage", "quiz", "figure", "audio", "equation", "ref"}
+	order := []string{"section", "stages", "stage", "quiz", "figure", "audio", "attachment", "equation", "ref"}
 	out := make([]AnchorSpec, 0, len(order)+1)
 	for _, elem := range order {
 		prefix := anchorPrefixes[elem]
+		format := "#" + prefix + "<id>"
+		if elem == "attachment" {
+			format = "#att-<id> or #att-<id>:p=<N>"
+		}
 		out = append(out, AnchorSpec{
 			Element:              elem,
 			Prefix:               "#" + prefix,
-			Format:               "#" + prefix + "<id>",
+			Format:               format,
 			ValidNextStepsTarget: true,
 		})
 	}
@@ -234,7 +244,7 @@ func buildElementSpecs() []ElementSpec {
 		{
 			Name: "document", Parents: []string{"(root)"}, Children: []string{"meta", "body"},
 			TextMode: "none", Description: "Root element of every Aumbry XML document.",
-			Attributes: []AttrSpec{{Name: "version", Required: true, Values: []string{"1.1", "1.2"}, Description: "Protocol version: 1.2 (current) or 1.1 (legacy, without <audio>)"}},
+			Attributes: []AttrSpec{{Name: "version", Required: true, Values: []string{"1.1", "1.2"}, Description: "Protocol version: 1.2 (current) or 1.1 (legacy, without <audio>, <attachment>, or remote <figure>)"}},
 		},
 		{
 			Name: "meta", Parents: []string{"document"}, Children: []string{"title", "type", "date", "summary", "source-agent", "canonical-url", "tags", "related-ids"},
@@ -265,12 +275,23 @@ func buildElementSpecs() []ElementSpec {
 		{Name: "md", Parents: []string{"body", "section", "stage", "collapse", "tab", "step"}, TextMode: "markdown-cdata", Description: "Rich Markdown content block (wrap in CDATA)."},
 		{
 			Name: "figure", Parents: []string{"body", "section", "stage", "collapse", "tab", "step", "figure-group"},
-			TextMode: "none", Description: "Local image asset reference (.png/.jpg/.jpeg/.webp/.svg).",
+			TextMode: "none", Description: "Image asset reference (.png/.jpg/.jpeg/.webp/.svg) or v1.2 external http(s):// image URL (localized at ingest).",
 			Attributes: []AttrSpec{
-				{Name: "src", Required: true, Description: "Relative local asset path"},
+				{Name: "src", Required: true, Description: "Relative local asset path or v1.2 public http(s):// image URL"},
 				{Name: "caption", Description: "Figure caption (indexed)"},
 				{Name: "id", Pattern: anchorIDRe.String(), Description: "Unique anchor id mapped to #fig-<id>"},
 				{Name: "alt", Description: "Accessibility alt text (falls back to caption)"},
+			},
+		},
+		{
+			Name: "attachment", Parents: []string{"body", "section", "stage"},
+			DocMax: maxAttachmentBlocks, TextMode: "none",
+			Description: `Local PDF attachment (max 4 per doc; requires <document version="1.2">; page count verified at ingest; title is indexed).`,
+			Attributes: []AttrSpec{
+				{Name: "type", Required: true, Values: []string{"pdf"}, Description: `Attachment kind (must be "pdf")`},
+				{Name: "src", Required: true, Description: "Relative local PDF path (.pdf)"},
+				{Name: "title", Required: true, Description: "Non-empty attachment title (indexed)"},
+				{Name: "id", Pattern: anchorIDRe.String(), Description: "Unique anchor id mapped to #att-<id> (page jump via #att-<id>:p=<N>)"},
 			},
 		},
 		{
@@ -291,7 +312,7 @@ func buildElementSpecs() []ElementSpec {
 			Attributes: []AttrSpec{
 				{Name: "start", Required: true, Pattern: chapterStartRe.String(), Description: "Timestamp in HH:MM:SS format (00-59 minutes/seconds)"},
 				{Name: "title", Required: true, Description: "Non-empty chapter title (indexed)"},
-				{Name: "target", Pattern: targetRe.String(), Description: "Optional prefixed in-page anchor target"},
+				{Name: "target", Pattern: targetRe.String(), Description: "Optional prefixed in-page anchor target (supports #att-<id>:p=<N>)"},
 			},
 		},
 		{
@@ -545,7 +566,7 @@ func buildElementSpecs() []ElementSpec {
 			Description: "Quiz answer choice (2-8 per quiz; >=1 correct=\"true\"; excluded from search) OR non-empty navigation button inside <next-steps> (1-5 per block; excluded from search).",
 			Attributes: []AttrSpec{
 				{Name: "correct", Values: slices.Clone(boolStrings), Description: "Quiz correctness flag (valid inside <quiz>)"},
-				{Name: "target", Pattern: targetRe.String(), Description: "Prefixed in-page anchor target (required inside <next-steps>)"},
+				{Name: "target", Pattern: targetRe.String(), Description: "Prefixed in-page anchor target including #att-<id>:p=<N> (required inside <next-steps>)"},
 			},
 		},
 		{Name: "explain", Parents: []string{"quiz"}, TextMode: "text", Description: "Optional explanation shown after quiz submission (0-1 per quiz; indexed)."},

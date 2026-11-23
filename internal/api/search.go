@@ -43,16 +43,18 @@ type searchResponse struct {
 }
 
 // searchQuery describes one search. dirIDs restricts results to items mounted in any of them
-// (nil means no restriction, an empty non-nil slice matches nothing).
+// (nil means no restriction, an empty non-nil slice matches nothing unless ownerDigest or subtreeDirIDs allows it).
 type searchQuery struct {
-	text      string
-	dirIDs    []string
-	typ       string
-	tag       string
-	from, to  string
-	unmounted bool
-	limit     int
-	offset    int
+	text          string
+	dirIDs        []string
+	subtreeDirIDs []string // optional explicit dir_id filter intersected with caller permissions
+	ownerDigest   string   // when set (MCP API token), also includes items created_by == ownerDigest
+	typ           string
+	tag           string
+	from, to      string
+	unmounted     bool
+	limit         int
+	offset        int
 }
 
 // likeEscaper escapes LIKE wildcards; the pattern is used with ESCAPE '\'.
@@ -150,8 +152,21 @@ func buildSearch(q searchQuery) (builtSearch, error) {
 		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	if q.dirIDs != nil {
+		switch {
+		case q.ownerDigest != "" && len(q.dirIDs) > 0:
+			where = append(where, `(i.id IN (SELECT item_id FROM directory_items WHERE directory_id IN (?)) OR i.created_by = ?)`)
+			args = append(args, q.dirIDs, q.ownerDigest)
+		case q.ownerDigest != "":
+			where = append(where, `i.created_by = ?`)
+			args = append(args, q.ownerDigest)
+		default:
+			where = append(where, `i.id IN (SELECT item_id FROM directory_items WHERE directory_id IN (?))`)
+			args = append(args, q.dirIDs)
+		}
+	}
+	if len(q.subtreeDirIDs) > 0 {
 		where = append(where, `i.id IN (SELECT item_id FROM directory_items WHERE directory_id IN (?))`)
-		args = append(args, q.dirIDs)
+		args = append(args, q.subtreeDirIDs)
 	}
 	if q.unmounted {
 		where = append(where, `NOT EXISTS (SELECT 1 FROM directory_items di WHERE di.item_id = i.id)`)
@@ -185,7 +200,11 @@ func buildSearch(q searchQuery) (builtSearch, error) {
 }
 
 func (s *Server) search(ctx context.Context, q searchQuery) ([]searchResult, error) {
-	if q.dirIDs != nil && len(q.dirIDs) == 0 {
+	return s.searchFrom(ctx, s.db, q)
+}
+
+func (s *Server) searchFrom(ctx context.Context, runner sqlx.QueryerContext, q searchQuery) ([]searchResult, error) {
+	if q.dirIDs != nil && len(q.dirIDs) == 0 && q.ownerDigest == "" {
 		return []searchResult{}, nil
 	}
 	built, err := buildSearch(q)
@@ -193,7 +212,7 @@ func (s *Server) search(ctx context.Context, q searchQuery) ([]searchResult, err
 		return nil, err
 	}
 	var rows []searchRow
-	if err := s.db.SelectContext(ctx, &rows, built.sql, built.args...); err != nil {
+	if err := sqlx.SelectContext(ctx, runner, &rows, built.sql, built.args...); err != nil {
 		return nil, err
 	}
 	results := make([]searchResult, len(rows))

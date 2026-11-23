@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="1.2">
+  <meta>
+    <title>v1.2 特性示例：PDF 原文附件、页码跳转与公网外链插图</title>
+    <type>post</type>
+    <date>2026-11-23</date>
+    <summary>展示 v1.2 新增的 PDF 原文附件（#att-&lt;id&gt;:p=N 页跳转）与公网外链图片自动转存语法。</summary>
+    <source-agent>aumbry-agent</source-agent>
+    <canonical-url>https://example.org/papers/sample-brief</canonical-url>
+    <tags>
+      <tag>v1.2</tag>
+      <tag>PDF Attachment</tag>
+    </tags>
+  </meta>
+  <body>
+    <md><![CDATA[
+这篇简短示例演示 `<document version="1.2">` 的两项新能力：
+
+1. 使用 `<attachment type="pdf">` 挂载随附 PDF（服务端按需 `Range` 流式分片传输并在站内按 Canvas 懒加载渲染，详见 [附件第 2 页](#att-brief:p=2)）。
+2. 使用 `http(s)://` 公网图片外链作为 `<figure src>`，由 `ingest` 自动按 SSRF 防线转存为站点私有资产（而 `<meta><canonical-url>` 会完整保留原链接）。
+    ]]></md>
+
+    <figure id="remote-diagram" src="https://example.org/assets/diagram.png" alt="远程示意图" caption="图 1：由服务端自动转存的公网图片外链示例"/>
+
+    <attachment id="brief" type="pdf" src="./imgs/sample-brief.pdf" title="随附 PDF 简报样本（2 页）"/>
+
+    <next-steps>
+      <option target="#att-brief:p=2">跳转到 PDF 第 2 页</option>
+      <option target="#fig-remote-diagram">查看示意图</option>
+    </next-steps>
+  </body>
+</document>

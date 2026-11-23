@@ -5,6 +5,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -31,27 +32,35 @@ const (
 
 type queryTokenKey struct{}
 
-// RouterOptions configures proxy trust, readiness probing, feeds, revisions, and ingest limits on the HTTP router.
+// RouterOptions configures proxy trust, readiness probing, feeds, revisions, ingest limits, and MCP options.
 type RouterOptions struct {
-	TrustedProxies      []netip.Prefix
-	ReadyCacheTTL       time.Duration
-	ReadyTimeout        time.Duration
-	PublicURL           string
-	MaxRevisionsPerItem *int
-	MaxIngestBodyBytes  int64
+	TrustedProxies         []netip.Prefix
+	ReadyCacheTTL          time.Duration
+	ReadyTimeout           time.Duration
+	PublicURL              string
+	MaxRevisionsPerItem    *int
+	MaxIngestBodyBytes     int64
+	AllowRemoteImages      *bool
+	remoteImageClient      *http.Client                                                      // optional test hook overriding outbound remote image transport
+	remoteImageDialContext func(ctx context.Context, network, addr string) (net.Conn, error) // optional test hook for dialing public test servers
 }
 
 // Server holds the dependencies shared by all handlers.
 type Server struct {
-	db             *sqlx.DB
-	store          storage.Store
-	auth           *auth.Sessions
-	logger         *slog.Logger
-	ready          *ReadinessChecker
-	publicURL      string
-	maxRevisions   int
-	maxIngestBody  int64
-	trustedProxies []netip.Prefix
+	db                     *sqlx.DB
+	store                  storage.Store
+	auth                   *auth.Sessions
+	logger                 *slog.Logger
+	ready                  *ReadinessChecker
+	publicURL              string
+	maxRevisions           int
+	maxIngestBody          int64
+	allowRemoteImages      bool
+	remoteImageClient      *http.Client
+	remoteImageDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+	ingestSem              chan struct{}
+	writeRate              *httprate.RateLimiter
+	trustedProxies         []netip.Prefix
 }
 
 // NewRouter creates the API routes and embedded frontend handler.
@@ -72,16 +81,26 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 	if maxIngest <= 0 {
 		maxIngest = defaultRouterIngestBody
 	}
+	allowRemote := true
+	if opt.AllowRemoteImages != nil {
+		allowRemote = *opt.AllowRemoteImages
+	}
+	writeRL := newWriteRateLimiter()
 	s := &Server{
-		db:             database,
-		store:          store,
-		auth:           sessions,
-		logger:         logger,
-		ready:          NewReadinessChecker(database, store, logger, opt.ReadyCacheTTL, opt.ReadyTimeout),
-		publicURL:      strings.TrimRight(strings.TrimSpace(opt.PublicURL), "/"),
-		maxRevisions:   maxRevs,
-		maxIngestBody:  maxIngest,
-		trustedProxies: opt.TrustedProxies,
+		db:                     database,
+		store:                  store,
+		auth:                   sessions,
+		logger:                 logger,
+		ready:                  NewReadinessChecker(database, store, logger, opt.ReadyCacheTTL, opt.ReadyTimeout),
+		publicURL:              strings.TrimRight(strings.TrimSpace(opt.PublicURL), "/"),
+		maxRevisions:           maxRevs,
+		maxIngestBody:          maxIngest,
+		allowRemoteImages:      allowRemote,
+		remoteImageClient:      opt.remoteImageClient,
+		remoteImageDialContext: opt.remoteImageDialContext,
+		ingestSem:              make(chan struct{}, ingestConcurrencyLimit),
+		writeRate:              writeRL,
+		trustedProxies:         opt.TrustedProxies,
 	}
 
 	logSchema := httplog.SchemaECS.Concise(true)
@@ -100,16 +119,16 @@ func NewRouter(database *sqlx.DB, store storage.Store, sessions *auth.Sessions, 
 
 	router.Get("/healthz", health)
 	router.Get("/readyz", s.readyz)
+	router.Handle("/mcp", s.newMCPHTTPHandler())
 	router.Get("/feeds/{dir_id}/rss.xml", s.getDirRSS)
 	router.Get("/feeds/{dir_id}/podcast.xml", s.getDirPodcast)
 	router.Get("/feeds/{dir_id}/assets/{hash}", s.getFeedAsset)
 	router.Head("/feeds/{dir_id}/assets/{hash}", s.getFeedAsset)
 
 	router.Route("/api/v1", func(r chi.Router) {
-		writeLimit := writeLimiter()
 		r.Group(func(r chi.Router) {
-			r.Use(writeLimit)
-			r.With(middleware.Throttle(ingestConcurrencyLimit)).Post("/ingest", s.ingest)
+			r.Use(writeRL.Handler)
+			r.Post("/ingest", s.ingest)
 			r.Route("/agent", func(r chi.Router) {
 				r.Use(s.requireAgentToken)
 				r.Get("/dirs", s.agentDirs)
@@ -219,10 +238,10 @@ func attemptLimiter() func(http.Handler) http.Handler {
 	)
 }
 
-// writeLimiter allows 120 requests per minute per client IP across write/agent endpoints.
-func writeLimiter() func(http.Handler) http.Handler {
-	return httprate.LimitBy(writeRateLimitPerMin, time.Minute,
-		clientIPKey,
+// newWriteRateLimiter allows 120 requests per minute per client IP across write, agent, and MCP push endpoints.
+func newWriteRateLimiter() *httprate.RateLimiter {
+	return httprate.NewRateLimiter(writeRateLimitPerMin, time.Minute,
+		httprate.WithKeyFuncs(clientIPKey),
 		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "too_many_requests", "rate limit exceeded, try again later")
 		}),

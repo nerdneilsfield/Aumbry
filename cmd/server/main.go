@@ -143,6 +143,7 @@ func runServer(ctx context.Context, configPath string, logger *slog.Logger) erro
 		PublicURL:           cfg.PublicURL,
 		MaxRevisionsPerItem: cfg.Revisions.MaxPerItem,
 		MaxIngestBodyBytes:  cfg.ResolvedMaxIngestBodyBytes(),
+		AllowRemoteImages:   cfg.Ingest.AllowRemoteImages,
 	})
 	if err != nil {
 		return err

@@ -49,6 +49,8 @@ max_per_item = 20
 # Server temporary storage should reserve at least 4 x max_body_mb for concurrent uploads.
 # (env: AUMBRY_INGEST_MAX_BODY_MB)
 max_body_mb = 200
+# Fetch and localize remote <figure src="http(s)://..."> images in v1.2 documents (env: AUMBRY_INGEST_ALLOW_REMOTE_IMAGES)
+allow_remote_images = true
 
 [admin]
 # Administrator username (env: AUMBRY_ADMIN_USER, required)

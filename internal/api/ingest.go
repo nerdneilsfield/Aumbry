@@ -27,6 +27,7 @@ import (
 const (
 	maxXMLSize   = 10 << 20
 	maxImageSize = 20 << 20
+	maxPDFSize   = 50 << 20
 	maxAudioSize = 100 << 20
 	// formMemory is how much of the multipart form is held in memory before it spills to disk.
 	formMemory = 32 << 20
@@ -48,12 +49,13 @@ var audioAssetExts = map[string]string{
 
 type storedAsset struct {
 	src             string
-	fh              *multipart.FileHeader
+	open            func() (io.ReadSeekCloser, error)
 	hash            string
 	mime            string
 	path            string
 	size            int64
 	durationSeconds *int
+	pageCount       *int
 }
 
 func dedupe(values []string) []string {
@@ -135,16 +137,9 @@ func parseOptionalBoolField(form *multipart.Form, name string) (bool, error) {
 	}
 }
 
-// externalKeyField returns the trimmed external_key form field: 1 to 200 characters without control characters.
-func externalKeyField(form *multipart.Form) (string, error) {
-	vals, present := form.Value["external_key"]
-	if !present {
-		return "", nil
-	}
-	if len(vals) > 1 {
-		return "", errors.New("duplicate external_key field")
-	}
-	trimmed := strings.TrimSpace(vals[0])
+// normalizeExternalKey validates a non-empty external_key string: 1 to 200 UTF-8 runes, no control characters.
+func normalizeExternalKey(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", errors.New("external_key must not be blank")
 	}
@@ -162,6 +157,53 @@ func externalKeyField(form *multipart.Form) (string, error) {
 	return trimmed, nil
 }
 
+// externalKeyField returns the trimmed external_key form field: 1 to 200 characters without control characters.
+func externalKeyField(form *multipart.Form) (string, error) {
+	vals, present := form.Value["external_key"]
+	if !present {
+		return "", nil
+	}
+	if len(vals) > 1 {
+		return "", errors.New("duplicate external_key field")
+	}
+	return normalizeExternalKey(vals[0])
+}
+
+type ingestParams struct {
+	tokenDigest string
+	draft       bool
+	createOnly  bool
+	externalKey string
+	itemID      string
+	dirs        []string
+	fileLabel   string
+	xmlBytes    []byte
+	uploads     map[string]*multipart.FileHeader
+}
+
+type ingestOutcome struct {
+	ID        string   `json:"id"`
+	Type      string   `json:"type"`
+	URL       string   `json:"url"`
+	Dirs      []string `json:"dirs"`
+	Assets    int      `json:"assets"`
+	Created   bool     `json:"created"`
+	Draft     bool     `json:"draft"`
+	Published bool     `json:"published"`
+}
+
+func (s *Server) acquireIngestSlot() (func(), bool) {
+	if s.ingestSem == nil {
+		return func() {}, true
+	}
+	select {
+	case s.ingestSem <- struct{}{}:
+		return func() { <-s.ingestSem }, true
+	default:
+		return nil, false
+	}
+}
+
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	tokenDigest, ok := s.auth.AuthenticateToken(r.Header.Get("Authorization"))
 	if !ok {
@@ -169,6 +211,12 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "a valid API token is required")
 		return
 	}
+	release, slotOK := s.acquireIngestSlot()
+	if !slotOK {
+		writeError(w, http.StatusTooManyRequests, "too_many_requests", "too many concurrent ingest requests, try again later")
+		return
+	}
+	defer release()
 	ctx := r.Context()
 
 	maxBody := s.maxIngestBody
@@ -205,14 +253,6 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemID := strings.TrimSpace(r.FormValue("item_id"))
-	if createOnly && itemID != "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "create_only cannot be used together with item_id")
-		return
-	}
-	if createOnly && externalKey == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "create_only requires external_key")
-		return
-	}
 
 	xmlFiles := form.File["xml"]
 	if len(xmlFiles) != 1 {
@@ -249,115 +289,175 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		uploads[src] = fh
 	}
 	dirs := splitDirs(form.Value["dirs"])
-	if draft && len(dirs) > 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "draft cannot be combined with dirs")
-		return
-	}
-	missing, err := s.missingDirs(ctx, dirs)
-	if err != nil {
-		internalError(w, r, err)
-		return
-	}
-	if len(missing) > 0 {
-		writeError(w, http.StatusBadRequest, "unknown_dirs", "unknown directories: "+strings.Join(missing, ", "))
-		return
-	}
-
-	// Which item is written.
-	created := false
-	switch {
-	case createOnly:
-		var existingID string
-		err = s.db.GetContext(ctx, &existingID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
-		if err == nil {
-			writeError(w, http.StatusConflict, "key_exists", "external_key already exists")
-			return
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			internalError(w, r, err)
-			return
-		}
-	case itemID != "":
-		var exists bool
-		err = s.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM items WHERE id = ?)`, itemID)
-		if err != nil {
-			internalError(w, r, err)
-			return
-		}
-		if !exists {
-			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
-			return
-		}
-	case externalKey != "":
-		err = s.db.GetContext(ctx, &itemID, `SELECT id FROM items WHERE external_key = ?`, externalKey)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			internalError(w, r, err)
-			return
-		}
-	}
-	if itemID == "" {
-		id, idErr := newID()
-		if idErr != nil {
-			internalError(w, r, idErr)
-			return
-		}
-		itemID, created = id, true
-	} else if draft {
-		mounts, mountErr := itemMounts(ctx, s.db, itemID)
-		if mountErr != nil {
-			internalError(w, r, mountErr)
-			return
-		}
-		if len(mounts) > 0 {
-			writeError(w, http.StatusConflict, "already_published",
-				"item is already published; run `aumbry unpublish` first or push without --draft")
-			return
-		}
-	}
-
-	// Schema validation; a local figure or audio exists when its file was uploaded.
 	input, err := readFile(xmlHeader, maxXMLSize)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
-	doc, issues := schema.Parse(input, schema.Options{HasAsset: func(src string) bool { return uploads[src] != nil }})
-	if doc == nil || len(issues) > 0 {
-		writeJSON(w, http.StatusUnprocessableEntity, invalidResult(xmlHeader.Filename, issues...))
+
+	outcome, status, code, msg, valRes, storageErr, internalErr := s.executeIngest(ctx, ingestParams{
+		tokenDigest: tokenDigest,
+		draft:       draft,
+		createOnly:  createOnly,
+		externalKey: externalKey,
+		itemID:      itemID,
+		dirs:        dirs,
+		fileLabel:   xmlHeader.Filename,
+		xmlBytes:    input,
+		uploads:     uploads,
+	})
+	if storageErr != nil {
+		s.storageError(w, r, storageErr)
 		return
 	}
+	if internalErr != nil {
+		internalError(w, r, internalErr)
+		return
+	}
+	if valRes != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, valRes)
+		return
+	}
+	if status != 0 {
+		writeError(w, status, code, msg)
+		return
+	}
+	httpStatus := http.StatusOK
+	if outcome.Created {
+		httpStatus = http.StatusCreated
+	}
+	writeJSON(w, httpStatus, outcome)
+}
 
-	// Pass 1: stream-validate & hash every asset without buffering entire binary files in memory.
-	stored := make([]storedAsset, 0, len(doc.AssetRefs))
-	rewrite := make(map[string]string, len(doc.AssetRefs))
-	hashBySrc := make(map[string]string, len(doc.AssetRefs))
+func (s *Server) executeIngest(ctx context.Context, in ingestParams) (outcome *ingestOutcome, errStatus int, errCode, errMsg string, valRes *schema.ValidationResult, storageErr, internalErr error) {
+	if len(in.xmlBytes) > maxXMLSize {
+		return nil, http.StatusRequestEntityTooLarge, "too_large", "xml exceeds the 10MB limit", nil, nil, nil
+	}
+	if in.createOnly && in.itemID != "" {
+		return nil, http.StatusBadRequest, "invalid_request", "create_only cannot be used together with item_id", nil, nil, nil
+	}
+	if in.createOnly && in.externalKey == "" {
+		return nil, http.StatusBadRequest, "invalid_request", "create_only requires external_key", nil, nil, nil
+	}
+	if in.draft && len(in.dirs) > 0 {
+		return nil, http.StatusBadRequest, "invalid_request", "draft cannot be combined with dirs", nil, nil, nil
+	}
+	missing, err := s.missingDirs(ctx, in.dirs)
+	if err != nil {
+		return nil, 0, "", "", nil, nil, err
+	}
+	if len(missing) > 0 {
+		return nil, http.StatusBadRequest, "unknown_dirs", "unknown directories: " + strings.Join(missing, ", "), nil, nil, nil
+	}
+
+	itemID := in.itemID
+	created := false
+	switch {
+	case in.createOnly:
+		var existingID string
+		err = s.db.GetContext(ctx, &existingID, `SELECT id FROM items WHERE external_key = ?`, in.externalKey)
+		if err == nil {
+			return nil, http.StatusConflict, "key_exists", "external_key already exists", nil, nil, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, "", "", nil, nil, err
+		}
+	case itemID != "":
+		var exists bool
+		err = s.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM items WHERE id = ?)`, itemID)
+		if err != nil {
+			return nil, 0, "", "", nil, nil, err
+		}
+		if !exists {
+			return nil, http.StatusNotFound, "not_found", "item_id does not exist", nil, nil, nil
+		}
+	case in.externalKey != "":
+		err = s.db.GetContext(ctx, &itemID, `SELECT id FROM items WHERE external_key = ?`, in.externalKey)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, "", "", nil, nil, err
+		}
+	}
+	if itemID == "" {
+		id, idErr := newID()
+		if idErr != nil {
+			return nil, 0, "", "", nil, nil, idErr
+		}
+		itemID, created = id, true
+	} else if in.draft {
+		mounts, mountErr := itemMounts(ctx, s.db, itemID)
+		if mountErr != nil {
+			return nil, 0, "", "", nil, nil, mountErr
+		}
+		if len(mounts) > 0 {
+			return nil, http.StatusConflict, "already_published",
+				"item is already published; run `aumbry unpublish` first or push without --draft", nil, nil, nil
+		}
+	}
+
+	doc, issues := schema.Parse(in.xmlBytes, schema.Options{HasAsset: func(src string) bool { return in.uploads[src] != nil }})
+	if doc == nil || len(issues) > 0 {
+		res := invalidResult(in.fileLabel, issues...)
+		return nil, 0, "", "", &res, nil, nil
+	}
+
+	// Pass 1: stream-validate & hash every local asset without buffering entire binary files in memory.
+	stored := make([]storedAsset, 0, len(doc.AssetRefs)+len(doc.RemoteFigures))
+	rewrite := make(map[string]string, len(doc.AssetRefs)+len(doc.RemoteFigures))
+	hashBySrc := make(map[string]string, len(doc.AssetRefs)+len(doc.RemoteFigures))
+	pageCountBySrc := make(map[string]int)
 	var assetIssues []schema.ValidationError
 
 	for _, ref := range doc.AssetRefs {
-		fh := uploads[ref.Path]
+		fh := in.uploads[ref.Path]
 		asset, issue, tooBigMsg, inspectErr := inspectUploadedAsset(ref, fh)
 		if inspectErr != nil {
-			internalError(w, r, inspectErr)
-			return
+			return nil, 0, "", "", nil, nil, inspectErr
 		}
 		if tooBigMsg != "" {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", tooBigMsg)
-			return
+			return nil, http.StatusRequestEntityTooLarge, "too_large", tooBigMsg, nil, nil, nil
 		}
 		if issue != nil {
 			assetIssues = append(assetIssues, *issue)
 			continue
 		}
+		if asset.pageCount != nil {
+			pageCountBySrc[ref.Path] = *asset.pageCount
+		}
 		stored = append(stored, asset)
 		rewrite[ref.Path] = "/api/v1/assets/" + asset.hash
 		hashBySrc[ref.Path] = asset.hash
 	}
+	for _, pr := range doc.AttachmentPageRefs {
+		maxPage := pageCountBySrc[pr.AttachmentSrc]
+		if maxPage > 0 && (pr.Page < 1 || pr.Page > maxPage) {
+			assetIssues = append(assetIssues, schema.ValidationError{
+				Line:    pr.Line,
+				Code:    "INVALID_TARGET",
+				Field:   pr.Field,
+				Message: fmt.Sprintf("page target %q exceeds PDF %q page count (%d)", pr.Target, pr.AttachmentSrc, maxPage),
+				Hint:    fmt.Sprintf("use a page number between 1 and %d", maxPage),
+			})
+		}
+	}
 	if len(assetIssues) > 0 {
-		writeJSON(w, http.StatusUnprocessableEntity, invalidResult(xmlHeader.Filename, assetIssues...))
-		return
+		res := invalidResult(in.fileLabel, assetIssues...)
+		return nil, 0, "", "", &res, nil, nil
 	}
 
-	// Pass 2: upload deduplicated assets via streaming multipart.File.
+	// Pass 1b: SSRF-safe localization of remote <figure src="http(s)://..."> assets (v1.2).
+	remoteAssets, remoteCleanup, remoteIssues := s.localizeRemoteImages(ctx, doc.RemoteFigures)
+	defer remoteCleanup()
+	if len(remoteIssues) > 0 {
+		res := invalidResult(in.fileLabel, remoteIssues...)
+		return nil, 0, "", "", &res, nil, nil
+	}
+	for _, ra := range remoteAssets {
+		stored = append(stored, ra)
+		rewrite[ra.src] = "/api/v1/assets/" + ra.hash
+		hashBySrc[ra.src] = ra.hash
+	}
+
+	// Pass 2: upload deduplicated assets via streaming open().
 	uploadedPath := make(map[string]bool, len(stored))
 	for _, asset := range stored {
 		if uploadedPath[asset.path] {
@@ -365,15 +465,13 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		}
 		uploadedPath[asset.path] = true
 		if uploadErr := s.uploadStoredAsset(ctx, asset); uploadErr != nil {
-			s.storageError(w, r, uploadErr)
-			return
+			return nil, 0, "", "", nil, uploadErr, nil
 		}
 	}
 
 	rewritten, err := doc.RewriteAssets(rewrite)
 	if err != nil {
-		internalError(w, r, err)
-		return
+		return nil, 0, "", "", nil, nil, err
 	}
 	// The content is stored under a path derived from its hash, so a version is never overwritten:
 	// the live item keeps serving its old object until the transaction commits the new path.
@@ -385,65 +483,65 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		err = s.store.Put(ctx, xmlPath, bytes.NewReader(rewritten))
 	}
 	if err != nil {
-		s.storageError(w, r, err)
-		return
+		return nil, 0, "", "", nil, err, nil
 	}
 
 	mounted, err := s.saveItem(ctx, saveItem{
 		id:          itemID,
 		created:     created,
-		draft:       draft,
-		externalKey: externalKey,
-		createdBy:   tokenDigest,
+		draft:       in.draft,
+		externalKey: in.externalKey,
+		createdBy:   in.tokenDigest,
 		doc:         doc,
 		xmlPath:     xmlPath,
 		xmlSHA256:   xmlSHA256,
 		assets:      stored,
 		hashBySrc:   hashBySrc,
-		dirs:        dirs,
+		dirs:        in.dirs,
 	})
 	if err != nil {
-		// Leave xmlPath in storage on failure so concurrent ingests sharing the same content-hashed path
-		// never lose their live object. Any unreferenced remnants are cleaned up by offline `aumbry-server gc`.
 		switch {
 		case errors.Is(err, errAlreadyPublished):
-			writeError(w, http.StatusConflict, "already_published",
-				"item is already published; run `aumbry unpublish` first or push without --draft")
+			return nil, http.StatusConflict, "already_published",
+				"item is already published; run `aumbry unpublish` first or push without --draft", nil, nil, nil
 		case errors.Is(err, sql.ErrNoRows):
-			writeError(w, http.StatusNotFound, "not_found", "item_id does not exist")
+			return nil, http.StatusNotFound, "not_found", "item_id does not exist", nil, nil, nil
 		case db.IsUniqueViolation(err):
-			if createOnly {
-				writeError(w, http.StatusConflict, "key_exists", "external_key already exists")
-			} else {
-				writeError(w, http.StatusConflict, "conflict", "external_key is already used by another item")
+			if in.createOnly {
+				return nil, http.StatusConflict, "key_exists", "external_key already exists", nil, nil, nil
 			}
+			return nil, http.StatusConflict, "conflict", "external_key is already used by another item", nil, nil, nil
 		default:
-			internalError(w, r, err)
+			return nil, 0, "", "", nil, nil, err
 		}
-		return
 	}
-	// The superseded xml object is left in storage: offline `aumbry-server gc` removes it.
 
-	prefix, status := "/r/", http.StatusOK
+	prefix := "/r/"
 	if doc.Meta.Type == "post" {
 		prefix = "/p/"
 	}
-	if created {
-		status = http.StatusCreated
-	}
-	writeJSON(w, status, map[string]any{
-		"id": itemID, "type": doc.Meta.Type, "url": prefix + itemID, "dirs": mounted,
-		"assets": len(distinctHashes(stored)), "created": created,
-		"draft": draft, "published": len(mounted) > 0,
-	})
+	return &ingestOutcome{
+		ID:        itemID,
+		Type:      doc.Meta.Type,
+		URL:       prefix + itemID,
+		Dirs:      mounted,
+		Assets:    len(distinctHashes(stored)),
+		Created:   created,
+		Draft:     in.draft,
+		Published: len(mounted) > 0,
+	}, 0, "", "", nil, nil, nil
 }
 
 func inspectUploadedAsset(ref schema.AssetRef, fh *multipart.FileHeader) (asset storedAsset, issue *schema.ValidationError, tooBigMsg string, err error) {
 	limit := int64(maxImageSize)
 	limitMB := 20
-	if ref.Kind == schema.AssetKindAudio {
+	switch ref.Kind {
+	case schema.AssetKindAudio:
 		limit = maxAudioSize
 		limitMB = 100
+	case schema.AssetKindPDF:
+		limit = maxPDFSize
+		limitMB = 50
 	}
 	if fh.Size > limit {
 		return storedAsset{}, nil, fmt.Sprintf("asset %q exceeds the %dMB limit", ref.Path, limitMB), nil
@@ -477,8 +575,16 @@ func inspectUploadedAsset(ref schema.AssetRef, fh *multipart.FileHeader) (asset 
 
 	hashHex := hex.EncodeToString(hasher.Sum(nil))
 	detectedStr := detected.String()
+	openFn := func() (io.ReadSeekCloser, error) {
+		file, err := fh.Open()
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
+	}
 
-	if ref.Kind == schema.AssetKindImage {
+	switch ref.Kind {
+	case schema.AssetKindImage:
 		ext, okImg := imageAssetTypes[detectedStr]
 		if !okImg {
 			return storedAsset{}, &schema.ValidationError{
@@ -488,31 +594,49 @@ func inspectUploadedAsset(ref schema.AssetRef, fh *multipart.FileHeader) (asset 
 		}
 		return storedAsset{
 			src:  ref.Path,
-			fh:   fh,
+			open: openFn,
 			hash: hashHex,
 			mime: detectedStr,
 			path: "/assets/" + hashHex + ext,
 			size: written,
 		}, nil, "", nil
+	case schema.AssetKindPDF:
+		pdfMeta, pdfErr := media.InspectPDF(f, detectedStr)
+		if pdfErr != nil {
+			return storedAsset{}, &schema.ValidationError{
+				Code: "INVALID_ATTACHMENT", Field: "attachment.src",
+				Message: fmt.Sprintf("%s is not a valid readable PDF (%s): %v", ref.Path, detectedStr, pdfErr),
+			}, "", nil
+		}
+		pages := pdfMeta.PageCount
+		return storedAsset{
+			src:       ref.Path,
+			open:      openFn,
+			hash:      hashHex,
+			mime:      "application/pdf",
+			path:      "/assets/" + hashHex + ".pdf",
+			size:      written,
+			pageCount: &pages,
+		}, nil, "", nil
+	default:
+		audioMeta, audioErr := media.InspectAudio(f, path.Ext(ref.Path), detectedStr)
+		if audioErr != nil {
+			return storedAsset{}, &schema.ValidationError{
+				Code: "INVALID_ASSET", Field: "audio.src",
+				Message: fmt.Sprintf("%s is invalid or unsupported audio (%s): %v", ref.Path, detectedStr, audioErr),
+			}, "", nil
+		}
+		ext := audioAssetExts[audioMeta.MIMEType]
+		return storedAsset{
+			src:             ref.Path,
+			open:            openFn,
+			hash:            hashHex,
+			mime:            audioMeta.MIMEType,
+			path:            "/assets/" + hashHex + ext,
+			size:            written,
+			durationSeconds: audioMeta.DurationSeconds,
+		}, nil, "", nil
 	}
-
-	audioMeta, audioErr := media.InspectAudio(f, path.Ext(ref.Path), detectedStr)
-	if audioErr != nil {
-		return storedAsset{}, &schema.ValidationError{
-			Code: "INVALID_ASSET", Field: "audio.src",
-			Message: fmt.Sprintf("%s is invalid or unsupported audio (%s): %v", ref.Path, detectedStr, audioErr),
-		}, "", nil
-	}
-	ext := audioAssetExts[audioMeta.MIMEType]
-	return storedAsset{
-		src:             ref.Path,
-		fh:              fh,
-		hash:            hashHex,
-		mime:            audioMeta.MIMEType,
-		path:            "/assets/" + hashHex + ext,
-		size:            written,
-		durationSeconds: audioMeta.DurationSeconds,
-	}, nil, "", nil
 }
 
 func (s *Server) uploadStoredAsset(ctx context.Context, asset storedAsset) error {
@@ -520,7 +644,7 @@ func (s *Server) uploadStoredAsset(ctx context.Context, asset storedAsset) error
 	if err != nil || exists {
 		return err
 	}
-	f, err := asset.fh.Open()
+	f, err := asset.open()
 	if err != nil {
 		return err
 	}
@@ -646,14 +770,19 @@ func (s *Server) saveItem(ctx context.Context, in saveItem) (mounted []string, e
 		return nil, err
 	}
 	for _, a := range in.assets {
-		var dur any
+		var dur, pages any
 		if a.durationSeconds != nil {
 			dur = *a.durationSeconds
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path, duration_seconds)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(hash) DO UPDATE SET duration_seconds = COALESCE(assets.duration_seconds, excluded.duration_seconds)`,
-			a.hash, a.mime, a.size, a.path, dur); err != nil {
+		if a.pageCount != nil {
+			pages = *a.pageCount
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO assets (hash, mime_type, size_bytes, storage_path, duration_seconds, page_count)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(hash) DO UPDATE SET
+				duration_seconds = COALESCE(assets.duration_seconds, excluded.duration_seconds),
+				page_count = COALESCE(assets.page_count, excluded.page_count)`,
+			a.hash, a.mime, a.size, a.path, dur, pages); err != nil {
 			return nil, err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_assets (item_id, asset_hash) VALUES (?, ?)`, in.id, a.hash); err != nil {

@@ -52,10 +52,10 @@
     <rule context="/document/body | /document/body//stages/stage">
       <assert test="not(text()[normalize-space()])">UNEXPECTED_TEXT|<value-of select="name()"/>|&lt;<value-of select="name()"/>&gt; cannot contain text directly; wrap it in &lt;md&gt;</assert>
     </rule>
-    <rule context="/document/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+    <rule context="/document/body/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'attachment', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))] | /document/body//section/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'attachment', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;<value-of select="name(..)"/>&gt;</report>
     </rule>
-    <rule context="/document/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
+    <rule context="/document/body//stages/stage/*[not(local-name() = ('section', 'sources', 'md', 'figure', 'audio', 'attachment', 'paper-card', 'repo-card', 'compare-table', 'callout', 'collapse', 'claim', 'equation', 'mermaid', 'chart', 'metrics', 'steps', 'tabs', 'timeline', 'glossary', 'references', 'figure-group', 'code-block', 'quote', 'checklist', 'search-log', 'stages', 'quiz', 'next-steps', 'tldr', 'news-item'))]">
       <report test="true()">UNKNOWN_TAG|stage|&lt;<value-of select="name()"/>&gt; is not allowed inside &lt;stage&gt;</report>
     </rule>
     <rule context="/document/body//collapse/*[not(local-name() = ('md', 'figure', 'audio', 'callout', 'claim', 'equation', 'mermaid', 'chart', 'code-block', 'quote', 'search-log', 'tldr'))]">
@@ -70,6 +70,9 @@
     <rule context="/document[@version = '1.1']/body//audio">
       <report test="true()">INVALID_AUDIO|audio|&lt;audio&gt; requires &lt;document version="1.2"&gt;|upgrade the root element to &lt;document version="1.2"&gt;</report>
     </rule>
+    <rule context="/document[@version = '1.1']/body//attachment">
+      <report test="true()">INVALID_ATTACHMENT|attachment|&lt;attachment&gt; requires &lt;document version="1.2"&gt;|upgrade the root element to &lt;document version="1.2"&gt;</report>
+    </rule>
   </pattern>
 
   <!-- Separate pattern on purpose: within one pattern a node fires only the first rule whose context matches it,
@@ -82,7 +85,7 @@
   </pattern>
 
   <pattern id="leaves">
-    <rule context="/document/body//*[self::md or self::figure or self::paper-card or self::repo-card or self::callout or self::claim or self::equation or self::mermaid or self::chart or self::code-block or self::quote or self::source or self::cell or self::col]/*">
+    <rule context="/document/body//*[self::md or self::figure or self::attachment or self::paper-card or self::repo-card or self::callout or self::claim or self::equation or self::mermaid or self::chart or self::code-block or self::quote or self::source or self::cell or self::col]/*">
       <report test="true()">UNKNOWN_TAG|<value-of select="name(..)"/>|&lt;<value-of select="name(..)"/>&gt; cannot contain child elements</report>
     </rule>
   </pattern>

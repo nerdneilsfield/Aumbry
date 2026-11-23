@@ -6,17 +6,18 @@ Aumbry reports are authored as UTF-8 XML documents validated by Aumbry's shared 
 
 ## Protocol version
 
-Documents declare `<document version="1.2">` at the root (legacy `<document version="1.1">` documents continue to be accepted). Using `<audio>` inside a `version="1.1"` document fails with `INVALID_AUDIO` and an upgrade hint to `version="1.2"`; any other value or missing `version` fails with `UNSUPPORTED_VERSION`.
+Documents declare `<document version="1.2">` at the root (legacy `<document version="1.1">` documents continue to be accepted). Using `<audio>`, `<attachment>`, or a remote `http(s)://` `<figure src>` inside `version="1.1"` fails with `INVALID_AUDIO`, `INVALID_ATTACHMENT`, or `INVALID_ASSET_PATH` along with a hint to upgrade to `version="1.2"`; any other value or missing `version` fails with `UNSUPPORTED_VERSION`.
 
 | Area | Rule |
 | :--- | :--- |
-| `<body>` direct children | Any top-level block tag directly (`<md>`, `<claim>`, `<metrics>`, `<chart>`, `<stages>`, `<tldr>`, `<quiz>`, `<news-item>`, `<audio>`, etc.) |
+| `<body>` direct children | Any top-level block tag directly (`<md>`, `<claim>`, `<metrics>`, `<chart>`, `<stages>`, `<tldr>`, `<quiz>`, `<news-item>`, `<audio>`, `<attachment>`, etc.) |
 | `<section>` nesting depth | Up to `3` `<section>` levels (`<stage>` ancestors do not count toward section depth) |
 | `<collapse>` children | Any leaf block (including `<audio>`) plus `<search-log>`, inside `<body>`, `<section>`, or `<stage>` |
-| Media asset scope | Any descendant `<figure src>` (`.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`) and `<audio src>` (`.mp3`/`.wav`/`.m4a`) |
+| Media & attachment scope | Any descendant `<figure src>` (local `.png`/`.jpg`/`.jpeg`/`.webp`/`.svg` ≤ `20 MiB`, plus public `http(s)://` URLs auto-localized on ingest in `v1.2`; failures yield `REMOTE_ASSET_BLOCKED` / `REMOTE_ASSET_FETCH_FAILED`), `<audio src>` (local `.mp3`/`.wav`/`.m4a` ≤ `100 MiB`), and `<attachment type="pdf" src>` (local `.pdf` ≤ `50 MiB`) |
 | `<audio>` rules (`v1.2`) | Up to `4` `<audio>` blocks per document inside `body`/`section`/`stage`/`collapse`/`tab`/`step`; `0..100` `<chapter start title target?>` (`HH:MM:SS` non-decreasing) and `0..1` `<transcript>` (`<= 512 KB`); title, chapter titles, and transcript are indexed |
-| Document-wide block caps | `audio <= 4`, `chart <= 10`, `mermaid <= 10`, `stages <= 8`, `stage <= 40`, `sections <= 3 levels` |
-| Shared anchor IDs & links | Single document-wide `^[a-z0-9-]{1,32}$` namespace across `section`, `stages`, `stage`, `quiz`, `figure`, `equation`, `ref`, `audio`; `<next-steps>` and `<chapter target>` links use `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-`/`#audio-` |
+| `<attachment>` rules (`v1.2`) | Up to `4` `<attachment>` blocks per document inside `body`/`section`/`stage` (`type="pdf"`, required `src` and `title`, manual `pages` attribute rejected); pure-Go server inspection records real `page_count` (accepts owner-password-only PDFs, rejects user-password-encrypted or corrupt PDFs with `INVALID_ATTACHMENT`); title is indexed |
+| Document-wide block caps | `audio <= 4`, `attachment <= 4`, `chart <= 10`, `mermaid <= 10`, `stages <= 8`, `stage <= 40`, `sections <= 3 levels`, `distinct remote figures <= 20` |
+| Shared anchor IDs & links | Single document-wide `^[a-z0-9-]{1,32}$` namespace across `section`, `stages`, `stage`, `quiz`, `figure`, `equation`, `ref`, `audio`, `attachment`; `<next-steps>` and `<chapter target>` links use `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-`/`#audio-`/`#att-` (PDF blocks accept `#att-<id>:p=<N>` page anchors checked against `page_count` on ingest; out-of-range returns `INVALID_TARGET`) |
 | Markdown rendering | CommonMark (raw HTML disabled), KaTeX math (`$...$` / `\(...\)` inline, `$$...$$` / `\[...\]` block), syntax-highlighted code blocks, per-document isolated footnotes, read-only task lists, subscript (`~`), and superscript (`^`) |
 
 ## Inspect the specification and validate locally
@@ -61,4 +62,4 @@ Do not duplicate the full element list here; use the auto-generated reference ch
 
 - Complete element, attribute, container, chart JSON schema, and error-code tables: [skills/aumbry/references/xml-tags.md](../../skills/aumbry/references/xml-tags.md)
 - Troubleshooting guide by error code: [skills/aumbry/references/troubleshooting.md](../../skills/aumbry/references/troubleshooting.md)
-- Structural examples: `one-pager.xml`, `paper-reading.xml`, `compare-repro.xml`, `news-digest.xml`, and `news-detail.xml` under `skills/aumbry/assets/examples/`, plus the starter files `examples/minimal-report.xml` and `examples/full-report.xml`
+- Structural examples: `one-pager.xml`, `paper-reading.xml`, `compare-repro.xml`, `news-digest.xml`, `news-detail.xml`, and `v12-features.xml` under `skills/aumbry/assets/examples/`, plus the starter files `examples/minimal-report.xml` and `examples/full-report.xml`

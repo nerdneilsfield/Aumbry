@@ -79,7 +79,7 @@ CLI 命令行参数（--dir、--profile） > 环境变量（AUMBRY_SERVER、AUMB
 
 ### `aumbry validate`
 
-完全离线校验 Aumbry XML（`version="1.2"` 与 legacy `version="1.1"`）。`<figure src>` 与 `<audio src>` 按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。
+完全离线校验 Aumbry XML（`version="1.2"` 与 legacy `version="1.1"`）。本地相对 `<figure src>`、`<audio src>` 与 `<attachment type="pdf" src>` 均按 XML 文件自身所在目录解析（而非当前工作目录），并拒绝指向该目录之外的符号链接。对 `version="1.2"` 中的公网 `http(s)://` `<figure src>` 外链，**`aumbry validate` 严格保持 100% 离线**（不发起任何网络或 DNS 请求），仅离线检验 URL 合法性并直接拒绝 `localhost`、`127.*`、`::1`、`169.254.*`、私网/非标准数值 IP 与 userinfo（返回 `REMOTE_ASSET_BLOCKED`）。
 
 ```sh
 aumbry validate <file.xml> [--format json|text]
@@ -111,7 +111,7 @@ valid: examples/minimal-report.xml
 
 ### `aumbry push`
 
-先在本地完成与服务端同源的 XML 与媒体资产（图片与音频）校验，再流式打包上传到 `POST /api/v1/ingest`（默认上传超时 `5` 分钟）。
+先在本地完成与服务端同源的 XML 与媒体/附件资产（图片、音频与 `.pdf`）校验，再流式打包上传到 `POST /api/v1/ingest`（默认上传超时 `5` 分钟）。若 `version="1.2"` XML 中包含公网 `http(s)://` `<figure src>`，`aumbry push` 会跳过将其当作本地文件读取或上传，保留原始外链 URL 随 XML 一并提交，由服务端以禁用代理 + `Dialer.Control` SSRF 防线安全抓取并转存（同时保持 `<meta><canonical-url>` 原样不变）。
 
 ```sh
 aumbry push <file.xml> [--dir <dir-id>]... [--key <external_key>] [--id <item-id>] [--draft] [--create-only] [--dry-run] [--profile <name>]
@@ -349,3 +349,15 @@ aumbry delete MDUnpJpiAjMo --yes
   built: unknown
   go: go1.27.4 linux/amd64
   ```
+
+## MCP Server 接入（`/mcp`）
+
+服务端内置基于官方 Streamable HTTP 协议的 **`/mcp`** 端点（支持 `POST`、`GET` SSE、`DELETE`），供支持 MCP 的 Agent 直接检索、阅读、校验并推送纯文本或公网外链插图 XML 文档：
+
+- **三类身份（仅认 Header，不接受浏览器 Cookie）**：
+  1. 无凭据（匿名）：仅可读公开目录及其已发布条目/公开修订。
+  2. `Authorization: Bearer ad_<...>`（目录只读 Token）：仅可读对应目录及未单独设密子目录内的已发布条目。
+  3. `Authorization: Bearer <api_token>`（可附带 `X-Aumbry-Dir-Tokens: ad_...,ad_...`）：可读公开目录、已授权子树、以及自己创建（`created_by == digest`）的草稿/受保护条目与自建修订；**仅 API Token 有权调用 `push_item`**。
+- **6 个内置工具**：`list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml`、`push_item`。
+  - `list_items` 与 `search_items` 仅返回元数据（绝不返回 `xml`/`plain_text`），并把多挂载目录 `dirs` 过滤为调用方可见子集；传入 `dir_id` 时严格与调用方权限求交（自建草稿与跨目录条目不会越权绕过 `dir_id`）。
+  - `push_item` 复用 `/api/v1/ingest` 权限、限流、10 MiB XML 上限与外链图片 SSRF 自动转存规则；**若 XML 中包含本地相对路径媒体或 PDF 附件**，会返回 `invalid_request` 工具错误并提示改用 `aumbry push`。

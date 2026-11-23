@@ -504,7 +504,8 @@ func TestLoadValidationErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("defaults load() = %v", err)
 		}
-		if res.Config.PublicURL != "" || res.Config.ResolvedMaxRevisionsPerItem() != 20 || res.Config.ResolvedMaxIngestBodyBytes() != 200*1024*1024 {
+		if res.Config.PublicURL != "" || res.Config.ResolvedMaxRevisionsPerItem() != 20 ||
+			res.Config.ResolvedMaxIngestBodyBytes() != 200*1024*1024 || !res.Config.ResolvedAllowRemoteImages() {
 			t.Fatalf("unexpected defaults: %+v", res.Config)
 		}
 
@@ -514,9 +515,13 @@ func TestLoadValidationErrors(t *testing.T) {
 		t.Setenv("AUMBRY_PUBLIC_URL", "https://reports.example.com/")
 		t.Setenv("AUMBRY_REVISIONS_MAX_PER_ITEM", "0")
 		t.Setenv("AUMBRY_INGEST_MAX_BODY_MB", "20")
+		t.Setenv("AUMBRY_INGEST_ALLOW_REMOTE_IMAGES", "false")
 		res, err = load("", nil, os.Environ())
 		if err != nil {
 			t.Fatalf("valid overrides load() = %v", err)
+		}
+		if res.Config.ResolvedAllowRemoteImages() {
+			t.Fatal("ResolvedAllowRemoteImages() = true, want false from env override")
 		}
 		if res.Config.PublicURL != "https://reports.example.com" {
 			t.Fatalf("PublicURL = %q, want trimmed URL", res.Config.PublicURL)
@@ -564,7 +569,7 @@ func TestLoadValidationErrors(t *testing.T) {
 		clearConfigEnv(t)
 		setBaseEnvironment(t)
 		cfgFile := filepath.Join(t.TempDir(), "aumbry.toml")
-		tomlBody := "public_url = \"http://localhost:8080/\"\n[revisions]\nmax_per_item = 0\n[ingest]\nmax_body_mb = 500\n"
+		tomlBody := "public_url = \"http://localhost:8080/\"\n[revisions]\nmax_per_item = 0\n[ingest]\nmax_body_mb = 500\nallow_remote_images = false\n"
 		if writeErr := os.WriteFile(cfgFile, []byte(tomlBody), 0o600); writeErr != nil {
 			t.Fatal(writeErr)
 		}
@@ -572,7 +577,8 @@ func TestLoadValidationErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("TOML load() = %v", err)
 		}
-		if res.Config.PublicURL != "http://localhost:8080" || res.Config.ResolvedMaxRevisionsPerItem() != 0 || res.Config.ResolvedMaxIngestBodyBytes() != 500*1024*1024 {
+		if res.Config.PublicURL != "http://localhost:8080" || res.Config.ResolvedMaxRevisionsPerItem() != 0 ||
+			res.Config.ResolvedMaxIngestBodyBytes() != 500*1024*1024 || res.Config.ResolvedAllowRemoteImages() {
 			t.Fatalf("unexpected TOML config: %+v", res.Config)
 		}
 	})
@@ -584,7 +590,7 @@ func clearConfigEnv(t *testing.T) {
 		"AUMBRY_CONFIG", "AUMBRY_LISTEN_ADDR", "AUMBRY_PUBLIC_URL", "AUMBRY_DATA_DIR", "AUMBRY_STORAGE",
 		"AUMBRY_ADMIN_USER", "AUMBRY_ADMIN_PASSWORD_HASH", "AUMBRY_API_TOKENS",
 		"AUMBRY_COOKIE_SECRET", "AUMBRY_TRUSTED_PROXIES", "AUMBRY_REVISIONS_MAX_PER_ITEM",
-		"AUMBRY_INGEST_MAX_BODY_MB", "AUMBRY_LOCAL_PATH",
+		"AUMBRY_INGEST_MAX_BODY_MB", "AUMBRY_INGEST_ALLOW_REMOTE_IMAGES", "AUMBRY_LOCAL_PATH",
 		"AUMBRY_WEBDAV_URL", "AUMBRY_WEBDAV_USER", "AUMBRY_WEBDAV_PASS",
 		"AUMBRY_S3_ENDPOINT", "AUMBRY_S3_REGION", "AUMBRY_S3_BUCKET",
 		"AUMBRY_S3_ACCESS_KEY_ID", "AUMBRY_S3_SECRET_ACCESS_KEY", "AUMBRY_S3_PATH_STYLE",

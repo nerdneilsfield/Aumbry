@@ -17,9 +17,9 @@ description: Use when publishing, structuring, validating, or managing research 
 ## 硬规则（必须遵守）
 
 1. Markdown 正文放入 `<md><![CDATA[...]]></md>`；XML 属性内禁止出现裸 `&`、`<`。
-2. `<figure src>` 与 `<audio src>` 仅限相对路径本地资源（图片 `.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`；音频 `.mp3`/`.wav`/`.m4a`），禁用外链、绝对路径与 `..` 越级路径。`validate` 与 `push` **按 XML 文档所在目录（非 CWD）解析相对路径**；原图/音频能否纳入由用户决定。
+2. **媒体与附件路径**：`<figure src>` 支持相对于 XML 所在目录的本地路径（`.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`），在 `<document version="1.2">` 中还支持 `http://` / `https://` 公网图片外链（`aumbry validate` 离线拒绝对私网/回环 IP 的引用；`aumbry push` 自动跳过上传外链并交由服务端按 SSRF 防线转存）；`<audio src>`（`.mp3`/`.wav`/`.m4a`）与 `<attachment type="pdf" src>`（`.pdf`）仅支持本地相对路径，禁用绝对路径与 `..` 越级符号链接，且所有相对路径均按 **XML 文档所在目录（非 CWD）** 解析。
 3. 禁止编造 `related-id`、`detail-id` 与目录 ID；查看公开性看 `aumbry dirs` 的 `protected`（不看 `has_password`），条目 ID 来自 `aumbry list --key` 或过往 `push` 响应。
-4. `<meta>/<date>` 用 `YYYY-MM-DD`；`<meta>/<type>` 为 `report` 或 `post`；根元素支持 `<document version="1.2">`（若含 `<audio>` 必须用 `1.2`）与既有 `<document version="1.1">`；推送更新会自动保存已发布修订快照（每条目默认保留最近 20 版），且详情页可通过 `referenced_by` 反查引用它的简报。
+4. `<meta>/<date>` 用 `YYYY-MM-DD`；`<meta>/<type>` 为 `report` 或 `post`；根元素支持 `<document version="1.2">`（含 `<audio>`、`<attachment type="pdf">` 或外链 `<figure src>` 时必须使用 `1.2`）与既有 `<document version="1.1">`。`<attachment type="pdf">` 禁止手填 `pages` 属性（由服务端以纯 Go 解析文件页数为准，可接收仅有 owner-password 的 PDF，拒绝 user-password 加密/损坏 PDF），并支持 `#att-<id>:p=<N>` 页码锚点跳转；推送更新会自动保存已发布修订快照（每条目默认保留最近 20 版），且详情页可通过 `referenced_by` 反查引用它的简报。
 5. 同题更新（含多轮修订、勘误、复测）复用同一个 `--key`（幂等键），**禁止每次换键**。
 6. 未核实事实写 `<claim level="unverified">`，对比表缺值写 `<cell tag="unreported">`，不写 0、不编造数据。
 7. 校验未通过绝不推送，不绕过校验。
@@ -46,9 +46,11 @@ description: Use when publishing, structuring, validating, or managing research 
 | 逐轮精读 / 分阶段指南 | `<stages id>` + `<stage id title>` + 可选 `<quiz id>` / `<next-steps>` / `<tldr>` |
 | 多方案横评 / 基准 / 复现 | `<compare-table>`（`cell@tag`）+ `<metrics>` + `<chart>`（多 series/`err`）+ `<checklist>` + `<code-block eq>` |
 | 日报 / 周报 / 新闻简报 | `<tldr>` + `<news-item>`（`detail-id` / `<detail>`）+ `<metrics>` + `<timeline>` + `<sources>` |
-| 文献调研 / 学术综述 | `<section>` + `<references>`（`#ref-<id>`）+ `<search-log>` + `<glossary>` + `<quote>` |
+| 文献调研 / 学术综述 | `<section>` + `<references>`（`#ref-<id>`）+ `<search-log>` + `<glossary>` + `<quote>` + 可选 `<attachment type="pdf" id="paper">` |
 
 > 第 1 轮仅有单个 `<stage>` 时不要放指向未建未来 `<stage>` 的 `<next-steps>`（会报 `INVALID_TARGET`）；全量标签、属性与 Chart JSON 字段见 [xml-tags.md](references/xml-tags.md)。
+>
+> **MCP 接入（`/mcp`）**：除 CLI 外，Agent 还可通过 Streamable HTTP 连接服务端的 `/mcp` 端点（支持 `list_dirs`、`list_items`、`search_items`、`get_item`、`validate_xml` 与 API Token 专属的 `push_item`；`push_item` 仅接受纯文本与公网外链 `<figure src>` 的 XML，含本地相对路径资产时拒绝并提示改用 CLI `aumbry push`）。
 
 ## 发布目录决策与 CLI 认证速查
 

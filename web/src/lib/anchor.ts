@@ -1,10 +1,10 @@
 /**
  * Ids and anchors of an Aumbry document (PRD 6.4). No imports: everything else (xml, quiz, validate, the renderer) builds on this.
  *
- * One shared id namespace covers <section>, <stages>, <stage>, <quiz>, <figure>, <equation>, <ref> and <audio>; the first element
+ * One shared id namespace covers <section>, <stages>, <stage>, <quiz>, <figure>, <equation>, <ref>, <audio> and <attachment>; the first element
  * to use an id owns it, any later one (even of another type) is a duplicate (DUPLICATE_ID, shown as an error block).
  * DOM ids / anchors:  section `#s-<id>`, stages `#stages-<id>`, stage `#stage-<id>`, quiz `#quiz-<id>`,
- * figure `#fig-<id>`, equation `#eq-<id>`, ref `#ref-<id>`, audio `#audio-<id>`. The positional `#sec-N` is kept for the TOC and scrolling
+ * figure `#fig-<id>`, equation `#eq-<id>`, ref `#ref-<id>`, audio `#audio-<id>`, attachment `#att-<id>` (and `#att-<id>:p=<N>`). The positional `#sec-N` is kept for the TOC and scrolling
  * only (it is not a valid next-steps target), as is `#stage=N` (the Nth stage of the first group).
  */
 
@@ -43,8 +43,21 @@ export function stagesStructuralIssues(node: Element): { code: string; message: 
 /** `id` values are limited to [a-z0-9-]{1,32} by the protocol; anything else never becomes a DOM id. */
 export const safeId = (raw: string | null | undefined) => (raw && /^[a-z0-9-]{1,32}$/.test(raw) ? raw : '')
 
-export type AnchorKind = 'section' | 'stages' | 'stage' | 'quiz' | 'figure' | 'equation' | 'ref' | 'audio'
-const PREFIX: Record<AnchorKind, string> = { section: 's', stages: 'stages', stage: 'stage', quiz: 'quiz', figure: 'fig', equation: 'eq', ref: 'ref', audio: 'audio' }
+export type AnchorKind = 'section' | 'stages' | 'stage' | 'quiz' | 'figure' | 'equation' | 'ref' | 'audio' | 'attachment'
+const PREFIX: Record<AnchorKind, string> = { section: 's', stages: 'stages', stage: 'stage', quiz: 'quiz', figure: 'fig', equation: 'eq', ref: 'ref', audio: 'audio', attachment: 'att' }
+
+/** Splits an optional `:p=<N>` PDF page suffix from an anchor hash (e.g. `#att-paper:p=4`). */
+export function parseAnchorTarget(raw: string): { base: string; page?: number } | null {
+  const idx = raw.indexOf(':p=')
+  if (idx !== -1) {
+    const base = raw.slice(0, idx)
+    const pageStr = raw.slice(idx + 3)
+    if (!/^#att-[a-z0-9-]+$/.test(base) || !/^[1-9][0-9]*$/.test(pageStr)) return null
+    const page = Number.parseInt(pageStr, 10)
+    return Number.isSafeInteger(page) && page >= 1 ? { base, page } : null
+  }
+  return /^#[a-z0-9-]+$/.test(raw) ? { base: raw } : null
+}
 const KINDS = Object.keys(PREFIX) as AnchorKind[]
 const isKind = (tag: string): tag is AnchorKind => (KINDS as string[]).includes(tag)
 
@@ -235,9 +248,15 @@ export function anchorMap(body: Element): AnchorMap {
         const el = first && directKids(first, 'stage')[Number(st[1]) - 1]
         return el ? byDom.get(stageDomId(el)) : undefined
       }
+      const parsed = parseAnchorTarget(id.startsWith('#') ? id : `#${id}`)
+      if (parsed) return byDom.get(parsed.base.slice(1))
       return byDom.get(id)
     },
-    findStrict: (hash) => (/^#[a-z0-9-]+$/.test(hash) && !/^#sec-\d+$/.test(hash) ? byDom.get(hash.slice(1)) : undefined),
+    findStrict: (hash) => {
+      const parsed = parseAnchorTarget(hash)
+      if (!parsed || /^#sec-\d+$/.test(parsed.base)) return undefined
+      return byDom.get(parsed.base.slice(1))
+    },
   }
   cache.set(body, map)
   return map

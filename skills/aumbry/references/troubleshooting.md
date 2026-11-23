@@ -23,10 +23,13 @@
 | `MISSING_ATTR` | 缺必填属性或为空（如 `section@title`、`figure@src`、`paper-card@title/url`、`repo-card@name/url`、`source@title/url`、`ref@title`、`term@name`、`event@title`、`figure-group@cols`） | 补齐必填属性 |
 | `INVALID_ATTR` | 枚举值非法（`callout@type`、`claim@level`、`cell@tag`、`read-depth`）、`<option>` 为空、或数量/重名超限（`tabs` <2、`steps interactive` <2、`glossary` 重名 `term`、`figure-group` 非 `2..6`、`next-steps` 非 `1..5`） | 对照 [xml-tags.md](xml-tags.md) 修正枚举、正文与上下限 |
 | `INVALID_URL` | `canonical-url`、`paper-card@url/code-url`、`repo-card@url`、`source@url`、`ref@url`、`quote@url`、`news-item@url` 不是绝对 `http(s)://` URL | 补全 `http(s)://` URL（页内跳转改用 Markdown 锚点或 `<next-steps>`） |
-| `INVALID_ASSET_PATH` | `<figure src>` 或 `<audio src>` 为外链、`data:`、绝对路径或 `..` 逃出 **XML 文档自身所在目录** | 改为相对于 XML 文档自身目录（非 CWD）的相对路径，如 `./imgs/fig.png`、`./audio/ep.mp3` |
-| `INVALID_ASSET_TYPE` | 资源扩展名不受支持（图片仅 `.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`；音频仅 `.mp3`/`.wav`/`.m4a`） | 转为受支持的图片或音频格式 |
+| `INVALID_ASSET_PATH` | (1) 本地资产路径含绝对路径、`data:` 或 `..` 逃出 **XML 文档自身所在目录**；(2) `version="1.1"` 中 `<figure src>` 写了 `http(s)://` 外链；(3) `<audio src>` / `<attachment src>` 使用了外链 | 本地资产一律改相对 XML 目录路径（如 `./imgs/fig.png`、`./paper.pdf`）；需要外链 `<figure src>` 时把根元素升至 `<document version="1.2">` |
+| `INVALID_ASSET_TYPE` | 资源扩展名不受支持（图片 `.png`/`.jpg`/`.jpeg`/`.webp`/`.svg`；音频 `.mp3`/`.wav`/`.m4a`；附件 `.pdf`） | 转为受支持的媒体/PDF 格式 |
+| `REMOTE_ASSET_BLOCKED` | 外链 `<figure src>` 缺少/非 `http(s)`、带 userinfo、指向 `localhost`/非公网/保留网段 IP（含跳转至内网），或服务端关闭 `ingest.allow_remote_images` | 改为可公开路由的 `http(s)://` 图片地址（不能指内网/本机）或改为本地图片随 `aumbry push` 上传 |
+| `REMOTE_ASSET_FETCH_FAILED` *(服务端)* | 外链图抓取超时（单图 15 s / 总预算 60 s）、超过 `20` 个独立外链 URL、体积 > `20 MiB`、HTTP 非 2xx、MIME 非 png/jpeg/webp/svg，或 SVG 非良构 XML / 含 DOCTYPE / 非 `<svg>` 根元素 | 确认目标地址直接返回合法图片字节、删去残缺/含 DTD 的 SVG，或压缩图片并控制在篇均 ≤20 张外链图 |
 | `MISSING_ASSET` | 按 **XML 文档所在目录** 解析后文件不存在或符号链接逃出根目录（`step`/`tab`/`figure-group` 同样检查） | 确认文件相对 XML 文档存在且未用符号链接指向目录外 |
 | `INVALID_ASSET` *(服务端)* | 真实 MIME/媒体解析不符（如假图片、损坏音频或仅含视频轨的 `.mp4` 伪装成 `.m4a`） | 上传真实有效图片或音频文件 |
+| `INVALID_ATTACHMENT` | `<attachment>` 用在 `version="1.1"`、放于非法容器（仅限 `body`/`section`/`stage`）、超 `4` 块、`type!="pdf"`、手填了 `pages`、缺 `src`/`title`，或服务端解析到 user-password 加密/损坏/0 页 PDF | 升至 `version="1.2"`、删去 `pages` 属性，确保上传可读 PDF（允许仅有 owner-password，拒绝 user-password 加密文件） |
 | `TABLE_NO_COLUMNS` / `TABLE_NO_ROWS` / `TABLE_COL_MISMATCH` | `<compare-table>` 缺 `<columns>/<col>`、缺 `<row>` 或某行 `<cell>` 数与 `<col>` 数不等 | 对齐列头与每行 `<cell>` 数 |
 | `MISSING_SOURCE` | `<sources>` 内无 `<source>` | 加至少 1 条 `<source>` 或删除空 `<sources>` |
 
@@ -38,7 +41,7 @@
 | `TOO_MANY_BLOCKS` | 总量超限：`<mermaid>` >10、`<chart>` >10、`<stages>` 组 >8 或全文 `<stage>` >40 | 合并或精简块/阶段数量 |
 | `DUPLICATE_ID` | 锚点 `@id` 跨组或跨类型重复 | 使用全文唯一 `@id` |
 | `DUPLICATE_TAB` | 同 `<tabs>` 内出现重名 `<tab title>` | 为同组 `<tab>` 设唯一标题 |
-| `INVALID_TARGET` | `<next-steps>/<option target>` 或 `<audio>/<chapter target>` 不符 `^#[a-z0-9-]+$`、前缀不对、用了 `#sec-N` 或目标不存在；或 `code-block@eq` 无对应 `equation@id` | `target` 用 `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-`/`#audio-`；`code-block@eq` 填不含 `#` 与前缀的原始 ID |
+| `INVALID_TARGET` | `<next-steps>/<option target>` 或 `<audio>/<chapter target>` 不符锚点语法、前缀不对、用了 `#sec-N`、目标不存在，或 `#att-<id>:p=<N>` 页码 `< 1` / 超出 PDF 实际页数（服务端 `422`）；或 `code-block@eq` 无对应 `equation@id` | `target` 用 `#s-`/`#stages-`/`#stage-`/`#quiz-`/`#fig-`/`#eq-`/`#ref-`/`#audio-`/`#att-`（或 `#att-<id>:p=<1..pages>`）；`code-block@eq` 填不含 `#` 与前缀的原始 ID |
 | `INVALID_AUDIO` | `<audio>` 用在 `version="1.1"`、超 4 块、缺 `src`/`title`、`title` >200 字符、`<chapter>` >100 或 `start` 格式非 `HH:MM:SS` / 非单调递增、或 `<transcript>` 非法/空/超 `512 KB` | 声明 `<document version="1.2">`，保持 `<chapter start>` 非递减并控制逐字稿 ≤ `512 KB` |
 | `INVALID_CHART` | `type` 非法（`bar`/`line`/`pie`/`scatter`）、JSON 语法或 Schema 错（如多余 `title`/`xAxis`）、长度不等、`NaN`/`Infinity`、总点数 >2000、`pie` 非 1 组 `series`、`pie`/`scatter` 带 `err` 或 `err` 为负/长度不等 | 对照 [xml-tags.md](xml-tags.md#chart-json-schema-chart) 与错误信息里的 JSON 路径修改（标题放 `<chart caption="...">`） |
 | `INVALID_EQUATION` | `<equation>` 为空或 >4096 B | 补充非空 LaTeX 或拆分公式 |
@@ -65,7 +68,12 @@
 | `403` | `not_owner`（仅 `unpublish`/`delete`） | 当前 token 非条目创建者（含 `created_by` 为 `NULL`、没有归属记录的条目）；换原创建 token 或交由 `/admin` 管理控制台处理 |
 | `409` | `key_exists` | 带 `--create-only --key` 撞库；更新请去掉 `--create-only`，新建请换 `--key` |
 | `409` | `already_published` | 目标条目已挂目录，拒绝 `--draft` 覆盖；先 `aumbry unpublish <id>` 再存草稿，或去掉 `--draft` 更新 |
-| `413` | `too_large` | 总请求超过 `ingest.max_body_mb`（默认 `200 MiB`）、XML >`10 MiB`、单图 >`20 MiB` 或单音频 >`100 MiB`；压缩媒体或调大服务配置 |
+| `413` | `too_large` | 总请求超过 `ingest.max_body_mb`（默认 `200 MiB`）、`/mcp` 请求体 >`16 MiB`、XML >`10 MiB`、单图 >`20 MiB`、单 PDF >`50 MiB` 或单音频 >`100 MiB`；压缩媒体或调大服务配置 |
 | `422` | 校验拒绝 | 按返回的 JSON `errors` 修改 |
-| `429` | `too_many_requests` | `/ingest` 与 `/agent/*` 同 IP 每分钟上限 `120` 次且 `/ingest` 并发上限 `4`；退避重试 |
+| `429` | `too_many_requests` | `/ingest`、`/agent/*` 与匿名 `/mcp` 触发限流，或 `/ingest` 并发达 `4` 槽上限；退避重试 |
 | `502` | `storage_error` | 服务端私有对象存储不可达或 30 s 响应头超时；检查存储后端配置与服务端 `/readyz` |
+
+### MCP `/mcp` 常见拒绝与工具错误
+
+- **HTTP 传输层**：`401 Unauthorized`（Bearer `api_token` 或 `ad_` Token 无效/已吊销，不接受 Cookie）、`403 Forbidden`（`Host` 与 `public_url`/loopback 不匹配、`Origin` 跨站或 `null`、跨身份复用他人 `Mcp-Session-Id`）、`413`（JSON-RPC 请求体超过 `16 MiB`）。
+- **工具返回 `CallToolResult{IsError: true}`**：`unauthorized`（匿名调 `push_item`）、`forbidden`（用 `ad_` Token 调 `push_item`，或访问未授权目录/条目/受 B1 隔离的私密历史修订）、`invalid_request`（`push_item` 所传 XML 包含需要本地上传的相对路径资源，须改用 CLI `aumbry push`）、`validation_failed`（附带 `schema.ValidationResult` JSON）。

@@ -69,6 +69,7 @@ const ANCHOR_PREFIX: Record<string, string> = {
   equation: 'eq',
   ref: 'ref',
   audio: 'audio',
+  attachment: 'att',
 }
 
 const LEAF_TAGS = new Set([
@@ -76,6 +77,7 @@ const LEAF_TAGS = new Set([
   'figure',
   'figure-group',
   'audio',
+  'attachment',
   'paper-card',
   'repo-card',
   'compare-table',
@@ -287,6 +289,8 @@ function serializeLeafBlock(node: XmlLiteNode): string {
       const transcript = firstChild(node, 'transcript')?.text.trim() ?? ''
       return [head, srcLine, ...chapters, transcript ? `逐字稿：\n${transcript}` : ''].filter(Boolean).join('\n')
     }
+    case 'attachment':
+      return [node.attrs.title, node.attrs.type, node.attrs.src].filter(Boolean).join(' · ')
     case 'tldr': {
       const points = allChildren(node, 'point').map((p) => `- ${fullText(p)}`)
       const verdict = firstChild(node, 'verdict')
@@ -336,6 +340,7 @@ function blockLabel(node: XmlLiteNode, ordinal: number): string {
     figure: '图片',
     'figure-group': '图片组',
     audio: '音频',
+    attachment: 'PDF 附件',
     quiz: '测验',
     equation: '公式',
     chart: '图表',

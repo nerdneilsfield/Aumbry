@@ -11,12 +11,30 @@ const (
 	AssetKindImage AssetKind = "image"
 	// AssetKindAudio represents a local audio file referenced by <audio src>.
 	AssetKindAudio AssetKind = "audio"
+	// AssetKindPDF represents a local PDF attachment referenced by <attachment type="pdf" src="...">.
+	AssetKindPDF AssetKind = "pdf"
 )
 
 // AssetRef pairs a deduplicated normalized local asset path with its element category.
 type AssetRef struct {
 	Path string
 	Kind AssetKind
+}
+
+// AttachmentPageRef records a `#att-<id>:p=<N>` anchor target for server-side PDF page-bound checks.
+type AttachmentPageRef struct {
+	Line          int
+	Field         string
+	Target        string
+	AttachmentID  string
+	AttachmentSrc string
+	Page          int
+}
+
+// RemoteFigureRef records a deduplicated remote <figure src="http(s)://..."> image URL in a v1.2 document.
+type RemoteFigureRef struct {
+	Line int
+	URL  string
 }
 
 // OutgoingLink describes a directed link from a document to another item in Aumbry.
@@ -62,6 +80,10 @@ type Document struct {
 	Assets []string
 	// AssetRefs lists the typed normalized local asset references in document order, without duplicates.
 	AssetRefs []AssetRef
+	// RemoteFigures lists deduplicated remote http(s) figure URLs declared in a v1.2 document.
+	RemoteFigures []RemoteFigureRef
+	// AttachmentPageRefs lists `#att-<id>:p=<N>` references found in targets for PDF page-bound verification.
+	AttachmentPageRefs []AttachmentPageRef
 
 	input []byte
 	tree  *helium.Document

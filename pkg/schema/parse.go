@@ -74,10 +74,10 @@ func (d *Document) readMeta() {
 	}
 }
 
-// RewriteAssets returns the XML with every <figure src> and <audio src> replaced via mapping,
-// which is keyed by normalized path. Everything else, CDATA sections included, is
-// carried over by the XML tree round trip; empty elements are written in the self-closing form
-// and an XML declaration is only written if the input had one.
+// RewriteAssets returns the XML with every <figure src>, <audio src>, and <attachment src>
+// replaced via mapping, which is keyed by normalized local path (or raw remote URL for v1.2 remote
+// <figure src>). Everything else, CDATA sections and <meta><canonical-url> included, is carried
+// over unchanged; empty elements use self-closing form and an XML declaration is kept if present.
 func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 	// Work on a fresh tree so the Document stays unchanged and can be rewritten again.
 	tree, issue := parseTree(d.input)
@@ -87,10 +87,19 @@ func (d *Document) RewriteAssets(mapping map[string]string) ([]byte, error) {
 	for _, n := range find(tree, assetXPath) {
 		el := n.(*helium.Element)
 		src, _ := el.GetAttribute("src")
-		normalized, _ := NormalizeAssetPath(src)
-		replacement, ok := mapping[normalized]
-		if !ok {
-			return nil, fmt.Errorf("no replacement for %s src %q", el.Name(), src)
+		var replacement string
+		var ok bool
+		if el.Name() == "figure" && IsRemoteURLCandidate(src) {
+			replacement, ok = mapping[src]
+			if !ok {
+				return nil, fmt.Errorf("no replacement for remote %s src %q", el.Name(), src)
+			}
+		} else {
+			normalized, _ := NormalizeAssetPath(src)
+			replacement, ok = mapping[normalized]
+			if !ok {
+				return nil, fmt.Errorf("no replacement for %s src %q", el.Name(), src)
+			}
 		}
 		if err := el.SetAttribute("src", replacement); err != nil {
 			return nil, err

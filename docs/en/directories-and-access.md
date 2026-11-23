@@ -141,3 +141,13 @@ Behavior when viewing a multi-mounted item:
 - **Child-lock boundary & password decoupling:** An `ad_` token issued for directory `D` grants read/feed access to `D` and its unprotected descendants, never penetrating a descendant `C` with its own independent password (issue a dedicated token for `C`). Changing a directory's visitor password does not revoke issued `ad_` tokens; rotate or revoke tokens explicitly in `/admin`.
 - **Dual-gate revision history privacy:** Reading historical snapshots (`GET /api/v1/items/{id}/revisions` and `?rev=N`) and revision-exclusive assets enforces both gates for non-admins: the item must currently be readable, and the requested revision's `item_revision_mounts` must still include at least one directory currently accessible to the caller (prior private revisions never leak if an item is later republished to a public directory, and clearing a directory's password later does not retroactively expose historical snapshots recorded while it was protected).
 - **Filtered backlinks:** `referenced_by` on `GET /api/v1/items/{id}` omits unmounted drafts and any citing report stored only in directories locked to the current caller.
+
+## MCP endpoint (`/mcp`) authorization matrix
+
+The `/mcp` endpoint serves agents and automation clients exclusively: it **ignores all browser admin and visitor cookies** and recomputes authorization against SQLite on every request and every tool call (revoking an `ad_` token invalidates active MCP sessions on the very next call):
+
+| Caller credentials | Readable scope | `push_item` |
+| :--- | :--- | :--- |
+| **Unauthenticated (anonymous)** | Public directories and published items (plus B1-eligible public historical revisions); `list_dirs` marks locked child dirs `locked: true` with empty `description` | Denied (tool error `unauthorized`) |
+| **`Bearer ad_<...>`** | Only the A1-authorized subtree (`accessibleByDirToken`, stopping at any descendant with its own password) and its published items/visible revisions | Denied (tool error `forbidden`) |
+| **`Bearer <api_token>`** (+ optional `X-Aumbry-Dir-Tokens: ad_...,ad_...`) | Public directories + `X-Aumbry-Dir-Tokens` subtrees + **caller-owned items/revisions (`created_by == digest`)** including own drafts and own protected items; explicit `dir_id` intersects visibility strictly; **cannot read other tokens' drafts or ungranted protected items** | **Allowed** (rejects XML referencing local relative binary assets) |

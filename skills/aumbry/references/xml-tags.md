@@ -5,22 +5,24 @@ Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elemen
 ## Structure Rules
 
 - Section depth: 3 (at most 3 nested <section> levels counting only <section> ancestors (<stage> does not count))
-- `<body>` direct children: section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item
-- Document-wide caps: `audio` <= 4, `chart` <= 10, `mermaid` <= 10, `stage` <= 40, `stages` <= 8
+- `<body>` direct children: section, sources, md, figure, audio, attachment, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item
+- Document-wide caps: `attachment` <= 4, `audio` <= 4, `chart` <= 10, `mermaid` <= 10, `stage` <= 40, `stages` <= 8
 - Position rules:
   - <audio> requires <document version="1.2"> and at most 4 blocks per document (INVALID_AUDIO)
+  - <attachment type="pdf"> requires <document version="1.2">, is allowed in body/section/stage only, and at most 4 blocks per document (INVALID_ATTACHMENT)
   - <stages> may appear multiple times in <body> or <section>, but NEVER inside any <stage> descendent (INVALID_STAGES)
   - <tldr> must be a direct child of <body>, <section>, or <stage>, at most 1 per container (INVALID_TLDR)
   - <search-log> is allowed inside <collapse> as well as <body>/<section>/<stage>, but not <tab> or <step>
   - <section> nesting depth <= 3 counts only <section> ancestors (<stage> does not increment section depth)
   - <steps interactive="true"> requires >= 2 <step> elements
-  - all IDs across section, stages, stage, quiz, figure, audio, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)
+  - all IDs across section, stages, stage, quiz, figure, audio, attachment, equation, and ref share ONE document-wide namespace (DUPLICATE_ID)
   - positional #sec-<N> anchors cannot be used as <next-steps> or <chapter target> targets (INVALID_TARGET)
 
 | Container | Allowed Parents | Allowed Children | Bounds | Notes |
 | :--- | :--- | :--- | :--- | :--- |
+| `<attachment>` | body, section, stage |  | - | requires <document version="1.2">; type="pdf"; max 4 per document |
 | `<audio>` | body, section, stage, collapse, tab, step | chapter, transcript | - | requires <document version="1.2">; 0..100 <chapter> (non-decreasing HH:MM:SS), 0..1 <transcript> (<= 512 KB) |
-| `<body>` | document | section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - |  |
+| `<body>` | document | section, sources, md, figure, audio, attachment, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - |  |
 | `<checklist>` | body, section, stage | check | 1..n |  |
 | `<collapse>` | body, section, stage | md, figure, audio, callout, claim, equation, mermaid, chart, code-block, quote, search-log | - | allows search-log in addition to leaf blocks |
 | `<columns>` | compare-table | col | 1..n |  |
@@ -35,9 +37,9 @@ Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elemen
 | `<references>` | body, section, stage | ref | 1..n |  |
 | `<row>` | compare-table | cell | - | cell count must match columns/col count |
 | `<search-log>` | body, section, stage, collapse | criteria, query, excluded, gap, stop | - | requires >= 1 <query>; <= 1 <criteria>; <= 1 <stop> |
-| `<section>` | body, section, stage | section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - | section depth <= 3 |
+| `<section>` | body, section, stage | section, sources, md, figure, audio, attachment, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, stages, quiz, next-steps, tldr, news-item | - | section depth <= 3 |
 | `<sources>` | body, section, stage | source | 1..n |  |
-| `<stage>` | stages | section, sources, md, figure, audio, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, quiz, next-steps, tldr, news-item | - | allows all body/section blocks and <section>, except nested <stages> |
+| `<stage>` | stages | section, sources, md, figure, audio, attachment, paper-card, repo-card, compare-table, callout, collapse, claim, equation, mermaid, chart, metrics, steps, tabs, timeline, glossary, references, figure-group, code-block, quote, checklist, search-log, quiz, next-steps, tldr, news-item | - | allows all body/section blocks and <section>, except nested <stages> |
 | `<stages>` | body, section | stage | 1..8 | cannot be nested inside any stage descendent |
 | `<step>` | steps | md, figure, audio, callout, claim, equation, mermaid, chart, code-block, quote | - |  |
 | `<steps>` | body, section, stage | step | 1..n | interactive="true" requires >= 2 <step> |
@@ -65,7 +67,8 @@ Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elemen
 | `<body>` | document | - | Document body (allows all block tags directly). |
 | `<section>` | body, section, stage | `title*`, `id` | Titled section (nestable up to 3 section levels). |
 | `<md>` | body, section, stage, collapse, tab, step | - | Rich Markdown content block (wrap in CDATA). |
-| `<figure>` | body, section, stage, collapse, tab, step, figure-group | `src*`, `caption`, `id`, `alt` | Local image asset reference (.png/.jpg/.jpeg/.webp/.svg). |
+| `<figure>` | body, section, stage, collapse, tab, step, figure-group | `src*`, `caption`, `id`, `alt` | Image asset reference (.png/.jpg/.jpeg/.webp/.svg) or v1.2 external http(s):// image URL (localized at ingest). |
+| `<attachment>` | body, section, stage | `type*=[pdf]`, `src*`, `title*`, `id` | doc max: 4 — Local PDF attachment (max 4 per doc; requires <document version="1.2">; page count verified at ingest; title is indexed). |
 | `<audio>` | body, section, stage, collapse, tab, step | `src*`, `title*`, `id` | doc max: 4 — Local audio asset reference (.mp3/.wav/.m4a); requires <document version="1.2">. Title and transcript/chapters are indexed. |
 | `<chapter>` | audio | `start*`, `title*`, `target` | Timestamped chapter marker inside <audio> (0-100 per block; timestamps must be non-decreasing). |
 | `<transcript>` | audio | - | <= 524288 B — Optional full audio transcript (0-1 per <audio>; non-empty plain text or CDATA <= 512 KB; indexed). |
@@ -194,6 +197,7 @@ Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elemen
 | `quiz` | `#quiz-<id>` | true |
 | `figure` | `#fig-<id>` | true |
 | `audio` | `#audio-<id>` | true |
+| `attachment` | `#att-<id> or #att-<id>:p=<N>` | true |
 | `equation` | `#eq-<id>` | true |
 | `ref` | `#ref-<id>` | true |
 | `section (without id)` | `#sec-<N>` | false |
@@ -219,10 +223,13 @@ Protocol version: `1.2` (also accepts legacy `1.1` documents without v1.2 elemen
 | `MISSING_ATTR` | required attribute missing or blank |
 | `INVALID_ATTR` | invalid enum attribute value, empty <next-steps>/<option> text, or container count constraint (callout@type, claim@level, cell@tag, read-depth, figure-group, tabs count, steps count, glossary term uniqueness, next-steps option count) |
 | `INVALID_URL` | URL is not an absolute http(s) URL (canonical-url, paper-card@url|code-url, repo-card@url, source@url, ref@url, quote@url, news-item@url) |
-| `INVALID_ASSET_PATH` | <figure src> or <audio src> is not a clean relative path inside document directory |
-| `INVALID_ASSET_TYPE` | <figure src> is not .png/.jpg/.jpeg/.webp/.svg, or <audio src> is not .mp3/.wav/.m4a |
-| `MISSING_ASSET` | referenced local <figure src> or <audio src> file does not exist |
+| `INVALID_ASSET_PATH` | <figure src>, <audio src>, or <attachment src> is not a clean relative path inside document directory (or remote <figure src> used in version="1.1") |
+| `INVALID_ASSET_TYPE` | <figure src> is not .png/.jpg/.jpeg/.webp/.svg, <audio src> is not .mp3/.wav/.m4a, or <attachment src> is not .pdf |
+| `MISSING_ASSET` | referenced local <figure src>, <audio src>, or <attachment src> file does not exist |
 | `INVALID_AUDIO` | <audio> used in version="1.1", missing src/title, title >200 runes, >4 audio blocks, >100 chapters, invalid/decreasing <chapter start>, blank/empty <transcript>, or <transcript> >512 KB |
+| `INVALID_ATTACHMENT` | <attachment> used in version="1.1", type != "pdf", missing src/title, >4 attachment blocks, contains child tags/pages attribute, or uploaded PDF is encrypted (user password) or invalid |
+| `REMOTE_ASSET_BLOCKED` | <figure src> external URL violates SSRF rules (non-http(s), userinfo, non-public/loopback/private IP or localhost, DNS resolving to non-public IP, proxy bypass) or ingest.allow_remote_images = false |
+| `REMOTE_ASSET_FETCH_FAILED` | external <figure src> fetch failed on timeout, non-2xx HTTP status, >20 MiB size limit, >5 redirects, >20 unique URLs, or invalid image/SVG payload |
 | `TABLE_NO_COLUMNS` | <compare-table> missing <columns>/<col> |
 | `TABLE_NO_ROWS` | <compare-table> has no <row> |
 | `TABLE_COL_MISMATCH` | <row> <cell> count differs from <columns>/<col> count |

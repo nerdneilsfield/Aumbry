@@ -14,6 +14,7 @@ const (
 	maxMermaidBlocks    = 10
 	maxChartBlocks      = 10
 	maxAudioBlocks      = 4
+	maxAttachmentBlocks = 4
 	maxAudioChapters    = 100
 	maxAudioTitleRunes  = 200
 	maxTranscriptBytes  = 512 * 1024
@@ -63,14 +64,43 @@ var (
 )
 
 var anchorPrefixes = map[string]string{
-	"section":  "s-",
-	"stages":   "stages-",
-	"stage":    "stage-",
-	"quiz":     "quiz-",
-	"figure":   "fig-",
-	"audio":    "audio-",
-	"equation": "eq-",
-	"ref":      "ref-",
+	"section":    "s-",
+	"stages":     "stages-",
+	"stage":      "stage-",
+	"quiz":       "quiz-",
+	"figure":     "fig-",
+	"audio":      "audio-",
+	"attachment": "att-",
+	"equation":   "eq-",
+	"ref":        "ref-",
+}
+
+// ParseAnchorTarget parses an anchor reference such as "#s-intro" or "#att-paper:p=5".
+// When ":p=<N>" is present, it is stripped prior to base target validation and requires an
+// "#att-<id>" base plus a positive decimal integer page >= 1.
+func ParseAnchorTarget(raw string) (base string, page int, hasPage, ok bool) {
+	if before, pageStr, hasColonP := strings.Cut(raw, ":p="); hasColonP {
+		if !strings.HasPrefix(before, "#att-") || !targetRe.MatchString(before) {
+			return "", 0, true, false
+		}
+		if pageStr == "" || pageStr[0] < '1' || pageStr[0] > '9' {
+			return "", 0, true, false
+		}
+		for _, r := range pageStr {
+			if r < '0' || r > '9' {
+				return "", 0, true, false
+			}
+		}
+		n, err := strconv.Atoi(pageStr)
+		if err != nil || n < 1 {
+			return "", 0, true, false
+		}
+		return before, n, true, true
+	}
+	if !targetRe.MatchString(raw) {
+		return "", 0, false, false
+	}
+	return raw, 0, false, true
 }
 
 func parseChapterTimestamp(raw string) (int64, bool) {

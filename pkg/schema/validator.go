@@ -49,13 +49,14 @@ var protocol = sync.OnceValue(func() *schematron.Schema {
 })
 
 const (
-	assetXPath = "//figure[@src] | //audio[@src]"
+	assetXPath = "//figure[@src] | //audio[@src] | //attachment[@src]"
 	urlXPath   = "/document/meta/canonical-url | /document/body//paper-card[@url or @code-url] | /document/body//*[self::repo-card or self::source][@url] | /document/body//*[self::ref or self::quote or self::news-item][@url]"
 )
 
 var (
 	imageExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".svg"}
 	audioExtensions = []string{".mp3", ".wav", ".m4a"}
+	pdfExtensions   = []string{".pdf"}
 )
 
 // NormalizeAssetPath cleans a figure src and reports whether it is a plain relative path
@@ -182,34 +183,69 @@ func validateHTTPURL(line int, field, raw string) *ValidationError {
 	return nil
 }
 
-// checkAssets validates figure and audio src values against the local filesystem rules and collects Assets/AssetRefs.
+// checkAssets validates figure, audio, and attachment src values (plus v1.2 remote image URLs)
+// and collects Assets, AssetRefs, and RemoteFigures.
 func (d *Document) checkAssets(opts Options) []ValidationError {
 	if opts.StoredAssets {
 		return nil
 	}
 	var issues []ValidationError
 	seen := map[string]bool{}
+	seenRemote := map[string]bool{}
 	for _, n := range find(d.tree, assetXPath) {
 		el := n.(*helium.Element)
 		elemName := el.Name()
-		if elemName == "audio" && d.Version == "1.1" {
+		if (elemName == "audio" || elemName == "attachment") && d.Version == "1.1" {
 			continue // reported by protocol.sch v12-features
 		}
 		src, _ := el.GetAttribute("src")
 		if strings.TrimSpace(src) == "" {
-			continue // reported by protocol.sch / checkAudio
+			continue // reported by protocol.sch / checkAudio / checkAttachment
+		}
+		if elemName == "figure" && IsRemoteURLCandidate(src) {
+			if d.Version != "1.2" {
+				msg := "src must be a relative path inside the document directory: " + src
+				hint := ""
+				if u, err := url.Parse(src); err == nil && (strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) {
+					msg = fmt.Sprintf("remote figure src %q requires <document version=\"1.2\">", src)
+					hint = `upgrade the root element to <document version="1.2"> or use a relative local image path`
+				}
+				issues = append(issues, ValidationError{
+					Line: n.Line(), Code: "INVALID_ASSET_PATH", Field: "figure.src", Message: msg, Hint: hint,
+				})
+				continue
+			}
+			code, msg, hint, ok := ValidateRemoteImageURL(src)
+			if !ok {
+				issues = append(issues, ValidationError{
+					Line: n.Line(), Code: code, Field: "figure.src", Message: msg, Hint: hint,
+				})
+				continue
+			}
+			if !seenRemote[src] {
+				seenRemote[src] = true
+				d.RemoteFigures = append(d.RemoteFigures, RemoteFigureRef{Line: n.Line(), URL: src})
+			}
+			continue
 		}
 		kind := AssetKindImage
 		field := "figure.src"
 		exts := imageExtensions
 		typeErrMsg := "image must be png, jpg, jpeg, webp or svg: %s"
 		missingMsg := "local image file not found: %s"
-		if elemName == "audio" {
+		switch elemName {
+		case "audio":
 			kind = AssetKindAudio
 			field = "audio.src"
 			exts = audioExtensions
 			typeErrMsg = "audio must be mp3, wav or m4a: %s"
 			missingMsg = "local audio file not found: %s"
+		case "attachment":
+			kind = AssetKindPDF
+			field = "attachment.src"
+			exts = pdfExtensions
+			typeErrMsg = "attachment must be pdf: %s"
+			missingMsg = "local PDF file not found: %s"
 		}
 		add := func(code, format string) {
 			issues = append(issues, ValidationError{

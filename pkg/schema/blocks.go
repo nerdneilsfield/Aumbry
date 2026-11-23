@@ -19,18 +19,21 @@ type blockState struct {
 	docVersion string
 	issues     []ValidationError
 
-	mermaidCount int
-	chartCount   int
-	audioCount   int
-	stagesCount  int
-	totalStages  int
+	mermaidCount    int
+	chartCount      int
+	audioCount      int
+	attachmentCount int
+	stagesCount     int
+	totalStages     int
 
-	seenIDs   map[string]bool
-	anchors   map[string]bool
-	equations map[string]bool
+	seenIDs        map[string]bool
+	anchors        map[string]bool
+	equations      map[string]bool
+	attachmentSrcs map[string]string
 
 	pendingTargets []pendingTarget
 	pendingEqRefs  []pendingTarget
+	pageRefs       []AttachmentPageRef
 }
 
 func (d *Document) checkBlocks() []ValidationError {
@@ -39,13 +42,15 @@ func (d *Document) checkBlocks() []ValidationError {
 		return nil
 	}
 	st := &blockState{
-		docVersion: d.Version,
-		seenIDs:    make(map[string]bool),
-		anchors:    make(map[string]bool),
-		equations:  make(map[string]bool),
+		docVersion:     d.Version,
+		seenIDs:        make(map[string]bool),
+		anchors:        make(map[string]bool),
+		equations:      make(map[string]bool),
+		attachmentSrcs: make(map[string]string),
 	}
 	st.walk(body, 0, false)
 	st.checkPendingRefs()
+	d.AttachmentPageRefs = st.pageRefs
 	return st.issues
 }
 
@@ -126,6 +131,8 @@ func (s *blockState) walk(el *helium.Element, sectionDepth int, inStage bool) {
 			}
 		case "audio":
 			s.checkAudio(child)
+		case "attachment":
+			s.checkAttachment(child)
 		case "claim":
 			level, _ := child.GetAttribute("level")
 			if !contains(claimLevels, level) {
@@ -196,13 +203,64 @@ func (s *blockState) walk(el *helium.Element, sectionDepth int, inStage bool) {
 
 func (s *blockState) checkPendingRefs() {
 	for _, pt := range s.pendingTargets {
-		if !targetRe.MatchString(pt.value) || !s.anchors[pt.value] {
-			s.addIssue(pt.line, "INVALID_TARGET", pt.field, fmt.Sprintf("target %q does not match an existing anchor id in this document", pt.value), "use a prefix anchor like #s-..., #stages-..., #stage-..., #quiz-..., #fig-..., #audio-..., #eq-... or #ref-...")
+		base, page, hasPage, ok := ParseAnchorTarget(pt.value)
+		if !ok || !s.anchors[base] {
+			s.addIssue(pt.line, "INVALID_TARGET", pt.field, fmt.Sprintf("target %q does not match an existing anchor id in this document", pt.value), "use a prefix anchor like #s-..., #stages-..., #stage-..., #quiz-..., #fig-..., #audio-..., #att-..., #att-...:p=<N>, #eq-... or #ref-...")
+			continue
+		}
+		if hasPage {
+			s.pageRefs = append(s.pageRefs, AttachmentPageRef{
+				Line:          pt.line,
+				Field:         pt.field,
+				Target:        pt.value,
+				AttachmentID:  strings.TrimPrefix(base, "#att-"),
+				AttachmentSrc: s.attachmentSrcs[base],
+				Page:          page,
+			})
 		}
 	}
 	for _, pe := range s.pendingEqRefs {
 		if !s.equations[pe.value] {
 			s.addIssue(pe.line, "INVALID_TARGET", pe.field, fmt.Sprintf("eq target %q does not match any <equation id>", pe.value), "reference an existing <equation id=\"...\"> raw id")
+		}
+	}
+}
+
+func (s *blockState) checkAttachment(el *helium.Element) {
+	if s.docVersion == "1.1" {
+		// Upgrade diagnostic is emitted by protocol.sch v12-features pattern.
+		return
+	}
+	s.attachmentCount++
+	if s.attachmentCount == maxAttachmentBlocks+1 {
+		s.addIssue(el.Line(), "INVALID_ATTACHMENT", "attachment", fmt.Sprintf("at most %d <attachment> blocks allowed per document", maxAttachmentBlocks), "")
+	}
+	s.rejectDirectText(el, "attachment")
+	if _, hasPages := el.GetAttribute("pages"); hasPages {
+		s.addIssue(el.Line(), "INVALID_ATTACHMENT", "attachment.pages", `<attachment> does not accept a "pages" attribute; page count is detected from the PDF`, "remove the pages attribute")
+	}
+	typ, _ := el.GetAttribute("type")
+	if typ != "pdf" {
+		s.addIssue(el.Line(), "INVALID_ATTACHMENT", "attachment.type", `<attachment> requires type="pdf"`, `set type="pdf"`)
+	}
+	src, _ := el.GetAttribute("src")
+	if strings.TrimSpace(src) == "" {
+		s.addIssue(el.Line(), "INVALID_ATTACHMENT", "attachment.src", `<attachment> requires a non-empty "src" attribute`, `add src="..." pointing to a local .pdf file`)
+	}
+	if title, _ := el.GetAttribute("title"); strings.TrimSpace(title) == "" {
+		s.addIssue(el.Line(), "INVALID_ATTACHMENT", "attachment.title", `<attachment> requires a non-empty "title" attribute`, `add title="..." to <attachment>`)
+	}
+	if id, has := el.GetAttribute("id"); has {
+		s.registerID(el.Line(), "attachment", id)
+		key := "#att-" + id
+		if anchorIDRe.MatchString(id) && strings.TrimSpace(src) != "" {
+			if _, exists := s.attachmentSrcs[key]; !exists {
+				if norm, ok := NormalizeAssetPath(src); ok {
+					s.attachmentSrcs[key] = norm
+				} else {
+					s.attachmentSrcs[key] = strings.TrimSpace(src)
+				}
+			}
 		}
 	}
 }

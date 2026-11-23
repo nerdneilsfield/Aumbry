@@ -76,9 +76,10 @@ type RevisionsConfig struct {
 	MaxPerItem *int `toml:"max_per_item" env:"AUMBRY_REVISIONS_MAX_PER_ITEM"`
 }
 
-// IngestConfig holds ingest request limits.
+// IngestConfig holds ingest request and remote image localization limits.
 type IngestConfig struct {
-	MaxBodyMB int `toml:"max_body_mb" env:"AUMBRY_INGEST_MAX_BODY_MB"`
+	MaxBodyMB         int   `toml:"max_body_mb" env:"AUMBRY_INGEST_MAX_BODY_MB"`
+	AllowRemoteImages *bool `toml:"allow_remote_images" env:"AUMBRY_INGEST_ALLOW_REMOTE_IMAGES"`
 }
 
 // Config contains the server's runtime settings.
@@ -370,6 +371,10 @@ func validateAndApplyDefaults(cfg *Config) error {
 	} else if cfg.Ingest.MaxBodyMB < minIngestBodyMB {
 		errs = append(errs, fmt.Errorf("ingest.max_body_mb (AUMBRY_INGEST_MAX_BODY_MB) must be at least %d MiB when set, got %d", minIngestBodyMB, cfg.Ingest.MaxBodyMB))
 	}
+	if cfg.Ingest.AllowRemoteImages == nil {
+		v := true
+		cfg.Ingest.AllowRemoteImages = &v
+	}
 
 	return errors.Join(errs...)
 }
@@ -394,6 +399,15 @@ func (c Config) ResolvedMaxIngestBodyBytes() int64 {
 		mb = defaultMaxIngestBodyMB
 	}
 	return int64(mb) * 1024 * 1024
+}
+
+// ResolvedAllowRemoteImages reports whether server-side fetching and localization of remote
+// <figure src="http(s)://..."> images is enabled (default true).
+func (c Config) ResolvedAllowRemoteImages() bool {
+	if c.Ingest.AllowRemoteImages == nil {
+		return true
+	}
+	return *c.Ingest.AllowRemoteImages
 }
 
 // ResolvedLocalPath returns the effective local object root directory.

@@ -46,6 +46,7 @@
 | `public_url` | `AUMBRY_PUBLIC_URL` | 字符串 | 否 | `""` | 生成 `/feeds/` RSS / Podcast `<link>` 与 `<enclosure>` 的权威基址（如 `https://aumbry.example.com`）。非空须为 `http(s)://host[:port]`（不含路径、查询、片段或 userinfo）；留空时按 `trusted_proxies` 从请求头推导。 |
 | `revisions.max_per_item` | `AUMBRY_REVISIONS_MAX_PER_ITEM` | 整数 | 否 | `20` | 每个已发布条目保留的历史修订快照上限；超过后按最旧 `rev` FIFO 淘汰。设为 `0` 表示不限制，负数会导致启动报错。 |
 | `ingest.max_body_mb` | `AUMBRY_INGEST_MAX_BODY_MB` | 整数 | 否 | `200` | `POST /api/v1/ingest` 单次 multipart 请求体上限（MiB）。最小允许 `20`（`1..19` 会启动报错，`<= 0` 使用默认 `200`）。服务端临时盘应至少预留 `4 × max_body_mb` 空间。 |
+| `ingest.allow_remote_images` | `AUMBRY_INGEST_ALLOW_REMOTE_IMAGES` | 布尔 | 否 | `true` | 是否允许服务端在入库（`POST /api/v1/ingest` 与 MCP `push_item`）时按 SSRF 防线转存 `v1.2` XML 中的 `http(s)://` 外链 `<figure src>`；设为 `false` 时任何外链图均返回 `422 REMOTE_ASSET_BLOCKED`。 |
 
 ### 对象存储后端配置
 

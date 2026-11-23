@@ -211,7 +211,13 @@ The files are `examples/deploy/caddy/docker-compose.yml`, `Caddyfile`, and `.env
    docker compose up -d
    ```
 
-Keep the `caddy-data` volume; it holds the certificates. Caddy sets `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` on its own and ignores the values clients send. It does not limit request body size, so Aumbry's 100 MiB limit applies.
+Keep the `caddy-data` volume; it holds the certificates. Caddy sets `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` on its own and ignores the values clients send. It does not limit request body size, so Aumbry's configured `ingest.max_body_mb` (`200 MiB` default; `16 MiB` JSON-RPC cap on `/mcp`) applies.
+
+### Reverse proxying `/mcp` and operating remote image localization
+
+- **`Host`, `Origin`, and `public_url` on `/mcp`:** The MCP endpoint enforces explicit `Host` and `Origin` checks on every request (even when `aumbry-server` binds a loopback port behind a proxy). Keep `Host` forwarding enabled (e.g., `proxy_set_header Host $host;` in nginx) and ensure `public_url` matches the external `scheme://host[:port]`; mismatched `Host` or `Origin` headers receive `403`.
+- **SSE and JSON-RPC body limits:** When reverse-proxying `/mcp` with `GET` SSE streams, use HTTP/1.1 (`proxy_http_version 1.1;`) with proxy buffering disabled on `/mcp` (`proxy_buffering off;`), and ensure request body limits allow at least `16 MiB` (to accommodate JSON-escaped `10 MiB` XML payloads in `push_item`; the bundled nginx config already uses `201m`).
+- **Remote image fetch pool & proxy bypass (`ingest.allow_remote_images`):** Remote `<figure src>` localization fetches up to 20 URLs with concurrency 4, `15s` per image, and a `60s` total budget per ingest, holding one of the server's **4 global ingest concurrency slots** while running. The dedicated fetcher **explicitly sets `Proxy: nil`** and validates the resolved socket IP after `.Unmap()` on initial connect and across up to 5 redirects—it deliberately ignores `HTTP_PROXY`/`HTTPS_PROXY` so proxies cannot hide SSRF targets. In air-gapped or proxy-only egress networks, set `ingest.allow_remote_images = false` and push local images via CLI.
 
 ## Backup, storage verification, and maintenance
 
@@ -247,7 +253,7 @@ Every maintenance command uses the same config resolution (`--config`, `AUMBRY_C
 
 ### Verify object storage (`verify-storage`)
 
-`verify-storage` checks that every current item XML, every historical revision XML (`item_revisions`), and every current or historical asset recorded in `aumbry.db` exists in object storage (for `local`, the root directory must already exist and will not be created if missing; non-zero exit otherwise):
+`verify-storage` checks that every current item XML, every historical revision XML (`item_revisions`), and every current or historical asset (images, audio, and PDFs) recorded in `aumbry.db` exists in object storage (for `local`, the root directory must already exist and will not be created if missing; non-zero exit otherwise):
 
 ```sh
 aumbry-server verify-storage --config ./aumbry.toml

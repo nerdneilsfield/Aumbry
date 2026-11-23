@@ -46,6 +46,7 @@ Loader guarantees:
 | `public_url` | `AUMBRY_PUBLIC_URL` | string | No | `""` | Canonical origin (`http(s)://host[:port]`, no path, query, fragment, or userinfo) for `/feeds/` RSS and Podcast links/enclosures. Derived from request host/forwarded headers when empty. |
 | `revisions.max_per_item` | `AUMBRY_REVISIONS_MAX_PER_ITEM` | integer | No | `20` | Maximum published revisions retained per item; pruned oldest-first (`rev ASC`). `0` disables pruning; negative values fail startup. |
 | `ingest.max_body_mb` | `AUMBRY_INGEST_MAX_BODY_MB` | integer | No | `200` | Maximum multipart body size in MiB for `POST /api/v1/ingest`. Minimum `20` (`1..19` fails startup; `<= 0` uses default `200`). Reserve at least `4 × max_body_mb` temp disk space. |
+| `ingest.allow_remote_images` | `AUMBRY_INGEST_ALLOW_REMOTE_IMAGES` | boolean | No | `true` | Enables SSRF-safe server localization of `http(s)://` remote `<figure src>` URLs in `v1.2` documents during `POST /api/v1/ingest` and MCP `push_item`; set `false` to reject any remote `<figure src>` with `422 REMOTE_ASSET_BLOCKED`. |
 
 ### Storage backend settings
 

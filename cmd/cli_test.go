@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,4 +213,59 @@ func TestValidateHintAndSchemaCommand(t *testing.T) {
 	if _, err := runCLI(t, "schema", "--format", "xml"); err == nil {
 		t.Fatal("expected unsupported schema format error")
 	}
+}
+
+func TestV2M2ValidateAndPushRemoteAndPDF(t *testing.T) {
+	t.Run("validate rejects loopback remote figure offline with REMOTE_ASSET_BLOCKED", func(t *testing.T) {
+		isolate(t)
+		docPath := filepath.Join(t.TempDir(), "ssrf.xml")
+		xml := `<?xml version="1.0" encoding="UTF-8"?><document version="1.2">
+<meta><title>SSRF</title><type>post</type><date>2026-11-23</date><summary>S</summary><source-agent>a</source-agent></meta>
+<body><figure src="http://127.0.0.1:18080/a.png" caption="bad"/></body></document>`
+		if err := os.WriteFile(docPath, []byte(xml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runCLI(t, "validate", docPath)
+		var failed *ValidationFailedError
+		if !errors.As(err, &failed) || !strings.Contains(out, `"REMOTE_ASSET_BLOCKED"`) {
+			t.Fatalf("offline validate SSRF = err=%v out=%s", err, out)
+		}
+	})
+
+	t.Run("push skips remote figure URL upload while uploading local PDF attachment", func(t *testing.T) {
+		isolate(t)
+		dir := t.TempDir()
+		pdfPath := filepath.Join(dir, "paper.pdf")
+		if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\n1 0 obj<<>>endobj\n%%EOF\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		xmlPath := filepath.Join(dir, "doc.xml")
+		xml := `<?xml version="1.0" encoding="UTF-8"?><document version="1.2">
+<meta><title>RemoteAndPDF</title><type>post</type><date>2026-11-23</date><summary>S</summary><source-agent>a</source-agent></meta>
+<body>
+  <figure src="https://example.org/pic.png" caption="remote"/>
+  <attachment id="p" type="pdf" src="paper.pdf" title="Paper"/>
+</body></document>`
+		if err := os.WriteFile(xmlPath, []byte(xml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		server, got := captureIngest(t, http.StatusCreated, `{"id":"m2cli0000001","type":"post","url":"/p/m2cli0000001","dirs":["D1"],"assets":2,"created":true}`)
+		t.Setenv(cliconfig.EnvServer, server.URL)
+		t.Setenv(cliconfig.EnvToken, "tok-1234")
+
+		out := mustRun(t, "push", xmlPath, "--dir", "D1")
+		if !strings.Contains(out, `"m2cli0000001"`) {
+			t.Fatalf("unexpected push output:\n%s", out)
+		}
+		if len(got.files["assets[]"]) != 1 || got.files["assets[]"][0] != "paper.pdf" {
+			t.Fatalf("uploaded asset files = %v, want [paper.pdf]", got.files["assets[]"])
+		}
+		if len(got.fields["asset_srcs"]) != 1 || got.fields["asset_srcs"][0] != "paper.pdf" {
+			t.Fatalf("uploaded asset_srcs = %v, want [paper.pdf]", got.fields["asset_srcs"])
+		}
+		if !strings.Contains(string(got.bodies["xml"]), `https://example.org/pic.png`) {
+			t.Fatalf("uploaded XML dropped remote URL:\n%s", got.bodies["xml"])
+		}
+	})
 }
